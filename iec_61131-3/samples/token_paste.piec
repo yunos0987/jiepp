@@ -1,0 +1,17 @@
+(*{#:0 'iec_61131-3/samples/token_paste.iec'}*)
+(* token_paste.iec - @@ token concatenation operator *)
+
+
+
+
+program Main
+var
+    sensor_1: int;
+    sensor_2: int;
+    v: dint;
+end_var
+(*{st}*)
+sensor_1 := 100;
+sensor_2 := 200;
+(*{end}*)
+end_program

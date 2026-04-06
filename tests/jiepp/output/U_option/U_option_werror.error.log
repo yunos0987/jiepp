@@ -1,0 +1,1 @@
+tests/jiepp/input/U_option/U_option_werror.error.iec:1.0: error: PP35: Macro redefined; 'FOO'

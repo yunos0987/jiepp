@@ -1,0 +1,8 @@
+(*{#:0 'tests/jiepp/input/max_include_depth_directive/max_include_depth_directive_sinclude_3_2.iec'}*)
+
+(*{syspath:'./tests/jiepp/input/max_include_depth_directive/lib0'}*)
+(*{syspath:'./tests/jiepp/input/max_include_depth_directive/lib1'}*)
+(*{syspath:'./tests/jiepp/input/max_include_depth_directive/lib2'}*)
+(*{#:0 's_depth_0.iec'}*)
+function_block Fb end_function_block
+(*{#:5 'tests/jiepp/input/max_include_depth_directive/max_include_depth_directive_sinclude_3_2.iec'}*)

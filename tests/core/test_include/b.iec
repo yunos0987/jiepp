@@ -1,0 +1,7 @@
+// b.iec begin
+{#undef T}
+{#define T b}
+__COUNTER__;
+__FILE__;
+__LINE__;
+// b.iec end

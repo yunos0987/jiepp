@@ -1,0 +1,11 @@
+(* ignore.iec - Suppress error codes with #ignore *)
+
+(* Suppress warnings for undefined directives *)
+{#ignore PP45}
+
+{#line 999}
+
+program Main
+{st}
+{end}
+end_program

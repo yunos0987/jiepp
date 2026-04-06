@@ -1,0 +1,32 @@
+(*{#:0 'iec_61131-3/samples/builtin_macros.iec'}*)
+(* builtin_macros.iec - Built-in macros *)
+
+program Main
+var
+    line_num: int;
+    inc_level: int;
+    counter1, counter2, counter3: int;
+    file_name: string[255];
+    file_name_only: string[255];
+    base_name: string[255];
+end_var
+(*{st}*)
+line_num := 13;
+inc_level := 0;
+file_name := 'iec_61131-3/samples/builtin_macros.iec';
+file_name_only := 'builtin_macros.iec';
+base_name := 'iec_61131-3/samples/builtin_macros.iec';
+counter1 := 0;
+counter2 := 1;
+counter3 := 2;
+
+(* _header.iec exists *)
+(*{#:0 '_header.iec'}*)
+(* _header.iec - Common definitions for includes *)
+
+
+
+(*{#:23 'iec_61131-3/samples/builtin_macros.iec'}*)
+
+(*{end}*)
+end_program

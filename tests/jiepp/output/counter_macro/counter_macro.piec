@@ -1,0 +1,8 @@
+(*{#:0 'tests/jiepp/input/counter_macro/counter_macro.iec'}*)
+program Main
+0;
+(*{st}*)
+1;
+(*{end}*)
+2;
+end

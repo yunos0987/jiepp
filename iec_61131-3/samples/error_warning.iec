@@ -1,0 +1,19 @@
+(* error_warning.iec - #error and #warning *)
+
+{#define PLATFORM_DEFINED 1}
+
+{#ifndef PLATFORM_DEFINED}
+{#error 'PLATFORM_DEFINED is not set'}
+{#endif}
+
+{#if 0}
+(* This block is not evaluated, so #error will not occur *)
+{#error 'This should never trigger'}
+{#endif}
+
+{#warning 'This is a compile-time warning'}
+
+program Main
+{st}
+{end}
+end_program

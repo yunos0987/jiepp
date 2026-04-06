@@ -1,0 +1,16 @@
+(* token_paste.iec - @@ token concatenation operator *)
+
+{#define VAR_NAME(prefix, n) prefix@@_@@n}
+{#define TYPED(type, suffix) type@@suffix}
+
+program Main
+var
+    VAR_NAME(sensor, 1): int;
+    VAR_NAME(sensor, 2): int;
+    v: TYPED(d, int);
+end_var
+{st}
+VAR_NAME(sensor, 1) := 100;
+VAR_NAME(sensor, 2) := 200;
+{end}
+end_program

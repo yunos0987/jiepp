@@ -1,0 +1,11 @@
+(*{#:0 'tests/jiepp/input/file_macro/file_macro_line_directive.iec'}*)
+
+(*{st:}*)
+'tests/jiepp/input/file_macro/file_macro_line_directive.iec';
+(*{#:2 'a.iec'}*)
+'a.iec';
+(*{#:3 './a.iec'}*)
+'./a.iec';
+(*{#:5 './../a.iec'}*)
+'./../a.iec';
+(*{end:}*)

@@ -1,0 +1,31 @@
+(* conditional.iec - Conditional compilation *)
+
+{#define TARGET_OMRON 1}
+
+{#ifdef TARGET_OMRON}
+{#define TIMER_FB TON}
+{#else}
+{#define TIMER_FB Timer}
+{#endif}
+
+{#ifndef DEBUG}
+{#define DEBUG 0}
+{#endif}
+
+{#if defined(TARGET_OMRON) \and\ DEBUG = 1}
+{#define LOG_ENABLED 1}
+{#elif defined(TARGET_OMRON)}
+{#define LOG_ENABLED 0}
+{#else}
+{#define LOG_ENABLED 0}
+{#endif}
+
+program Main
+var
+    t1: TIMER_FB;
+    log_flag: int;
+end_var
+{st}
+log_flag := LOG_ENABLED;
+{end}
+end_program

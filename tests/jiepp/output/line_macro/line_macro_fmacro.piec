@@ -1,0 +1,31 @@
+(*{#:0 'tests/jiepp/input/line_macro/line_macro_fmacro.iec'}*)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+program Main
+(*{st}*)
+22;
+(2     +     3
+
+) ** (4 * 5     +     4 / 5
+
+);
+28;
+(*{end}*)
+end_program

@@ -1,0 +1,30 @@
+{#define F(x, y) $
+    x $
+    + $
+    y $
+}
+{#define  $
+    G(    $
+        x $
+        , $
+        y $
+    )     $
+          $
+    F(    $
+    x * y $
+    ,     $
+    x / y $
+    )     $
+}
+
+program Main
+{st}
+__LINE__;
+(F(
+    2,
+    3)) ** (G(
+    4,
+    5));
+__LINE__;
+{end}
+end_program

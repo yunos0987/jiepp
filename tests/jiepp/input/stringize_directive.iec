@@ -1,0 +1,12 @@
+{#define T hello}
+
+program Main
+var
+    s1: string := {##: T};
+    s2: string := {##: world};
+end
+(*{st}*)
+s1 := {## __LINE__};
+s2 := {## __COUNTER__.__COUNTER__};
+(*{end}*)
+end

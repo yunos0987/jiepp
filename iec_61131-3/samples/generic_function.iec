@@ -1,0 +1,29 @@
+(* generic_function.iec - Generate type-parameterized functions using @@ and function macros *)
+
+{#define DECL_ADD(T)
+	function add_@@T: T
+	var_input
+		in1, in2: T;
+	end_var
+	${st$}
+	add_@@T := in1 + in2;
+	${end$}
+	end_function
+}
+
+DECL_ADD(int);
+DECL_ADD(dint);
+DECL_ADD(lreal);
+
+program Main
+var
+	i: int;
+	d: dint;
+	r: lreal;
+end_var
+{st}
+i := add_int(1, 2);
+d := add_dint(100, 200);
+r := add_lreal(1.5, 2.5);
+{end}
+end_program

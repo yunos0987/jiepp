@@ -1,0 +1,20 @@
+(*{#:0 'iec_61131-3/samples/syspath.iec'}*)
+(* syspath.iec — #syspath + #sinclude: system-path-only include *)
+(* #sinclude searches system paths only, equivalent to #include <...> *)
+
+(*{syspath:'lib'}*)
+(*{#:0 '_util.iec'}*)
+(* _util.iec — Utility included via syspath *)
+
+
+
+(*{#:5 'iec_61131-3/samples/syspath.iec'}*)
+
+program Main
+var
+    v: int;
+end_var
+(*{st}*)
+v := if (-10) >= 0 then (-10) else -(-10) end_if;
+(*{end}*)
+end_program

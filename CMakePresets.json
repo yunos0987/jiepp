@@ -1,0 +1,191 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_CXX_STANDARD": "23",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON"
+      }
+    },
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "JIEPP_OFFICIAL_WINDOWS_PRESET": "ON",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "VCPKG_INSTALL_OPTIONS": "--x-buildtrees-root=$env{TEMP}/jiepp-vcpkg-buildtrees;--x-packages-root=$env{TEMP}/jiepp-vcpkg-packages"
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Unix Makefiles",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "windows-clang-ninja-debug",
+      "displayName": "Windows Debug (Ninja + clang)",
+      "description": "Windows debug build using Ninja and clang/clang++.",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-clang-ninja-release",
+      "displayName": "Windows Release (Ninja + clang)",
+      "description": "Windows release build using Ninja and clang/clang++ with ThinLTO.",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-makefiles-debug",
+      "displayName": "Linux Debug (Unix Makefiles)",
+      "description": "Linux debug build using Unix Makefiles.",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-makefiles-release",
+      "displayName": "Linux Release (Unix Makefiles)",
+      "description": "Linux release build using Unix Makefiles with ThinLTO.",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-clang-ninja",
+      "displayName": "Windows Debug (Ninja + clang) [alias]",
+      "description": "Alias for windows-clang-ninja-debug.",
+      "inherits": "windows-clang-ninja-debug"
+    },
+    {
+      "name": "linux-makefiles",
+      "displayName": "Linux Debug (Unix Makefiles) [alias]",
+      "description": "Alias for linux-makefiles-debug.",
+      "inherits": "linux-makefiles-debug"
+    },
+    {
+      "name": "linux-portable-base",
+      "hidden": true,
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "JIEPP_STATIC_LINK": "ON"
+      }
+    },
+    {
+      "name": "linux-portable-release",
+      "displayName": "Linux Portable Release (fully static)",
+      "description": "Fully static release build. No GLIBC/GLIBCXX version requirements. For deployment on older Linux servers.",
+      "inherits": "linux-portable-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-clang-ninja-debug",   "configurePreset": "windows-clang-ninja-debug" },
+    { "name": "windows-clang-ninja-release",  "configurePreset": "windows-clang-ninja-release" },
+    { "name": "linux-makefiles-debug",        "configurePreset": "linux-makefiles-debug" },
+    { "name": "linux-makefiles-release",      "configurePreset": "linux-makefiles-release" },
+    { "name": "linux-portable-release",       "configurePreset": "linux-portable-release" },
+    { "name": "windows-clang-ninja",          "configurePreset": "windows-clang-ninja" },
+    { "name": "linux-makefiles",              "configurePreset": "linux-makefiles" }
+  ],
+  "testPresets": [
+    { "name": "windows-clang-ninja-debug",   "configurePreset": "windows-clang-ninja-debug" },
+    { "name": "windows-clang-ninja-release",  "configurePreset": "windows-clang-ninja-release" },
+    { "name": "linux-makefiles-debug",        "configurePreset": "linux-makefiles-debug" },
+    { "name": "linux-makefiles-release",      "configurePreset": "linux-makefiles-release" },
+    { "name": "linux-portable-release",       "configurePreset": "linux-portable-release" },
+    { "name": "windows-clang-ninja",          "configurePreset": "windows-clang-ninja" },
+    { "name": "linux-makefiles",              "configurePreset": "linux-makefiles" }
+  ],
+  "workflowPresets": [
+    {
+      "name": "windows-clang-ninja-debug",
+      "steps": [
+        { "type": "configure", "name": "windows-clang-ninja-debug" },
+        { "type": "build",     "name": "windows-clang-ninja-debug" },
+        { "type": "test",      "name": "windows-clang-ninja-debug" }
+      ]
+    },
+    {
+      "name": "windows-clang-ninja-release",
+      "steps": [
+        { "type": "configure", "name": "windows-clang-ninja-release" },
+        { "type": "build",     "name": "windows-clang-ninja-release" },
+        { "type": "test",      "name": "windows-clang-ninja-release" }
+      ]
+    },
+    {
+      "name": "linux-makefiles-debug",
+      "steps": [
+        { "type": "configure", "name": "linux-makefiles-debug" },
+        { "type": "build",     "name": "linux-makefiles-debug" },
+        { "type": "test",      "name": "linux-makefiles-debug" }
+      ]
+    },
+    {
+      "name": "linux-makefiles-release",
+      "steps": [
+        { "type": "configure", "name": "linux-makefiles-release" },
+        { "type": "build",     "name": "linux-makefiles-release" },
+        { "type": "test",      "name": "linux-makefiles-release" }
+      ]
+    },
+    {
+      "name": "linux-portable-release",
+      "steps": [
+        { "type": "configure", "name": "linux-portable-release" },
+        { "type": "build",     "name": "linux-portable-release" },
+        { "type": "test",      "name": "linux-portable-release" }
+      ]
+    },
+    {
+      "name": "windows-clang-ninja",
+      "steps": [
+        { "type": "configure", "name": "windows-clang-ninja" },
+        { "type": "build",     "name": "windows-clang-ninja" },
+        { "type": "test",      "name": "windows-clang-ninja" }
+      ]
+    },
+    {
+      "name": "linux-makefiles",
+      "steps": [
+        { "type": "configure", "name": "linux-makefiles" },
+        { "type": "build",     "name": "linux-makefiles" },
+        { "type": "test",      "name": "linux-makefiles" }
+      ]
+    }
+  ]
+}

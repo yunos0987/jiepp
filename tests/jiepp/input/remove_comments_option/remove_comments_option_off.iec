@@ -1,0 +1,44 @@
+/*!
+ * document comment
+ */
+
+/**
+ *
+ */
+
+// line comment
+/* block comment 1 */
+/*
+block
+comment
+1
+*/
+(* block comment 2 *)
+(*
+block
+comment
+2
+*)
+
+/**
+ * f
+ */
+function f
+{st}
+// line comment
+/* block comment 1 */
+(* block
+   comment
+   2 *)
+{end}
+end_function
+
+//! document comment
+
+(**
+ *
+ *)
+
+(*!
+ * document comment
+ *)

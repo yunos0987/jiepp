@@ -1,0 +1,2 @@
+{#max-include-depth 3}
+{#include 'depth_1.iec'}

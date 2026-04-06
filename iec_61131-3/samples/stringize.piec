@@ -1,0 +1,15 @@
+(*{#:0 'iec_61131-3/samples/stringize.iec'}*)
+(* stringize.iec - @ stringification operator *)
+
+
+
+program Main
+var
+    s1, s2, s3: string[255];
+end_var
+(*{st}*)
+s1 := 'Hello World';
+s2 := '123 + 456';
+s3 := '12';
+(*{end}*)
+end_program

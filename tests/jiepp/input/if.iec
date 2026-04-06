@@ -1,0 +1,51 @@
+{#if true}
+program Main1 {st:}__LINE__;{end:}end_program
+{#endif}
+
+{#if false}
+program Main2 {st:}__LINE__;{end:}end_program
+{#endif}
+
+{#if true}
+program Main3_1 {st:}__LINE__;{end:}end_program
+{#else}
+program Main3_2 {st:}__LINE__;{end:}end_program
+{#endif}
+
+{#if false}
+program Main4_1 {st:}__LINE__;{end:}end_program
+{#else}
+program Main4_2 {st:}__LINE__;{end:}end_program
+{#endif}
+
+{#if false}
+program Main5_1 {st:}__LINE__;{end:}end_program
+{#elif false}
+program Main5_2 {st:}__LINE__;{end:}end_program
+{#else}
+program Main5_3 {st:}__LINE__;{end:}end_program
+{#endif}
+
+{#if false}
+program Main6_1 {st:}__LINE__;{end:}end_program
+{#elif true}
+program Main6_2 {st:}__LINE__;{end:}end_program
+{#else}
+program Main6_3 {st:}__LINE__;{end:}end_program
+{#endif}
+
+{#if true}
+program Main7_1 {st:}__LINE__;{end:}end_program
+{#elif false}
+program Main7_2 {st:}__LINE__;{end:}end_program
+{#else}
+program Main7_3 {st:}__LINE__;{end:}end_program
+{#endif}
+
+{#if true}
+program Main8_1 {st:}__LINE__;{end:}end_program
+{#elif true}
+program Main8_2 {st:}__LINE__;{end:}end_program
+{#else}
+program Main8_3 {st:}__LINE__;{end:}end_program
+{#endif}

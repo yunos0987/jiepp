@@ -1,0 +1,20 @@
+(*{#:0 'iec_61131-3/samples/error_warning.iec'}*)
+(* error_warning.iec - #error and #warning *)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+program Main
+(*{st}*)
+(*{end}*)
+end_program

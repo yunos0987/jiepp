@@ -1,0 +1,11 @@
+(*{#:0 'tests/jiepp/input/sinclude_syspath_option/sinclude_syspath_option_x_a.iec'}*)
+
+(*{#:0 'module.iec'}*)
+
+program x
+(*{st:}*)
+4;
+0;
+(*{end:}*)
+end_program
+(*{#:2 'tests/jiepp/input/sinclude_syspath_option/sinclude_syspath_option_x_a.iec'}*)

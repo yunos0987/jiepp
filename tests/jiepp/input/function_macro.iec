@@ -1,0 +1,18 @@
+{#define DECL_BIN_FUNCTION(PREFIX, OPERATOR, T) $
+function PREFIX@@_@@T: T $
+var_input $
+	in1, in2: T; $
+end_var $
+${st$} $
+PREFIX@@_@@T := in1 OPERATOR in2; $
+${end$} $
+end_function}
+
+{#define DECL_ADD_FUNCTION(T) DECL_BIN_FUNCTION(add, +, T)}
+{#define DECL_MUL_FUNCTION(T) DECL_BIN_FUNCTION(mul, *, T)}
+
+DECL_ADD_FUNCTION(int);
+DECL_MUL_FUNCTION(int);
+
+DECL_ADD_FUNCTION(lreal);
+DECL_MUL_FUNCTION(lreal);

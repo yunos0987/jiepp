@@ -1,0 +1,45 @@
+(*{#:0 'tests/jiepp/input/remove_comments_option/remove_comments_option_on.iec'}*)
+/*!
+ * document comment
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function f
+(*{st}*)
+
+
+
+
+
+(*{end}*)
+end_function
+
+//! document comment
+
+
+
+
+
+(*!
+ * document comment
+ *)

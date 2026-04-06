@@ -1,0 +1,8 @@
+program POU
+var
+    v: int := INITIAL_VALUE;
+end_var
+{st}
+v := EXPR;
+{end}
+end_program

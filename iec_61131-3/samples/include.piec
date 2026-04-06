@@ -1,0 +1,33 @@
+(*{#:0 'iec_61131-3/samples/include.iec'}*)
+(* include.iec — #include: relative path ('...') and system path (<...>) *)
+
+(* 'file' form: searches relative to current file, then system paths *)
+(* Same as GCC #include "file" *)
+(*{#:0 '_header.iec'}*)
+(* _header.iec - Common definitions for includes *)
+
+
+
+(*{#:5 'iec_61131-3/samples/include.iec'}*)
+
+(* <file> form: searches system paths only *)
+(* Same as GCC #include <file> — equivalent to {#sinclude 'file'} *)
+(*{syspath:'lib'}*)
+(*{#:0 '_util.iec'}*)
+(* _util.iec — Utility included via syspath *)
+
+
+
+(*{#:10 'iec_61131-3/samples/include.iec'}*)
+
+program Main
+var
+    buf: string[256];
+    ver: int;
+    loaded: int;
+end_var
+(*{st}*)
+ver := 1;
+loaded := 1;
+(*{end}*)
+end_program

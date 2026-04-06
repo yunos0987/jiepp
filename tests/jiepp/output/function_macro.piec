@@ -1,0 +1,19 @@
+(*{#:0 'tests/jiepp/input/function_macro.iec'}*)
+
+
+
+
+
+
+
+
+
+
+
+
+
+function add_int: int var_input 	in1, in2: int; end_var (*{st}*) add_int := in1 + in2; (*{end}*) end_function;
+function mul_int: int var_input 	in1, in2: int; end_var (*{st}*) mul_int := in1 * in2; (*{end}*) end_function;
+
+function add_lreal: lreal var_input 	in1, in2: lreal; end_var (*{st}*) add_lreal := in1 + in2; (*{end}*) end_function;
+function mul_lreal: lreal var_input 	in1, in2: lreal; end_var (*{st}*) mul_lreal := in1 * in2; (*{end}*) end_function;

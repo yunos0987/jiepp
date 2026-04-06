@@ -1,0 +1,7 @@
+program Main
+__COUNTER__;
+//{st}
+__COUNTER__;
+//{end}
+__COUNTER__;
+end

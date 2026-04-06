@@ -1,0 +1,23 @@
+(*{#:0 'tests/jiepp/input/include_double.iec'}*)
+0;
+(*{#:0 './a.iec'}*)
+// a.iec begin
+
+
+1;
+'./a.iec';
+6;
+// a.iec end
+(*{#:2 'tests/jiepp/input/include_double.iec'}*)
+a;
+(*{#:0 './b.iec'}*)
+// b.iec begin
+
+
+2;
+'./b.iec';
+6;
+// b.iec end
+(*{#:4 'tests/jiepp/input/include_double.iec'}*)
+b;
+3;

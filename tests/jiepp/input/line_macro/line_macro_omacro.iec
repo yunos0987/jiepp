@@ -1,0 +1,22 @@
+{#define M $
+    2$
+    $
+}
+
+{#define $
+    N $
+    $
+    3$
+    $
+    $
+}
+
+program Main
+{st}
+__LINE__;
+M
++
+N;
+__LINE__;
+{end}
+end_program

@@ -1,0 +1,10 @@
+
+{st:}
+__FILE__;
+{#line 2 "a.iec"}
+__FILE__;
+{#line 3 "./a.iec"}
+__FILE__;
+{#line 5 "./../a.iec"}
+__FILE__;
+{end:}

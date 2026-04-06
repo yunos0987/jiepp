@@ -1,0 +1,6 @@
+{#info}
+{#include 'b.iec'}
+{#info}
+{#include 'b.iec'}
+{#info}
+{#error error}

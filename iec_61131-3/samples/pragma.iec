@@ -1,0 +1,16 @@
+(* pragma.iec - Preprocessor control directives *)
+
+{#max_expansion_depth 128}
+{#max_if_nesting 64}
+{#max_include_depth 100}
+
+{#define X 42}
+
+program Main
+var
+    v: int;
+end_var
+{st}
+v := X;
+{end}
+end_program

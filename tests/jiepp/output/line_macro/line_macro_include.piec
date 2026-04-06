@@ -1,0 +1,28 @@
+(*{#:0 'tests/jiepp/input/line_macro/line_macro_include.iec'}*)
+(*{#:0 'a.iec'}*)
+program a0
+(*{st}*)2;(*{end}*)
+end_program
+
+(*{#:0 'b.iec'}*)
+1;(*{#:0 'c.iec'}*)
+
+
+program c
+(*{st}*)4;(*{end}*)
+end_program
+(*{#:1 'b.iec'}*);1;
+
+program b
+(*{st}*)4;(*{end}*)
+end_program
+(*{#:5 'a.iec'}*)
+
+program a1
+(*{st}*)8;(*{end}*)
+end_program
+(*{#:1 'tests/jiepp/input/line_macro/line_macro_include.iec'}*)
+
+program X
+(*{st}*)4;(*{end}*)
+end_program

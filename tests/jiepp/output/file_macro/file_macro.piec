@@ -1,0 +1,9 @@
+(*{#:0 'tests/jiepp/input/file_macro/file_macro.iec'}*)
+
+program Main
+'tests/jiepp/input/file_macro/file_macro.iec';
+(*{st}*)
+'tests/jiepp/input/file_macro/file_macro.iec';
+(*{end}*)
+'tests/jiepp/input/file_macro/file_macro.iec';
+end

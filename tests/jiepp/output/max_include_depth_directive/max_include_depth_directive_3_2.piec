@@ -1,0 +1,5 @@
+(*{#:0 'tests/jiepp/input/max_include_depth_directive/max_include_depth_directive_3_2.iec'}*)
+
+(*{#:0 'depth_0.iec'}*)
+program Main end_program
+(*{#:2 'tests/jiepp/input/max_include_depth_directive/max_include_depth_directive_3_2.iec'}*)

@@ -1,0 +1,15 @@
+(*{#:0 'iec_61131-3/samples/function_macro.iec'}*)
+(* function_macro.iec - Function macros *)
+
+
+
+
+program Main
+var
+    x, y, result: int;
+end_var
+(*{st}*)
+result := if (x) > (y) then (x) else (y) end_if;
+result := if (0) > (if (x) > (100) then (100) else (x) end_if) then (0) else (if (x) > (100) then (100) else (x) end_if) end_if;
+(*{end}*)
+end_program

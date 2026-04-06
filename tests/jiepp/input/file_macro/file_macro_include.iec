@@ -1,0 +1,7 @@
+{#include "a.iec"}
+{#include "./b.iec"}
+{#include "./../file_macro/c.iec"}
+
+program Main
+{st}__FILE__;{end}
+end

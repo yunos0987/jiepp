@@ -1,0 +1,13 @@
+(*{#:0 'tests/jiepp/input/stringize_directive.iec'}*)
+
+
+program Main
+var
+    s1: string := 'hello';
+    s2: string := 'world';
+end
+(*{st}*)
+s1 := '9';
+s2 := '0.1';
+(*{end}*)
+end

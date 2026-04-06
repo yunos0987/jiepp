@@ -1,0 +1,18 @@
+(*{#:0 'iec_61131-3/samples/define.iec'}*)
+(* define.iec - Object macros and #undef *)
+
+
+
+
+program Main
+var
+    r, area, force, mass: lreal;
+end_var
+(*{st}*)
+area := 3.14159 * r * r;
+
+
+area := 3.14 * r * r;
+force := mass * 9.81;
+(*{end}*)
+end_program

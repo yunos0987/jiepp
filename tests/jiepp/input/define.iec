@@ -1,0 +1,38 @@
+{#define N 2}
+{#define M N + 3}
+{#define n m + 5}
+{#define m l + 7}
+
+program Main
+var
+    i: dint;
+end
+{st}
+i := N;
+i := M;
+i := n;
+i := m;
+{end}
+end
+
+
+
+{#define DDD 2}
+{#define EEE DDD}
+{#undef DDD}
+{#define DDD 3}
+program DefUndef
+{st}
+EEE;
+{end}
+end
+
+
+
+{#define F fff}
+program F
+{st}
+__FUNC__;
+__NAME__;
+{end}
+end

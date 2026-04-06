@@ -1,0 +1,47 @@
+# Source code
+*.cpp text eol=lf
+*.hpp text eol=lf
+*.def text eol=lf
+*.h text eol=lf
+*.c text eol=lf
+
+# IEC 61131-3
+*.iec -text
+*.piec -text
+*.jiec -text
+
+# Build / config
+*.cmake text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+CMakeLists.txt text eol=lf
+Makefile text eol=lf
+
+# Documentation
+*.md text eol=lf
+*.txt text eol=lf
+LICENSE text eol=lf
+VERSION text eol=lf
+
+# Shell scripts
+*.sh text eol=lf
+
+# Windows batch
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=lf
+
+# Flex / Bison
+*.l text eol=lf
+*.ll text eol=lf
+*.y text eol=lf
+*.yy text eol=lf
+
+# Binary files (do not diff/merge)
+*.dll binary
+*.lib binary
+*.exe binary
+*.a binary
+*.so binary
+*.o binary

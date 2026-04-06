@@ -1,0 +1,17 @@
+(* define.iec - Object macros and #undef *)
+
+{#define PI 3.14159}
+{#define GRAVITY 9.81}
+
+program Main
+var
+    r, area, force, mass: lreal;
+end_var
+{st}
+area := PI * r * r;
+{#undef PI}
+{#define PI 3.14}
+area := PI * r * r;
+force := mass * GRAVITY;
+{end}
+end_program

@@ -1,0 +1,16 @@
+program X
+__LINE__;
+__LINE__;__LINE__;
+{st}
+__LINE__;
+__LINE__;__LINE__;
+{#line 10}
+__LINE__;
+//{#line 20}
+__LINE__;
+__LINE__;{#set-line 30}__LINE__;
+__LINE__;
+{end}
+{#set-line 40}
+__LINE__;
+end

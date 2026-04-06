@@ -1,0 +1,12 @@
+{#define __ROTATE_I(x, ...) __VA_ARGS__,x}
+{#define ROTATE(...) __ROTATE_I(__VA_ARGS__)}
+
+{#define ROTATE0(...) __VA_ARGS__}
+{#define ROTATE1(...) ROTATE(__VA_ARGS__)}
+{#define ROTATE2(...) ROTATE(ROTATE1(__VA_ARGS__))}
+{#define ROTATE3(...) ROTATE(ROTATE2(__VA_ARGS__))}
+
+ROTATE0(1, 2, 3);
+ROTATE1(1, 2, 3);
+ROTATE2(1, 2, 3);
+ROTATE3(1, 2, 3);

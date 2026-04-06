@@ -1,0 +1,22 @@
+(* logging_macro.iec - Variadic logging macros using __VA_ARGS__ + __LINE__ + {##} *)
+
+{#define LOG_PREFIX(level) @level}
+{#define LOG_INFO(...) log_message(LOG_PREFIX(INFO), __VA_ARGS__)}
+{#define LOG_WARN(...) log_message(LOG_PREFIX(WARN), __VA_ARGS__)}
+{#define LOG_ERROR(...) log_message(LOG_PREFIX(ERROR), __VA_ARGS__)}
+
+function_block Logger
+var_input
+    enable: bool;
+end_var
+var
+    msg: string[255];
+end_var
+{st}
+if enable then
+    LOG_INFO('System started');
+    LOG_WARN('Low memory', ' threshold=', {## 1024});
+    LOG_ERROR('Sensor failure');
+end_if;
+{end}
+end_function_block

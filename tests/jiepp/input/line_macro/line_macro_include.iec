@@ -1,0 +1,5 @@
+{#include "a.iec"}
+
+program X
+{st}__LINE__;{end}
+end_program

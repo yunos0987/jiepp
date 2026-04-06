@@ -1,0 +1,22 @@
+{#include './boost/preprocessor/library.hpp'}
+///{#include <boost/preprocessor/repetition/repeat.hpp>}
+///{#include './boost/preprocessor/config/config.hpp'}
+
+{#define DEFINE_IN_VAR(z, n, data) BOOST_PP_CAT(in, BOOST_PP_ADD(n, 1)): data;}
+{#define SUM_IN_VARS(z, n, data) BOOST_PP_IF(n, +, ) BOOST_PP_CAT(in, BOOST_PP_ADD(n, 1))}
+
+{#define DEFINE_ADD_FUNCTION(z, n, data) $
+function BOOST_PP_CAT(add_, BOOST_PP_CAT(BOOST_PP_CAT(data, _), BOOST_PP_ADD(n, 2))): data $
+var_input $
+    BOOST_PP_REPEAT(BOOST_PP_ADD(n, 2), DEFINE_IN_VAR, data) $
+end_var $
+${st$} $
+BOOST_PP_CAT(add_, BOOST_PP_CAT(BOOST_PP_CAT(data, _), BOOST_PP_ADD(n, 2))) := BOOST_PP_REPEAT(BOOST_PP_ADD(n, 2), SUM_IN_VARS, _); $
+${end$} $
+end_function $
+}
+
+BOOST_PP_REPEAT(8, DEFINE_ADD_FUNCTION, int)
+
+{#undef SUM_IN_VARS}
+{#undef DEFINE_IN_VAR}

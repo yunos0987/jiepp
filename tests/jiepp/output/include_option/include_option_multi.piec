@@ -1,0 +1,6 @@
+(*{#:0 'tests/jiepp/input/include_option/header.iec'}*)
+
+(*{#:0 'tests/jiepp/input/include_option/header2.iec'}*)
+
+(*{#:0 'tests/jiepp/input/include_option/include_option_multi.iec'}*)
+100

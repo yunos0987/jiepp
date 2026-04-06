@@ -1,0 +1,81 @@
+// JIEPP_ISSUE_CODE(enum_name, id, severity, message_str)
+//
+// ID ranges (2-digit, PP prefix):
+//   01-09  System/Fatal
+//   10-19  File/IO
+//   20-29  Lexical/Syntax
+//   30-39  Macro
+//   40-49  Directive/Operand
+//   50-59  Expression
+//   60-69  Runtime/Limit
+//   70-79  CLI/Option
+//   80-89  (reserved)
+//   90-99  Message passthrough
+
+JIEPP_ISSUE_CODE(SUCCESS,                      0, INFO,    "Operation completed successfully")
+
+// --- System/Fatal (01-09) ---
+JIEPP_ISSUE_CODE(FATAL,                        1, SEVERE,  "A fatal error occurred.")
+JIEPP_ISSUE_CODE(OPERATION_NOT_ALLOWED,        2, SEVERE,  "Operation not allowed")
+JIEPP_ISSUE_CODE(RECURSION_LIMIT_EXCEEDED,     3, SEVERE,  "Failed to set recursion limit")
+JIEPP_ISSUE_CODE(PARAMETER_VALUE_OVERFLOW,     4, SEVERE,  "Parameter value exceeds maximum (2^24)")
+
+// --- File/IO (10-19) ---
+JIEPP_ISSUE_CODE(FILE_ERROR,                  10, ERROR,   "An error occurred with the file")
+JIEPP_ISSUE_CODE(FILE_NOT_FOUND,              11, ERROR,   "No such file or directory")
+JIEPP_ISSUE_CODE(MAX_INCLUDE_DEPTH_EXCEEDED,  12, ERROR,   "Maximum include depth exceeded")
+JIEPP_ISSUE_CODE(INVALID_COMMAND,             13, ERROR,   "Invalid command")
+
+// --- Lexical/Syntax (20-29) ---
+JIEPP_ISSUE_CODE(UNCLOSED_COMMENT,            20, ERROR,   "Unclosed comment")
+JIEPP_ISSUE_CODE(INVALID_ESCAPE_SEQUENCE,     21, ERROR,   "Invalid escape sequence")
+JIEPP_ISSUE_CODE(INVALID_PRAGMA_SYNTAX,       22, ERROR,   "Invalid syntax for pragma")
+JIEPP_ISSUE_CODE(INVALID_PP_SYNTAX,           23, ERROR,   "Invalid preprocessor syntax")
+JIEPP_ISSUE_CODE(UNTERMINATED_CONDITIONAL,    24, ERROR,   "Unterminated conditional directive")
+JIEPP_ISSUE_CODE(ELIF_ERROR,                  25, ERROR,   "Unexpected elif directive")
+JIEPP_ISSUE_CODE(ELSE_ERROR,                  26, ERROR,   "Unexpected else directive")
+JIEPP_ISSUE_CODE(ENDIF_ERROR,                 27, ERROR,   "Unexpected endif directive")
+
+// --- Macro (30-39) ---
+JIEPP_ISSUE_CODE(INVALID_DEFINE_SYNTAX,       30, ERROR,   "Invalid define syntax")
+JIEPP_ISSUE_CODE(INVALID_STRINGIZING,         31, ERROR,   "Invalid stringizing (@)")
+JIEPP_ISSUE_CODE(INVALID_TOKEN_PASTING,       32, ERROR,   "Invalid token pasting (@@)")
+JIEPP_ISSUE_CODE(INVALID_VARIADIC_PLACEMENT,  33, ERROR,   "'...' must be the last parameter")
+JIEPP_ISSUE_CODE(ARGUMENT_COUNT_MISMATCH,     34, ERROR,   "Argument count mismatch")
+JIEPP_ISSUE_CODE(MACRO_REDEFINED,             35, WARNING, "Macro redefined")
+JIEPP_ISSUE_CODE(DUPLICATE_MACRO_PARAMETER,   36, ERROR,   "Duplicate macro parameter name")
+
+// --- Directive/Operand (40-49) ---
+JIEPP_ISSUE_CODE(INVALID_DEFINED_OPERAND,     40, ERROR,   "Invalid operand for 'defined'")
+JIEPP_ISSUE_CODE(INVALID_SETLINE_OPERAND,     41, ERROR,   "Invalid operand for 'set_line'")
+JIEPP_ISSUE_CODE(INVALID_IGNORE_OPERAND,      42, ERROR,   "Invalid operand for 'ignore'")
+JIEPP_ISSUE_CODE(INVALID_LIMIT_OPERAND,       43, ERROR,   "Invalid operand for limit directive")
+JIEPP_ISSUE_CODE(INVALID_PARAMETER_VALUE,     44, ERROR,   "Invalid parameter value")
+JIEPP_ISSUE_CODE(UNKNOWN_DIRECTIVE,           45, WARNING, "Unknown directive")
+JIEPP_ISSUE_CODE(INVALID_DIRECTIVE_NAME,      46, ERROR,   "Invalid directive name")
+JIEPP_ISSUE_CODE(INVALID_PATH,                47, ERROR,   "Invalid path")
+
+// --- Expression (50-59) ---
+JIEPP_ISSUE_CODE(EXPR_TYPE_ERROR,             50, ERROR,   "Type error in expression")
+JIEPP_ISSUE_CODE(MISSING_EXPRESSION,          51, ERROR,   "Missing expression")
+JIEPP_ISSUE_CODE(INVALID_EXPRESSION,          52, ERROR,   "Invalid expression")
+
+// --- Runtime/Limit (60-69) ---
+JIEPP_ISSUE_CODE(MAX_EXPANSION_DEPTH_EXCEEDED, 60, ERROR,  "Maximum expansion depth exceeded")
+JIEPP_ISSUE_CODE(MAX_IF_NESTING_EXCEEDED,      61, ERROR,   "Maximum conditional nesting depth exceeded")
+JIEPP_ISSUE_CODE(SANDBOX_RESTRICTED_DIRECTIVE, 62, ERROR,   "Directive is restricted in sandbox mode")
+
+// --- CLI/Option (70-79) ---
+JIEPP_ISSUE_CODE(UNKNOWN_OPTION,               70, ERROR,   "Unknown command-line option")
+JIEPP_ISSUE_CODE(INVALID_OPTION_VALUE,         71, ERROR,   "Invalid option value")
+JIEPP_ISSUE_CODE(MISSING_OPTION_VALUE,         72, ERROR,   "Option requires a value")
+JIEPP_ISSUE_CODE(INVALID_MACRO_DEF,            73, ERROR,   "Invalid macro definition")
+JIEPP_ISSUE_CODE(RECURSION_LIMIT_RANGE,        74, ERROR,   "Recursion limit value out of range")
+JIEPP_ISSUE_CODE(THREAD_CREATE_FAILED,         75, ERROR,   "Failed to create worker thread")
+JIEPP_ISSUE_CODE(STACK_LIMIT_FAILED,           76, ERROR,   "Failed to set stack limit")
+
+// --- Message passthrough (90-99) ---
+JIEPP_ISSUE_CODE(SEVERE_MESSAGE,               90, SEVERE,  "#severe")
+JIEPP_ISSUE_CODE(ERROR_MESSAGE,                91, ERROR,   "#error")
+JIEPP_ISSUE_CODE(WARNING_MESSAGE,              92, WARNING, "#warning")
+JIEPP_ISSUE_CODE(INFO_MESSAGE,                 93, INFO,    "#info")

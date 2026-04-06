@@ -1,0 +1,14 @@
+(* syspath.iec — #syspath + #sinclude: system-path-only include *)
+(* #sinclude searches system paths only, equivalent to #include <...> *)
+
+{#syspath 'lib'}
+{#sinclude '_util.iec'}
+
+program Main
+var
+    v: int;
+end_var
+{st}
+v := ABS(-10);
+{end}
+end_program

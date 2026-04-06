@@ -1,0 +1,12 @@
+(*{#:0 'iec_61131-3/samples/ignore.iec'}*)
+(* ignore.iec - Suppress error codes with #ignore *)
+
+(* Suppress warnings for undefined directives *)
+
+
+(*{#:999}*)
+
+program Main
+(*{st}*)
+(*{end}*)
+end_program

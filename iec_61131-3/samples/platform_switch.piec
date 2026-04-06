@@ -1,0 +1,31 @@
+(*{#:0 'iec_61131-3/samples/platform_switch.iec'}*)
+(* platform_switch.iec - Multi-platform switching with #if/#elif *)
+
+
+
+
+  
+  
+  
+
+
+
+
+
+
+
+
+
+
+
+
+program Main
+var
+    timer1: TON;
+    counter1: CTU;
+    io_count: int;
+end_var
+(*{st}*)
+io_count := 2048;
+(*{end}*)
+end_program

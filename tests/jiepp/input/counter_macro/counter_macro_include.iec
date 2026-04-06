@@ -1,0 +1,7 @@
+{#include  "a.iec"  }
+
+program Main
+{st}__COUNTER__;{end}
+end
+
+{#include'a.iec'}

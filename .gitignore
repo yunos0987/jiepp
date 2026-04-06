@@ -1,0 +1,18 @@
+/build
+/vcpkg_installed
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test output
+/tests/jiepp/input/**/*.piec
+/tests/jiepp/input/**/*.log
+/tests/jiepp/input/**/*.d
+/tests/jiepp/output/**/*.error.piec

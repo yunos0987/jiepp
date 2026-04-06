@@ -1,0 +1,19 @@
+(*{#:0 'iec_61131-3/samples/variadic.iec'}*)
+(* variadic.iec - __VA_ARGS__ and __VA_ARGC__ *)
+
+
+
+
+
+
+program Main
+var
+    n: int;
+end_var
+(*{st}*)
+print(1,2,3);
+n := 3;
+n := 10;
+print(2,3);
+(*{end}*)
+end_program

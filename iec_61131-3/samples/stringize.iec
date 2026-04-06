@@ -1,0 +1,14 @@
+(* stringize.iec - @ stringification operator *)
+
+{#define STR(x) @x}
+
+program Main
+var
+    s1, s2, s3: string[255];
+end_var
+{st}
+s1 := STR(Hello World);
+s2 := {## 123 + 456};
+s3 := {## __LINE__};
+{end}
+end_program

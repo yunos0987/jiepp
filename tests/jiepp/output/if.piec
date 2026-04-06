@@ -1,0 +1,52 @@
+(*{#:0 'tests/jiepp/input/if.iec'}*)
+
+program Main1 (*{st:}*)2;(*{end:}*)end_program
+
+
+
+
+
+
+
+program Main3_1 (*{st:}*)10;(*{end:}*)end_program
+
+
+
+
+
+
+
+program Main4_2 (*{st:}*)18;(*{end:}*)end_program
+
+
+
+
+
+
+
+program Main5_3 (*{st:}*)26;(*{end:}*)end_program
+
+
+
+
+
+program Main6_2 (*{st:}*)32;(*{end:}*)end_program
+
+
+
+
+
+program Main7_1 (*{st:}*)38;(*{end:}*)end_program
+
+
+
+
+
+
+
+program Main8_1 (*{st:}*)46;(*{end:}*)end_program
+
+
+
+
+

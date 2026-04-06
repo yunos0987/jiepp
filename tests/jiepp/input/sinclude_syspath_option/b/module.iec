@@ -1,0 +1,7 @@
+
+program b
+{st:}
+__LINE__;
+__COUNTER__;
+{end:}
+end_program

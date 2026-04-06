@@ -1,0 +1,13 @@
+(*{#:0 'tests/jiepp/input/sinclude_with_syspath_directive/sinclude_with_syspath_directive_x_a.iec'}*)
+
+(*{syspath:'tests/jiepp/input/sinclude_with_syspath_directive'}*)
+(*{syspath:'tests/jiepp/input/sinclude_with_syspath_directive/a'}*)
+(*{#:0 'module.iec'}*)
+
+program x
+(*{st:}*)
+4;
+0;
+(*{end:}*)
+end_program
+(*{#:4 'tests/jiepp/input/sinclude_with_syspath_directive/sinclude_with_syspath_directive_x_a.iec'}*)

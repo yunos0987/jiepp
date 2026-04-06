@@ -1,0 +1,5 @@
+{#include	"b.iec"}
+
+program a{### __COUNTER__}
+{st}__COUNTER__;{end}
+end_program

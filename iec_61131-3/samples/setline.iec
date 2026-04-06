@@ -1,0 +1,14 @@
+(* setline.iec - Set line numbers with #line / #set_line *)
+
+{#line 100}
+
+program Main
+var
+    line_a, line_b: int;
+end_var
+{st}
+line_a := __LINE__;
+{#set_line 200 'virtual.iec'}
+line_b := __LINE__;
+{end}
+end_program

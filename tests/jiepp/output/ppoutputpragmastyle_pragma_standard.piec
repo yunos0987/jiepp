@@ -1,0 +1,3 @@
+{#:0 'tests/jiepp/input/ppoutputpragmastyle_pragma_standard.iec'}
+{#:3}
+program {id Main} end

@@ -1,0 +1,2 @@
+{#syspath 'tests/jiepp/input/include_with_syspath_directive'}
+{#  include  <module.iec>}

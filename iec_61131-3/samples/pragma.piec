@@ -1,0 +1,17 @@
+(*{#:0 'iec_61131-3/samples/pragma.iec'}*)
+(* pragma.iec - Preprocessor control directives *)
+
+
+
+
+
+
+
+program Main
+var
+    v: int;
+end_var
+(*{st}*)
+v := 42;
+(*{end}*)
+end_program

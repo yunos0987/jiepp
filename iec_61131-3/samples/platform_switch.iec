@@ -1,0 +1,30 @@
+(* platform_switch.iec - Multi-platform switching with #if/#elif *)
+
+{#define TARGET_OMRON 1}
+
+{#if defined(TARGET_OMRON)}
+  {#define FB_TIMER TON}
+  {#define FB_COUNTER CTU}
+  {#define MAX_IO 2048}
+{#elif defined(TARGET_MITSUBISHI)}
+  {#define FB_TIMER Timer_100ms}
+  {#define FB_COUNTER UpCounter}
+  {#define MAX_IO 1024}
+{#elif defined(TARGET_SIEMENS)}
+  {#define FB_TIMER TON_TIME}
+  {#define FB_COUNTER CTU_INT}
+  {#define MAX_IO 4096}
+{#else}
+  {#error 'Unknown target platform. Define TARGET_OMRON, TARGET_MITSUBISHI, or TARGET_SIEMENS.'}
+{#endif}
+
+program Main
+var
+    timer1: FB_TIMER;
+    counter1: FB_COUNTER;
+    io_count: int;
+end_var
+{st}
+io_count := MAX_IO;
+{end}
+end_program

@@ -1,0 +1,6 @@
+__COUNTER__;
+{#include    './a.iec' }
+{###: T};
+{#include './b.iec'}
+{###: T};
+__COUNTER__;

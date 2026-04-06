@@ -1,0 +1,23 @@
+(*{#:0 'tests/jiepp/input/line_macro/line_macro_omacro.iec'}*)
+
+
+
+
+
+
+
+
+
+
+
+
+
+program Main
+(*{st}*)
+16;
+2
++
+3;
+20;
+(*{end}*)
+end_program

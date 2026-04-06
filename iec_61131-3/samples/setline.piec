@@ -1,0 +1,15 @@
+(*{#:0 'iec_61131-3/samples/setline.iec'}*)
+(* setline.iec - Set line numbers with #line / #set_line *)
+
+(*{#:100}*)
+
+program Main
+var
+    line_a, line_b: int;
+end_var
+(*{st}*)
+line_a := 107;
+(*{#:200 'virtual.iec'}*)
+line_b := 201;
+(*{end}*)
+end_program

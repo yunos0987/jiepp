@@ -1,0 +1,4 @@
+{#max-include-depth 3}
+{#syspath './tests/jiepp/input/max_include_depth_directive/lib0'}
+{#syspath './tests/jiepp/input/max_include_depth_directive/lib1'}
+{#syspath './tests/jiepp/input/max_include_depth_directive/lib2'}

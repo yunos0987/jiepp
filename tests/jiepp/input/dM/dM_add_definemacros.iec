@@ -1,0 +1,6 @@
+{#define b 3}
+{#define s x$ty}
+{#define f(x, y) x + y}
+{#undef _JIEPP_FULL_VER}
+{#undef _JIEPP_VER}
+{#undef _JIEPP_VERSION}

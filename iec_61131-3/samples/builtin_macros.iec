@@ -1,0 +1,26 @@
+(* builtin_macros.iec - Built-in macros *)
+
+program Main
+var
+    line_num: int;
+    inc_level: int;
+    counter1, counter2, counter3: int;
+    file_name: string[255];
+    file_name_only: string[255];
+    base_name: string[255];
+end_var
+{st}
+line_num := __LINE__;
+inc_level := __INCLUDE_LEVEL__;
+file_name := __FILE__;
+file_name_only := __FILE_NAME__;
+base_name := __BASE_FILE__;
+counter1 := __COUNTER__;
+counter2 := __COUNTER__;
+counter3 := __COUNTER__;
+{#if __has_include('_header.iec')}
+(* _header.iec exists *)
+{#include '_header.iec'}
+{#endif}
+{end}
+end_program
