@@ -115,7 +115,7 @@ TEST_F(OptionTest, ParseArgsMaxOptions) {
                     const_cast<char*>("--max-include-depth"), const_cast<char*>("10"),
                     const_cast<char*>("--max-expansion-depth"), const_cast<char*>("32"),
                     const_cast<char*>("--max-if-nesting"), const_cast<char*>("16")};
-    auto opts = parse_args(9, argv);
+    auto opts = parse_args(7, argv);
     ASSERT_TRUE(opts.max_include_depth.has_value());
     EXPECT_EQ(*opts.max_include_depth, 10);
     ASSERT_TRUE(opts.max_expansion_depth.has_value());
