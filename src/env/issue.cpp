@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 #include "issue_message.hpp"
 #include "env.hpp"
@@ -164,6 +165,7 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
 
 void Issue::fatal(std::string context, std::source_location loc) {
     happen(Code::FATAL, std::move(context), loc);
+    throw std::logic_error("unreachable");
 }
 
 // ---------------------------------------------------------------------------
