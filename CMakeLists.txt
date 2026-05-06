@@ -20,12 +20,6 @@ if(JIEPP_STATIC_LINK)
     add_link_options(-static)
 endif()
 
-# Debug: enable sanitizers for early bug detection (Linux/WSL only)
-if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=address,undefined)
-endif()
-
 # Raise clang optimization for Release builds
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     add_compile_options(-O3)
