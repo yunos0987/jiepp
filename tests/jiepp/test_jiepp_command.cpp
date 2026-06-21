@@ -458,7 +458,7 @@ TEST_F(JieppCommandTest, IncludeOptionMultiple) {
 // ---- Additional coverage: multiple -U ----
 
 TEST_F(JieppCommandTest, UndefMultiple) {
-    run_e2e("dM/dM_undef_multiple", {}, {{"A", "1"}, {"B", "2"}}, std::nullopt, false, -1, true, "",
+    run_e2e("dM/dM_undef_multiple", {}, {{"A", "1"}, {"B", "2"}, {"_JIEPP_FULL_VER", "75321"}, {"_JIEPP_VER", "753"}, {"_JIEPP_VERSION", "'7.53.21'"}}, std::nullopt, false, -1, true, "",
             {}, {"A"});
 }
 

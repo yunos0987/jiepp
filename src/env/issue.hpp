@@ -82,7 +82,7 @@ public:
 
     // ---- Issue a diagnostic ----
     static void happen(Code code, std::string context = "", std::source_location loc = std::source_location::current());
-    static void fatal(std::string context = "", std::source_location loc = std::source_location::current());
+    [[noreturn]] static void fatal(std::string context = "", std::source_location loc = std::source_location::current());
 
     static std::ostream* stream_;
     static std::vector<Issue::LocationEntry> loc_stack_;

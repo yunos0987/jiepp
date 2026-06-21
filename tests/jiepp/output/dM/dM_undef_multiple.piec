@@ -41,7 +41,7 @@
 {#define __BITS32_TYPE dword}
 {#define __BITS64_TYPE lword}
 {#define _JIEPP true}
-{#define _JIEPP_FULL_VER 200}
-{#define _JIEPP_VER 2}
-{#define _JIEPP_VERSION $'0.2.0$'}
+{#define _JIEPP_FULL_VER 75321}
+{#define _JIEPP_VER 753}
+{#define _JIEPP_VERSION $'7.53.21$'}
 {#define B 2}
