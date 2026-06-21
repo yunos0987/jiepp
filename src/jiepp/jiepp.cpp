@@ -108,10 +108,18 @@ int jiepp_command(const JieppOptions& opts)
         std::vector<Token> ots;
 
         // -include: force-include files before main input
-        for (const auto& include_filepath : opts.include_filepaths)
-            expand(include_filepath, Loader::LoadType::INCLUDE, ots, env, include_filepath);
+        for (const auto& include_filepath : opts.include_filepaths) {
+            auto include_disppath = fs::path(include_filepath).generic_string();
+            expand(include_filepath, Loader::LoadType::INCLUDE, ots, env, include_disppath);
+        }
 
-        std::string dispath = opts.disppath.value_or(opts.input_filepaths.empty() ? "<stdin>" : opts.input_filepaths[0]);
+        std::string dispath;
+        if (opts.disppath.has_value())
+            dispath = fs::path(*opts.disppath).generic_string();
+        else if (!opts.input_filepaths.empty())
+            dispath = fs::path(opts.input_filepaths[0]).generic_string();
+        else
+            dispath = "<stdin>";
 
         if (opts.input_filepaths.empty() || ((opts.input_filepaths.size() == 1) && (opts.input_filepaths[0] == "-"))) {
             env.push_file("<stdin>");
