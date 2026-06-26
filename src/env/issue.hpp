@@ -4,9 +4,10 @@
 #include <optional>
 #include <ostream>
 #include <set>
-#ifdef __cpp_lib_source_location
+#if __has_include(<source_location>)
 #  include <source_location>
-#else
+#endif
+#ifndef __cpp_lib_source_location
 // Minimal source_location substitute using compiler builtins
 // (Clang < 15 with old libstdc++, or GCC < 10)
 #  include <cstdint>
