@@ -72,3 +72,15 @@ const std::vector<std::string>& FileContext::syspaths() const {
 void FileContext::add_dependency(std::string resolved_path, std::string display_path, bool is_system) {
     deps_.emplace_back(Dependency{std::move(display_path), std::move(resolved_path), is_system});
 }
+
+// ---------------------------------------------------------------------------
+// pragma once
+// ---------------------------------------------------------------------------
+
+void FileContext::record_pragma_once(const std::string& absolute_path) {
+    once_files_.insert(absolute_path);
+}
+
+bool FileContext::is_pragma_once_seen(const std::string& absolute_path) const {
+    return once_files_.count(absolute_path) > 0;
+}

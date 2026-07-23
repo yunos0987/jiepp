@@ -44,6 +44,7 @@ JIEPP_ISSUE_CODE(INVALID_VARIADIC_PLACEMENT,  33, ERROR,   "'...' must be the la
 JIEPP_ISSUE_CODE(ARGUMENT_COUNT_MISMATCH,     34, ERROR,   "Argument count mismatch")
 JIEPP_ISSUE_CODE(MACRO_REDEFINED,             35, WARNING, "Macro redefined")
 JIEPP_ISSUE_CODE(DUPLICATE_MACRO_PARAMETER,   36, ERROR,   "Duplicate macro parameter name")
+JIEPP_ISSUE_CODE(INVALID_VA_OPT,              37, ERROR,   "Invalid __VA_OPT__")
 
 // --- Directive/Operand (40-49) ---
 JIEPP_ISSUE_CODE(INVALID_DEFINED_OPERAND,     40, ERROR,   "Invalid operand for 'defined'")

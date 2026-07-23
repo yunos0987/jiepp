@@ -103,6 +103,46 @@ Token stringize_tokens(const std::vector<Token>& ts) {
     return Token::create(Token::STRING, Util::encode_iec_string(text, '\''));
 }
 
+// ── §Support functions: __VA_OPT__ helpers ────────────────────────
+
+// Returns true when __VA_ARGS__ actual is non-empty for the given macro call.
+static bool va_args_non_empty(
+    const std::unordered_map<std::string, std::pair<int, bool>>& formal_params,
+    const std::vector<std::vector<Token>>& actual_params) {
+    auto it = formal_params.find(FunctionMacro::VA_ARGS);
+    if (it == formal_params.end()) return false;
+    auto [va_idx, is_va] = it->second;
+    return !select_arg(va_idx, actual_params, is_va).empty();
+}
+
+// Collects the token sequence inside __VA_OPT__(...), handling nested parens.
+// `from` is the index in `body` just after the __VA_OPT__ token.
+// Returns the index of the closing ')' on success, or body.size() on parse error.
+static std::size_t collect_va_opt_content(
+    const std::vector<Token>& body,
+    std::size_t from,
+    std::vector<Token>& content) {
+    std::size_t j = from;
+    while (j < body.size() && (body[j].type & Token::MASK_WS)) ++j;
+    if (j >= body.size() || body[j].type != Token::LP) return body.size();
+    ++j; // skip opening '('
+    int depth = 1;
+    while (j < body.size()) {
+        const auto& bt = body[j];
+        if (bt.type == Token::LP) {
+            ++depth;
+        } else if (bt.type == Token::RP) {
+            if (--depth == 0) break;
+        } else if (bt.type == Token::ANY && bt.text == FunctionMacro::VA_OPT) {
+            ISSUE(INVALID_VA_OPT, "nested __VA_OPT__ is not allowed");
+        }
+        content.push_back(bt);
+        ++j;
+    }
+    if (depth != 0) return body.size(); // unclosed parenthesis
+    return j; // index of matching closing ')'
+}
+
 // ── §subst — substitute args, handle stringize and paste ──────────
 
 std::vector<Token> subst(
@@ -147,16 +187,31 @@ std::vector<Token> subst(
 
             std::vector<Token> item;
             const Token& nb = body[j];
-            if (nb.type == Token::ANY) {
-                auto pit = formal_params.find(nb.text);
-                if (pit != formal_params.end()) {
-                    auto [pidx, is_va] = pit->second;
-                    item = ts_flatten(select_arg(pidx, actual_params, is_va));
+            if (nb.type == Token::ANY && nb.text == FunctionMacro::VA_OPT) {
+                // Handle:  X @@ __VA_OPT__(content)
+                std::vector<Token> content;
+                std::size_t k = collect_va_opt_content(body, j + 1, content);
+                if (k < body.size()) {
+                    if (va_args_non_empty(formal_params, actual_params))
+                        item = ts_flatten(subst(content, formal_params, actual_params, {}, env));
+                    // Empty item → glue_tokens is a no-op → left side preserved unchanged.
+                    i = k;
+                } else {
+                    item = {nb.clone()};
+                    i = j;
                 }
+            } else {
+                if (nb.type == Token::ANY) {
+                    auto pit = formal_params.find(nb.text);
+                    if (pit != formal_params.end()) {
+                        auto [pidx, is_va] = pit->second;
+                        item = ts_flatten(select_arg(pidx, actual_params, is_va));
+                    }
+                }
+                if (item.empty())
+                    item = {nb.clone()};
+                i = j;
             }
-            if (item.empty())
-                item = {nb.clone()};
-            i = j;
 
             glue_tokens(result, item);
             continue;
@@ -167,13 +222,27 @@ std::vector<Token> subst(
             std::size_t j = i + 1;
             while (j < body.size() && (body[j].type & Token::MASK_WS)) ++j;
             if (j < body.size() && body[j].type == Token::ANY) {
-                auto pit = formal_params.find(body[j].text);
-                if (pit != formal_params.end()) {
-                    auto [pidx, is_va] = pit->second;
-                    auto actual = select_arg(pidx, actual_params, is_va);
-                    result.push_back(stringize_tokens(actual));
-                    i = j;
-                    continue;
+                if (body[j].text == FunctionMacro::VA_OPT) {
+                    // Handle: @ __VA_OPT__(content) → stringize VA_OPT content or ''
+                    std::vector<Token> content;
+                    std::size_t k = collect_va_opt_content(body, j + 1, content);
+                    if (k < body.size()) {
+                        std::vector<Token> inner;
+                        if (va_args_non_empty(formal_params, actual_params))
+                            inner = subst(content, formal_params, actual_params, {}, env);
+                        result.push_back(stringize_tokens(inner));
+                        i = k;
+                        continue;
+                    }
+                } else {
+                    auto pit = formal_params.find(body[j].text);
+                    if (pit != formal_params.end()) {
+                        auto [pidx, is_va] = pit->second;
+                        auto actual = select_arg(pidx, actual_params, is_va);
+                        result.push_back(stringize_tokens(actual));
+                        i = j;
+                        continue;
+                    }
                 }
             }
             ISSUE(INVALID_STRINGIZING);
@@ -183,6 +252,28 @@ std::vector<Token> subst(
 
         // §subst case: IS is T • IS' and T is FP[i] (formal param → expand or flatten)
         if (t.type == Token::ANY) {
+            // Handle standalone __VA_OPT__(content)
+            if (t.text == FunctionMacro::VA_OPT) {
+                if (formal_params.find(FunctionMacro::VA_ARGS) == formal_params.end()) {
+                    ISSUE(INVALID_VA_OPT, "__VA_OPT__ used outside variadic macro");
+                    result.push_back(t.clone());
+                    continue;
+                }
+                std::vector<Token> content;
+                std::size_t j = collect_va_opt_content(body, i + 1, content);
+                if (j >= body.size()) {
+                    ISSUE(INVALID_VA_OPT, "__VA_OPT__ requires parenthesized argument");
+                    result.push_back(t.clone());
+                    continue;
+                }
+                if (va_args_non_empty(formal_params, actual_params)) {
+                    auto inner = subst(content, formal_params, actual_params, {}, env);
+                    for (auto& et : inner) result.push_back(et);
+                }
+                i = j; // advance past closing ')'
+                continue;
+            }
+
             auto pit = formal_params.find(t.text);
             if (pit != formal_params.end()) {
                 auto [pidx, is_va] = pit->second;

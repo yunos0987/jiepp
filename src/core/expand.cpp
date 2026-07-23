@@ -128,9 +128,17 @@ void dispatch_directive(const Token& t,
     switch (kind) {
     case DirectiveToken::DEFINE:
         jiepp::preprocessor_detail::handle_define(raw_arg, env);
+        if (env.is_dd_mode()) {
+            // Emit the original token text (already correctly encoded).
+            // raw_arg is decoded; rebuilding from it would corrupt dollar-escape sequences.
+            ots.push_back(Token::create(Token::DIRECTIVE, t.text));
+        }
         break;
     case DirectiveToken::UNDEF:
         jiepp::preprocessor_detail::handle_undef(raw_arg, env);
+        if (env.is_dd_mode()) {
+            ots.push_back(Token::create(Token::DIRECTIVE, t.text));
+        }
         break;
     case DirectiveToken::TOKENIZE:
         jiepp::preprocessor_detail::handle_tokenize(raw_arg, env, ots);
@@ -211,6 +219,9 @@ void dispatch_directive(const Token& t,
         break;
     case DirectiveToken::PP_OUTPUT_PRAGMA_STYLE:
         jiepp::preprocessor_detail::handle_pragma_style(raw_arg, env);
+        break;
+    case DirectiveToken::PRAGMA_ONCE:
+        jiepp::preprocessor_detail::handle_pragma_once(raw_arg, env);
         break;
     case DirectiveToken::NOP:
         break;
@@ -494,14 +505,17 @@ std::vector<Token>& expand(const std::string& filepath,
                            Env& env,
                            const std::string& disppath)
 {
-    if (env.num_of_files() >= env.get_max_include_depth()) {
-        ISSUE(MAX_INCLUDE_DEPTH_EXCEEDED, filepath);
-        return ots;
-    }
-
     std::string fullpath = Loader::fullpath(filepath, load_type, env);
     if (fullpath.empty()) {
         ISSUE(FILE_NOT_FOUND, filepath);
+        return ots;
+    }
+
+    // {#pragma once}: skip this file if it was already processed
+    if (env.is_pragma_once_seen(fullpath)) return ots;
+
+    if (env.num_of_files() >= env.get_max_include_depth()) {
+        ISSUE(MAX_INCLUDE_DEPTH_EXCEEDED, filepath);
         return ots;
     }
 

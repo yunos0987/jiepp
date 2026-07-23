@@ -493,3 +493,794 @@ TEST_F(JieppCommandTest, DepOutputMMCustomTarget) {
     // kludge
     //run_e2e("sinclude_with_syspath_directive/sinclude_with_syspath_directive_x_tag", {}, {}, std::nullopt, false, -1, false, "myapp.output");
 }
+
+// ---- -P flag (no line markers) tests ----
+
+TEST_F(JieppCommandTest, PSuppressesLineMarkersEmptyFile) {
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path output = tmpdir / "test_P_none.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_EQ(std::string::npos, content.find("(*{#:")) << "annotated line marker in -P output";
+    EXPECT_EQ(std::string::npos, content.find("{#:"))   << "standard line marker in -P output";
+    EXPECT_TRUE(content.empty()) << "empty-input -P output should be empty";
+}
+
+TEST_F(JieppCommandTest, PSuppressesLineMarkersWithContent) {
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path output = tmpdir / "test_P_define.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "define.iec").generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_EQ(std::string::npos, content.find("(*{#:")) << "annotated line marker in -P output";
+    EXPECT_EQ(std::string::npos, content.find("{#:"))   << "standard line marker in -P output";
+    EXPECT_NE(std::string::npos, content.find("program Main")) << "content should be preserved";
+}
+
+TEST_F(JieppCommandTest, PPreservesUserPragmas) {
+    // User IEC pragmas (non-linemarker) must NOT be suppressed by -P
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path output = tmpdir / "test_P_notdir.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "not_directive.iec").generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_EQ(std::string::npos, content.find("(*{#:")) << "line marker in -P output";
+    EXPECT_NE(std::string::npos, content.find("(*{k:v}*)")) << "user pragma suppressed by -P";
+    EXPECT_NE(std::string::npos, content.find("(*{st}*)"))  << "user pragma suppressed by -P";
+}
+
+TEST_F(JieppCommandTest, PDefaultFalseLineMarkersPresent) {
+    // Without -P, output must contain line markers
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path output = tmpdir / "test_noP_none.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.output_filepath = output.generic_string();
+    // no_line_markers = false (default)
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_NE(std::string::npos, content.find("(*{#:")) << "expected line marker absent when -P not set";
+}
+
+TEST_F(JieppCommandTest, PWithStandardStyle) {
+    // -P with standard pragma style: {#:...} markers must also be suppressed
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path output = tmpdir / "test_P_standard.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "define.iec").generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+    opts.pp_output_pragma_style = "standard";
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_EQ(std::string::npos, content.find("{#:")) << "standard line marker in -P output";
+    EXPECT_NE(std::string::npos, content.find("program Main")) << "content should be preserved";
+}
+
+TEST_F(JieppCommandTest, PDoesNotAffectDM) {
+    // -P suppresses line markers but must not remove {#define ...} macro dump output
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path output = tmpdir / "test_P_dM.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "define.iec").generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.dM = true;
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    // Macro dump ({#define NAME VALUE}) must be present
+    EXPECT_NE(std::string::npos, content.find("{#define N 2}"))   << "-P removed macro dump";
+    EXPECT_NE(std::string::npos, content.find("{#define M N + 3}")) << "-P removed macro dump";
+    // Line markers (starts with {#:) must not appear
+    EXPECT_EQ(std::string::npos, content.find("(*{#:")) << "line marker in -P + -dM output";
+    EXPECT_EQ(std::string::npos, content.find("{#:"))   << "standard line marker in -P + -dM output";
+}
+
+TEST_F(JieppCommandTest, PDoesNotAffectDeps) {
+    // -P should not affect dependency generation
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path out_P   = tmpdir / "test_P_deps.piec";
+    fs::path dep_P   = tmpdir / "test_P_deps.d";
+    fs::path out_noP = tmpdir / "test_noP_deps.piec";
+    fs::path dep_noP = tmpdir / "test_noP_deps.d";
+
+    auto run_with = [&](bool P, fs::path& out, fs::path& dep) {
+        JieppOptions opts;
+        opts.input_filepaths = {(I_DIR / "include.iec").generic_string()};
+        opts.syspaths = {I_DIR.generic_string()};
+        opts.output_filepath = out.generic_string();
+        opts.dep_mode = DepMode::ALL;
+        opts.dep_file = dep.generic_string();
+        opts.no_line_markers = P;
+        return jiepp_command(opts);
+    };
+
+    ASSERT_EQ(0, run_with(true,  out_P,   dep_P));
+    ASSERT_EQ(0, run_with(false, out_noP, dep_noP));
+
+    auto read = [](const fs::path& p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+
+    EXPECT_EQ(read(dep_P), read(dep_noP)) << "-P changed dependency output";
+}
+
+TEST_F(JieppCommandTest, PPreservesCommentAfterIncludeNoNewline) {
+    // Regression: C token immediately after a return-from-include line marker
+    // must NOT be silently dropped by the skip_next_ws logic.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    // Create a simple header
+    fs::path hdr = tmpdir / "p_hdr.iec";
+    {
+        std::ofstream f(hdr);
+        f << "VAR x: INT; END_VAR\n";
+    }
+
+    // Main: include + comment with no newline between them
+    fs::path main_iec = tmpdir / "p_main.iec";
+    {
+        std::ofstream f(main_iec);
+        f << "{#include '" << hdr.generic_string() << "'}(* trailing comment *)\n";
+    }
+
+    fs::path output = tmpdir / "p_comment_after_include.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {main_iec.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_NE(std::string::npos, content.find("(* trailing comment *)"))
+        << "-P incorrectly dropped comment immediately after #include";
+    EXPECT_NE(std::string::npos, content.find("x: INT"))
+        << "included content missing";
+}
+
+// ─── F1: {#pragma once} ────────────────────────────────────────────────
+
+TEST_F(JieppCommandTest, PragmaOnceBasic) {
+    // A file with {#pragma once} included twice must emit its content only once.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path hdr = tmpdir / "po_basic_hdr.iec";
+    {
+        std::ofstream f(hdr);
+        f << "{#pragma once}\nVAR x: INT; END_VAR\n";
+    }
+    fs::path main_iec = tmpdir / "po_basic_main.iec";
+    {
+        std::ofstream f(main_iec);
+        f << "{#include '" << hdr.generic_string() << "'}\n";
+        f << "{#include '" << hdr.generic_string() << "'}\n";
+    }
+    fs::path output = tmpdir / "po_basic.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {main_iec.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    // "x : INT" should appear exactly once
+    auto pos1 = content.find("x: INT");
+    ASSERT_NE(std::string::npos, pos1) << "header content missing";
+    auto pos2 = content.find("x: INT", pos1 + 1);
+    EXPECT_EQ(std::string::npos, pos2) << "{#pragma once} failed: content duplicated";
+}
+
+TEST_F(JieppCommandTest, PragmaOnceDiamond) {
+    // Diamond include: A→B, A→C, B→hdr{#pragma once}, C→hdr
+    // hdr content should appear only once.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path hdr = tmpdir / "po_dia_hdr.iec";
+    {
+        std::ofstream f(hdr);
+        f << "{#pragma once}\nVAR diamond: INT; END_VAR\n";
+    }
+    fs::path b = tmpdir / "po_dia_b.iec";
+    {
+        std::ofstream f(b);
+        f << "{#include '" << hdr.generic_string() << "'}\n";
+    }
+    fs::path c = tmpdir / "po_dia_c.iec";
+    {
+        std::ofstream f(c);
+        f << "{#include '" << hdr.generic_string() << "'}\n";
+    }
+    fs::path main_iec = tmpdir / "po_dia_main.iec";
+    {
+        std::ofstream f(main_iec);
+        f << "{#include '" << b.generic_string() << "'}\n";
+        f << "{#include '" << c.generic_string() << "'}\n";
+    }
+    fs::path output = tmpdir / "po_dia.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {main_iec.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    auto pos1 = content.find("diamond: INT");
+    ASSERT_NE(std::string::npos, pos1) << "diamond header content missing";
+    auto pos2 = content.find("diamond: INT", pos1 + 1);
+    EXPECT_EQ(std::string::npos, pos2) << "{#pragma once} diamond failed: content duplicated";
+}
+
+TEST_F(JieppCommandTest, PragmaOnceSelfInclude) {
+    // A file with {#pragma once} that includes itself must not loop.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path selfhdr = tmpdir / "po_self.iec";
+    {
+        std::ofstream f(selfhdr);
+        f << "{#pragma once}\nVAR self: INT; END_VAR\n";
+        f << "{#include '" << selfhdr.generic_string() << "'}\n";
+    }
+    fs::path output = tmpdir / "po_self.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {selfhdr.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    auto pos1 = content.find("self: INT");
+    ASSERT_NE(std::string::npos, pos1) << "content missing";
+    auto pos2 = content.find("self: INT", pos1 + 1);
+    EXPECT_EQ(std::string::npos, pos2) << "self-include with pragma once duplicated content";
+}
+
+TEST_F(JieppCommandTest, PragmaOnceUnknownArgSilentNop) {
+    // {#pragma foo} (unknown arg) must be silently ignored — no error.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "po_unknown.iec";
+    {
+        std::ofstream f(src);
+        f << "{#pragma foo}\nVAR y: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "po_unknown.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, content.find("y: INT"));
+}
+
+// ─── F5: -dD ────────────────────────────────────────────────────────────────
+
+TEST_F(JieppCommandTest, DDEmitsDefineInline) {
+    // -dD: {#define} lines must appear inline in the preprocessed output.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "dd_define.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define FOO 42}\nVAR x: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dd_define.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+    opts.dD = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_NE(std::string::npos, content.find("{#define FOO 42}")) << "define line missing from -dD output";
+    EXPECT_NE(std::string::npos, content.find("x: INT"))           << "body content missing";
+}
+
+TEST_F(JieppCommandTest, DDEmitsUndefInline) {
+    // -dD: {#undef} lines must also appear inline.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "dd_undef.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define BAR 1}\n{#undef BAR}\nVAR z: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dd_undef.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+    opts.dD = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_NE(std::string::npos, content.find("{#define BAR 1}")) << "#define missing";
+    EXPECT_NE(std::string::npos, content.find("{#undef BAR}"))    << "#undef missing";
+    EXPECT_NE(std::string::npos, content.find("z: INT"))          << "body missing";
+}
+
+TEST_F(JieppCommandTest, DDInactiveIfBranchNotEmitted) {
+    // -dD: defines inside an inactive #if branch must NOT appear.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "dd_inactive.iec";
+    {
+        std::ofstream f(src);
+        f << "{#if 0}\n{#define HIDDEN 99}\n{#endif}\n";
+        f << "{#define VISIBLE 1}\n";
+    }
+    fs::path output = tmpdir / "dd_inactive.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+    opts.dD = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_EQ(std::string::npos, content.find("HIDDEN"))    << "inactive define emitted";
+    EXPECT_NE(std::string::npos, content.find("{#define VISIBLE 1}")) << "active define missing";
+}
+
+TEST_F(JieppCommandTest, DDWithPFlagPreservesDefines) {
+    // -dD -P: line markers suppressed, {#define} lines must remain.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "dd_p.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define X 10}\nVAR v: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dd_p.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.dD = true;
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_EQ(std::string::npos, content.find("{#:"))        << "line marker survived -P";
+    EXPECT_EQ(std::string::npos, content.find("(*{#:"))      << "annotated line marker survived -P";
+    EXPECT_NE(std::string::npos, content.find("{#define X 10}")) << "define missing with -P -dD";
+}
+
+TEST_F(JieppCommandTest, DDDefaultFalse) {
+    // Without -dD, no inline {#define} lines should appear.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "dd_default.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define Y 5}\nVAR w: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dd_default.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+    // opts.dD = false (default)
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_EQ(std::string::npos, content.find("{#define"))   << "define appeared without -dD";
+    EXPECT_NE(std::string::npos, content.find("w: INT"))     << "body missing";
+}
+
+TEST_F(JieppCommandTest, DDDollarEscapePreserved) {
+    // Regression: raw_arg is decoded; -dD must re-emit the original token text, not the
+    // decoded form, to avoid corrupting dollar-escape sequences (e.g. $$ -> $).
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "dd_dollar.iec";
+    {
+        std::ofstream f(src);
+        // {#define DOLLAR $$} — body is a literal '$' encoded as '$$'
+        f << "{#define DOLLAR $$}\n";
+    }
+    fs::path output = tmpdir / "dd_dollar.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+    opts.dD = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    // Must preserve '$$' encoding, not emit decoded '$'
+    EXPECT_NE(std::string::npos, content.find("{#define DOLLAR $$}"))
+        << "-dD corrupted dollar-escape: expected {#define DOLLAR $$}";
+}
+
+// ─── F6: -MD / -MMD ─────────────────────────────────────────────────────────
+
+TEST_F(JieppCommandTest, MDWritesDepFileAndOutput) {
+    // -MD: preprocessed output written AND .d file auto-created.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "md_test.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path output  = tmpdir / "md_test.piec";
+    fs::path dep_out = tmpdir / "md_test.d";   // auto-derived from input stem
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    // Preprocessed output must exist and contain body
+    std::ifstream pf(output, std::ios::binary);
+    std::string pout((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, pout.find("x: INT")) << "preprocessed output missing";
+
+    // .d file must have been written
+    ASSERT_TRUE(fs::exists(dep_out)) << ".d file not created by -MD";
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, dcontent.find(src.stem().generic_string())) << "dep file missing target";
+    EXPECT_NE(std::string::npos, dcontent.find(src.generic_string()))        << "dep file missing source";
+}
+
+TEST_F(JieppCommandTest, MDWithMFOverridesDepFile) {
+    // -MD -MF custom.d: explicit -MF wins over auto-derived name.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "md_mf.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR y: INT; END_VAR\n";
+    }
+    fs::path output   = tmpdir / "md_mf.piec";
+    fs::path dep_custom = tmpdir / "custom_mf.d";
+    fs::remove(dep_custom);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_custom.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    EXPECT_TRUE(fs::exists(dep_custom)) << "custom dep file not created";
+    EXPECT_FALSE(fs::exists(tmpdir / "md_mf.d")) << "auto-named dep file should not exist";
+}
+
+TEST_F(JieppCommandTest, MMDExcludesSyspaths) {
+    // -MMD: system include (syspath) deps should NOT appear in the .d file.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    // Create a "system" header in a separate dir
+    fs::path sysdir = tmpdir / "mmd_sysdir";
+    fs::create_directories(sysdir);
+    fs::path syshdr = sysdir / "syshdr.iec";
+    {
+        std::ofstream f(syshdr);
+        f << "VAR sys: INT; END_VAR\n";
+    }
+    // User header
+    fs::path userhdr = tmpdir / "mmd_user.iec";
+    {
+        std::ofstream f(userhdr);
+        f << "VAR user: INT; END_VAR\n";
+    }
+    fs::path src = tmpdir / "mmd_main.iec";
+    {
+        std::ofstream f(src);
+        f << "{#include '" << userhdr.generic_string() << "'}\n";
+        f << "{#sinclude 'syshdr.iec'}\n";
+    }
+    fs::path output  = tmpdir / "mmd_main.piec";
+    fs::path dep_out = tmpdir / "mmd_main.d";
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.MMD = true;
+    opts.dep_mode = DepMode::USER;
+    opts.syspaths = {sysdir.generic_string()};
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    ASSERT_TRUE(fs::exists(dep_out)) << ".d file not created by -MMD";
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, dcontent.find("mmd_user.iec")) << "user dep missing";
+    EXPECT_EQ(std::string::npos, dcontent.find("syshdr.iec"))   << "-MMD included syspath dep";
+}
+
+TEST_F(JieppCommandTest, MDDefaultFalse) {
+    // Without -MD, no .d file should be created.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "md_nomd.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR z: INT; END_VAR\n";
+    }
+    fs::path output  = tmpdir / "md_nomd.piec";
+    fs::path dep_out = tmpdir / "md_nomd.d";
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    EXPECT_FALSE(fs::exists(dep_out)) << ".d file created without -MD";
+}
+
+// ─── F3: __VA_OPT__ ─────────────────────────────────────────────────────────
+
+TEST_F(JieppCommandTest, VaOptBasicEmpty) {
+    // __VA_OPT__(content) with empty VA_ARGS: content must NOT be emitted.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "vaopt_empty.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define F(...) __VA_OPT__(PRESENT)}\nF()\n";
+    }
+    fs::path output = tmpdir / "vaopt_empty.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(std::string::npos, content.find("PRESENT")) << "__VA_OPT__ emitted content with empty VA_ARGS";
+}
+
+TEST_F(JieppCommandTest, VaOptBasicNonEmpty) {
+    // __VA_OPT__(content) with non-empty VA_ARGS: content MUST be emitted.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "vaopt_nonempty.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define F(...) __VA_OPT__(PRESENT)}\nF(a)\n";
+    }
+    fs::path output = tmpdir / "vaopt_nonempty.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, content.find("PRESENT")) << "__VA_OPT__ did not emit content with non-empty VA_ARGS";
+}
+
+TEST_F(JieppCommandTest, VaOptEmptyBody) {
+    // __VA_OPT__() with non-empty VA_ARGS: empty body still expands to nothing.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "vaopt_emptybody.iec";
+    {
+        std::ofstream f(src);
+        // F(x) with empty __VA_OPT__ body should produce nothing (no PREFIX, no SUFFIX)
+        f << "{#define F(...) PREFIX __VA_OPT__() SUFFIX}\nF(x)\n";
+    }
+    fs::path output = tmpdir / "vaopt_emptybody.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, content.find("PREFIX")) << "PREFIX missing";
+    EXPECT_NE(std::string::npos, content.find("SUFFIX")) << "SUFFIX missing";
+}
+
+TEST_F(JieppCommandTest, VaOptGlue) {
+    // __VA_OPT__ in paste context: G() → 'x', G(a) → 'xy'.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "vaopt_glue.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define G(...) x @@ __VA_OPT__(y)}\n"
+          << "G();\n"
+          << "G(a);\n";
+    }
+    fs::path output = tmpdir / "vaopt_glue.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+    // G() → 'x' (no paste with empty __VA_OPT__ body)
+    EXPECT_NE(std::string::npos, content.find("x;")) << "G() should produce 'x'";
+    // G(a) → 'xy' (paste of x and y)
+    EXPECT_NE(std::string::npos, content.find("xy;")) << "G(a) should produce 'xy'";
+}
+
+TEST_F(JieppCommandTest, VaOptStringize) {
+    // __VA_OPT__ in stringize context: S() → '', S(hello) → 'hello'.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "vaopt_stringize.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define S(...) @__VA_OPT__(__VA_ARGS__)}\n"
+          << "S();\n"
+          << "S(hello);\n";
+    }
+    fs::path output = tmpdir / "vaopt_stringize.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+    // S() → stringize of empty → '' (empty IEC string)
+    EXPECT_NE(std::string::npos, content.find("'';")) << "S() should produce empty string ''";
+    // S(hello) → stringize of 'hello' → 'hello'
+    EXPECT_NE(std::string::npos, content.find("'hello';")) << "S(hello) should produce 'hello'";
+}
+
+TEST_F(JieppCommandTest, VaOptOutsideVariadic) {
+    // __VA_OPT__ in a non-variadic macro body must produce a PP37 error.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "vaopt_nonvariadic.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define BAD() __VA_OPT__(X)}\n"
+          << "BAD()\n";
+    }
+    fs::path output = tmpdir / "vaopt_nonvariadic.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_NE(0, jiepp_command(opts)) << "expected PP37 error for __VA_OPT__ outside variadic macro";
+    EXPECT_NE(std::string::npos, message().find("PP37")) << "PP37 not in error message";
+}
+
+TEST_F(JieppCommandTest, VaOptNested) {
+    // Nested __VA_OPT__ inside __VA_OPT__(...) must produce a PP37 error.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "vaopt_nested.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define N(...) __VA_OPT__(__VA_OPT__(X))}\n"
+          << "N(a)\n";
+    }
+    fs::path output = tmpdir / "vaopt_nested.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_NE(0, jiepp_command(opts)) << "expected PP37 error for nested __VA_OPT__";
+    EXPECT_NE(std::string::npos, message().find("PP37")) << "PP37 not in error message";
+}

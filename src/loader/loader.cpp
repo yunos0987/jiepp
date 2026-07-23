@@ -14,7 +14,7 @@ std::string Loader::fullpath(const std::string& filepath, LoadType load_type, En
     if (p.is_absolute()) {
         std::error_code ec;
         if (fs::exists(p, ec))
-            return p.generic_string();
+            return p.lexically_normal().generic_string();
     } else {
         if (load_type == LoadType::INCLUDE) {
             const std::string& cur_file = env.current_file();

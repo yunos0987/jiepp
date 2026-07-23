@@ -18,7 +18,11 @@ struct JieppOptions {
     std::optional<std::string> pp_output_pragma_style;
     std::optional<int> recursion_limit;
     bool remove_comments = false;
+    bool no_line_markers = false;   // -P: suppress line markers in output
     bool dM = false;
+    bool dD = false;                // -dD: emit {#define}/{#undef} lines inline
+    bool MD = false;                // -MD:  dep side-effect + normal output (ALL deps)
+    bool MMD = false;               // -MMD: dep side-effect + normal output (USER deps only)
     bool silent = false;
     bool suppress_warnings = false;  // -w: suppress warning output
     bool werror = false;             // -Werror: promote warnings to errors

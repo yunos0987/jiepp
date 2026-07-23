@@ -65,7 +65,7 @@ ctest --preset <preset-name>          # test
 | ディレクトリ | 主なファイル | 役割 |
 |-------------|-------------|------|
 | `jiepp/` | `main.cpp`, `jiepp.hpp/cpp`, `option.hpp/cpp` | CLI エントリポイント。引数解析・前処理実行・入出力制御 |
-| `env/` | `env.hpp/cpp`, `issue.hpp/cpp`, `issue_codes.def` | プリプロセッサ状態 (`Env`) の管理。`Env` は 3 つの Mixin 基底クラスの多重継承で構成される: `Symtab`（マクロシンボルテーブル, `symtab.hpp/cpp`）、`FileContext`（インクルードスタック・検索パス・行番号・依存関係追跡, `file_context.hpp/cpp`）、`Param`（リミット値・プラグマスタイル・トークンキャッシュ, `param.hpp/cpp`, `param_constants.hpp`）。エラー/イシュー出力 (`Issue`) も担当 |
+| `env/` | `env.hpp/cpp`, `issue.hpp/cpp`, `issue_codes.def` | プリプロセッサ状態 (`Env`) の管理。`Env` は 3 つの Mixin 基底クラスの多重継承で構成される: `Symtab`（マクロシンボルテーブル, `symtab.hpp/cpp`）、`FileContext`（インクルードスタック・検索パス・行番号・依存関係追跡・`once_files_`（`{#pragma once}` 用処理済みパスセット）, `file_context.hpp/cpp`）、`Param`（リミット値・プラグマスタイル・トークンキャッシュ・`dd_mode_`（`-dD` フラグ）, `param.hpp/cpp`, `param_constants.hpp`）。エラー/イシュー出力 (`Issue`) も担当 |
 | `loader/` | `lexer.hpp/cpp`, `token.hpp/cpp`, `directive_parser.hpp/cpp`, `directive_token.cpp`, `loader.hpp/cpp` | 入力テキストのトークン化・ディレクティブ解析。字句解析ヘルパー (`lexer_comment.cpp`, `lexer_pragma.cpp`, `lexer_literal.cpp`, `lexer_helpers.hpp/cpp`) および `.def` マクロ定義を含む |
 | `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp` | プリプロセッサ本体。トークン列に対してディレクティブ処理・マクロ展開を行う。`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む |
 | `macro/` | `macro.hpp/cpp` | `Macro` クラス。オブジェクト形式マクロ・関数形式マクロの定義を表現する |
@@ -104,6 +104,10 @@ struct JieppOptions {
     std::optional<int> recursion_limit;
     bool remove_comments = false;              // -nC
     bool dM = false;                           // -dM
+    bool dD = false;                           // -dD
+    bool no_line_markers = false;              // -P
+    bool MD = false;                           // -MD (auto dep file + preprocess)
+    bool MMD = false;                          // -MMD (auto dep file + preprocess, no syspaths)
     bool silent = false;                       // --silent
     bool suppress_warnings = false;            // -w
     bool werror = false;                       // -Werror

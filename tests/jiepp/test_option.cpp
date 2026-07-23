@@ -256,6 +256,51 @@ TEST_F(OptionTest, ParseArgsMultipleInclude) {
     ASSERT_EQ(1u, opts.input_filepaths.size());
 }
 
+TEST_F(OptionTest, ParseArgsPFlag) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-P")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.no_line_markers);
+}
+
+TEST_F(OptionTest, ParseArgsPFlagDefault) {
+    char* argv[] = {const_cast<char*>("jiepp")};
+    auto opts = parse_args(1, argv);
+    EXPECT_FALSE(opts.no_line_markers);
+}
+
+TEST_F(OptionTest, ParseArgsDDFlag) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-dD")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.dD);
+}
+
+TEST_F(OptionTest, ParseArgsDDFlagDefault) {
+    char* argv[] = {const_cast<char*>("jiepp")};
+    auto opts = parse_args(1, argv);
+    EXPECT_FALSE(opts.dD);
+}
+
+TEST_F(OptionTest, ParseArgsMDFlag) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-MD")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.MD);
+    EXPECT_EQ(opts.dep_mode, DepMode::ALL);
+}
+
+TEST_F(OptionTest, ParseArgsMMDFlag) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-MMD")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.MMD);
+    EXPECT_EQ(opts.dep_mode, DepMode::USER);
+}
+
+TEST_F(OptionTest, ParseArgsMDFlagDefault) {
+    char* argv[] = {const_cast<char*>("jiepp")};
+    auto opts = parse_args(1, argv);
+    EXPECT_FALSE(opts.MD);
+    EXPECT_FALSE(opts.MMD);
+}
+
 TEST_F(OptionTest, CLICodeSeverityClassification) {
     // All PP70-76 (CLI/Option) codes should be ERROR severity
     EXPECT_TRUE(Issue::is_error(Issue::Code::UNKNOWN_OPTION));

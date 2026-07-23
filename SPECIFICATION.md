@@ -127,13 +127,30 @@ result := ADD(x, y);     (* → (x) + (y) *)
 |-----------|------|
 | `__VA_ARGS__` | 可変長引数全体に展開される |
 | `__VA_ARGC__` | 可変長引数の個数（整数）に展開される |
+| `__VA_OPT__(tokens)` | `__VA_ARGS__` が空なら何も展開しない。空でなければ `tokens` に展開される |
 
 ```
 PRINT(1, 2, 3);      (* → print(1,2,3); *)
 n := COUNT(a, b, c);  (* → 3 *)
 ```
 
-### 3.4 マクロ定義解除 / Undefine
+### 3.4 `__VA_OPT__` — 条件付き可変長引数展開
+
+```
+{#define LOG(fmt, ...) write_log(fmt __VA_OPT__(,) __VA_ARGS__)}
+LOG('error');          (* → write_log('error') — 末尾コンマなし *)
+LOG('code=%d', 42);    (* → write_log('code=%d', 42) *)
+```
+
+- `__VA_OPT__` は可変長引数マクロ（`...` を持つマクロ）の本体内でのみ使用可能
+- `__VA_ARGS__` が空のとき → `__VA_OPT__(tokens)` は何も生成しない
+- `__VA_ARGS__` が非空のとき → `__VA_OPT__(tokens)` は `tokens` に展開される
+- `@@`（トークン連結）および `@`（文字列化）の引数としても使用可能:
+  - `prefix @@ __VA_OPT__(suffix)` — `__VA_ARGS__` 空のとき `prefix`、非空のとき `prefixsuffix`
+  - `@__VA_OPT__(__VA_ARGS__)` — `__VA_ARGS__` 空のとき `''`、非空のとき文字列化した値
+- `__VA_OPT__` のネストはエラー（PP37）
+
+### 3.5 マクロ定義解除 / Undefine
 
 ```
 {#undef NAME}
@@ -142,11 +159,11 @@ n := COUNT(a, b, c);  (* → 3 *)
 `NAME` の定義を解除します。未定義の名前に対する `{#undef}` はエラーになりません。
 `defined` の再定義・定義解除は `OPERATION_NOT_ALLOWED` エラーとなります。
 
-### 3.5 マクロ再定義 / Redefinition
+### 3.6 マクロ再定義 / Redefinition
 
 同名のマクロを異なる内容で再定義すると `MACRO_REDEFINED` 警告が発行されます。同一内容の再定義は警告なしで受け入れられます。
 
-### 3.6 再帰防止 / Recursion Prevention
+### 3.7 再帰防止 / Recursion Prevention
 
 C プリプロセッサと同様の "paint-blue" アルゴリズムを使用します。展開中のマクロはマーク（hide-set）され、再帰的な展開を防止します。再帰はエラーにはならず、展開済みマクロの名前はそのままテキストとして出力されます。
 
@@ -333,9 +350,40 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 
 指定ファイルがインクルードパスに存在すれば `1`、なければ `0` に評価されます。`"file"` 形式は `{#include}` 検索順序、`<file>` 形式は `{#sinclude}` 検索順序を使用します。
 
-### 7.6 インクルードガード / Include Guards
+### 7.6 `{#pragma once}` — 重複インクルード防止
 
-Jiepp にはプラグマベースのインクルードガード（`#pragma once` 等）はありません。C と同様のマクロベースのガードを使用してください:
+```
+{#pragma once}
+```
+
+ファイルの先頭付近に記述することで、そのファイルが複数回インクルードされても、2回目以降はスキップされます。
+
+- 判定は **絶対パスの正規化済みパス** で行われるため、異なるパス表記（`../a.iec` や `./dir/../a.iec` 等）でインクルードされても同じファイルとして扱われます
+- ダイアモンドインクルード（A→B, A→C, B→D, C→D の依存関係で D が重複する場合）も正しく防止されます
+- `{#pragma once}` は `{#sinclude}` / `{#include <...>}` でインクルードされたファイルにも有効です
+
+```
+(* header.iec *)
+{#pragma once}
+VAR CONSTANT MAX_SIZE : INT := 100; END_VAR
+```
+
+```
+(* main.iec *)
+{#include 'header.iec'}
+{#include 'header.iec'}   (* 2回目はスキップされる *)
+```
+
+**マクロガードとの比較**:
+
+| 方法 | 利点 | 欠点 |
+|------|------|------|
+| `{#pragma once}` | 簡潔。ファイルパスベースで確実 | エディタがコピーしたファイルを同一視する場合あり |
+| マクロガード | ポータブル | 記述が冗長。同名マクロとの衝突リスク |
+
+### 7.7 マクロベースのインクルードガード / Macro-Based Include Guards
+
+`{#pragma once}` の代替として、マクロを使ったインクルードガードも使用できます:
 
 ```
 {#ifndef MYHEADER_INCLUDED}
@@ -344,7 +392,7 @@ Jiepp にはプラグマベースのインクルードガード（`#pragma once`
 {#endif}
 ```
 
-### 7.7 インクルード深度制限 / Include Depth Limit
+### 7.8 インクルード深度制限 / Include Depth Limit
 
 デフォルト: **100**。`--max-include-depth N` オプションまたは `{#max_include_depth N}` ディレクティブで変更可能。超過すると `MAX_INCLUDE_DEPTH_EXCEEDED` エラー。
 
@@ -529,10 +577,13 @@ jiepp [filepath] [options]
 | `-U NAME` | マクロ定義の取り消し（`-D` の後に適用） | — |
 | `-I PATH` | インクルード検索パスの追加 | — |
 | `-include FILE` | 入力ファイルの前に強制インクルード | — |
+| `-P` | 行マーカー出力を抑制（`(*{#:...}*)` / `{#:...}` を出力しない） | off |
 | `-w` | 警告メッセージの抑制（エラーは出力） | off |
 | `-Werror` | 警告をエラーに昇格 | off |
 | `-M` | Makefile 依存関係ルールを出力（全インクルード） | off |
 | `-MM` | `-M` と同様だがシステムインクルードを除外 | off |
+| `-MD` | プリプロセス出力と同時に依存関係ファイル（`.d`）を自動生成 | off |
+| `-MMD` | `-MD` と同様だがシステムインクルードを除外 | off |
 | `-MF FILE` | 依存関係ルールの出力先ファイル | stdout |
 | `-MT TARGET` | 依存関係ルールのターゲット名 | 入力ファイル名.o |
 | `--max-include-depth N` | インクルード深度上限 | 100 |
@@ -540,7 +591,8 @@ jiepp [filepath] [options]
 | `--max-if-nesting N` | 条件分岐ネスト深度上限 | 256 |
 | `--pp-output-pragma-style STYLE` | プラグマ出力スタイル (`annotated` / `standard`) | `annotated` |
 | `--remove-comments` / `-nC` | コメントを除去 | off |
-| `-dM` | 定義されたマクロの一覧を出力 | off |
+| `-dM` | 定義されたマクロの一覧を出力（プリプロセス結果は出力しない） | off |
+| `-dD` | プリプロセス出力に `{#define}` / `{#undef}` 行をインライン挿入（`-dM` の処理中版） | off |
 | `--silent` | 全ての診断メッセージを抑制 | off |
 | `--recursion-limit N` | OS スタックサイズの設定 (N × 約 8KB) | システムデフォルト |
 | `--` | オプションの終端（以降は全てファイルパスとして扱う） | — |
@@ -588,6 +640,16 @@ jiepp -Werror input.iec
 
 # Makefile 依存関係ルールを生成
 jiepp -M -MF deps.d input.iec
+
+# プリプロセスと同時に依存関係ファイルを自動生成
+jiepp -MD input.iec -o output.iec       # output.d が自動生成される
+jiepp -MMD input.iec -o output.iec      # システムインクルードを除外
+
+# 行マーカーを出力しない（-P）
+jiepp -P input.iec -o clean.iec
+
+# プリプロセス中のマクロ定義をインライン出力（-dD）
+jiepp -dD input.iec
 
 # ハイフンで始まるファイル名を処理
 jiepp -- -unusual-name.iec
@@ -657,6 +719,7 @@ cmake --build --preset linux-portable-release
 | `{#include <file>}` | §7.3 | ファイルインクルード（システムパス限定） |
 | `{#sinclude 'file'}` | §7.2 | システムパス限定インクルード |
 | `{#syspath 'dir'}` | §7.4 | インクルード検索パス追加 |
+| `{#pragma once}` | §7.6 | 重複インクルード防止 |
 | `{#if EXPR}` | §5.1 | 条件コンパイル開始 |
 | `{#elif EXPR}` | §5.1 | 条件分岐 |
 | `{#else}` | §5.1 | 条件分岐（上記すべて偽のとき） |
@@ -756,6 +819,7 @@ CLI オプションのエラーは `jiepp:` をファイルパスの代わりに
 | PP34 | `ARGUMENT_COUNT_MISMATCH` | ERROR | Argument count mismatch | 関数マクロの引数数不一致 |
 | PP35 | `MACRO_REDEFINED` | WARNING | Macro redefined | マクロの再定義警告 |
 | PP36 | `DUPLICATE_MACRO_PARAMETER` | ERROR | Duplicate macro parameter name | マクロパラメータ名の重複 |
+| PP37 | `INVALID_VA_OPT` | ERROR | Invalid __VA_OPT__ | `__VA_OPT__` の不正な使用（非可変長マクロ内での使用・ネスト） |
 | PP40 | `INVALID_DEFINED_OPERAND` | ERROR | Invalid operand for 'defined' | `defined` の不正なオペランド |
 | PP41 | `INVALID_SETLINE_OPERAND` | ERROR | Invalid operand for 'set_line' | `{#set_line}` の不正なオペランド |
 | PP42 | `INVALID_IGNORE_OPERAND` | ERROR | Invalid operand for 'ignore' | `{#ignore}` の不正なオペランド |
@@ -799,7 +863,12 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | `#line N "file"` | `{#line N 'file'}` | 同等 |
 | `#arg` (stringize) | `@arg` | IEC 61131-3 では `#` が別の意味を持つため |
 | `##` (token paste) | `@@` | 同上 |
+| `#pragma once` | `{#pragma once}` | 同等。絶対パス正規化ベースで判定 |
+| `__VA_OPT__(tokens)` | `__VA_OPT__(tokens)` | 同等。`__VA_ARGS__` 空→なし、非空→tokens展開 |
 | `__VA_ARGS__` | `__VA_ARGS__` | 同等 |
+| `-P` | `-P` | 同等。行マーカー出力を抑制 |
+| `-dD` | `-dD` | 同等。処理中マクロ定義をインライン出力 |
+| `-MD` / `-MMD` | `-MD` / `-MMD` | 同等。依存ファイルを自動生成（-MMD はシステムインクルード除外） |
 | — | `__VA_ARGC__` | Jiepp 拡張: 可変長引数の個数 |
 | `defined(NAME)` | `defined(NAME)` | 同等 |
 | `__has_include(...)` | `__has_include(...)` | 同等 |
@@ -908,7 +977,7 @@ directive-name := 'define' | 'D' | 'undef' | 'include' | 'sinclude'
                | 'if' | 'elif' | 'else' | 'endif' | 'ifdef' | 'ifndef'
                | 'error' | 'warning' | 'info' | 'severe'
                | 'line' | 'set_line' | 'set-line'
-               | 'ignore' | 'nop' | '' | 'syspath' | 'I'
+               | 'ignore' | 'nop' | '' | 'syspath' | 'I' | 'pragma'
                | 'string' | '#' | 'wstring'
                | 'token' | '@@' | '##'
                | 'max_include_depth' | 'max-include-depth'

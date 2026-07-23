@@ -20,14 +20,27 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::string dep_target(const JieppOptions& opts) {
+std::string dep_target(const JieppOptions& opts,
+                       const std::optional<std::string>& effective_dep_file) {
     if (opts.dep_target) {
         return *opts.dep_target;
-    } else {
-        // Default: replace extension with .o
+    }
+    // For -MD/-MMD: derive target from the effective dep file so that target and
+    // dep file name are always consistent (both derived from the same source).
+    if ((opts.MD || opts.MMD) && effective_dep_file.has_value() && !effective_dep_file->empty()) {
+        return fs::path(*effective_dep_file).stem().generic_string() + ".output";
+    }
+    // Fallback for -M/-MM: derive from input file (preserves existing behaviour).
+    if (!opts.input_filepaths.empty() && opts.input_filepaths[0] != "-") {
         fs::path p(opts.input_filepaths[0]);
         p.replace_extension(".output");
         return p.filename().generic_string();
+    } else if (opts.output_filepath.has_value()) {
+        fs::path p(*opts.output_filepath);
+        p.replace_extension(".output");
+        return p.filename().generic_string();
+    } else {
+        return "output.output";
     }
 }
 
@@ -81,6 +94,8 @@ int jiepp_command(const JieppOptions& opts)
 
         if (opts.remove_comments)
             env.fix_remove_comments(true);
+        if (opts.dD)
+            env.set_dd_mode(true);
         if (opts.max_include_depth)
             env.fix_max_include_depth(*opts.max_include_depth);
         if (opts.max_expansion_depth)
@@ -99,11 +114,57 @@ int jiepp_command(const JieppOptions& opts)
         for (const auto& sp : opts.syspaths)
             env.add_syspath(sp);
 
+        // -MD/-MMD: auto-derive dep file if not explicitly set by -MF
+        std::optional<std::string> effective_dep_file = opts.dep_file;
+        if ((opts.MD || opts.MMD) && !effective_dep_file.has_value()) {
+            if (opts.output_filepath.has_value()) {
+                effective_dep_file = fs::path(*opts.output_filepath).replace_extension(".d").generic_string();
+            } else if (!opts.input_filepaths.empty() && opts.input_filepaths[0] != "-") {
+                effective_dep_file = fs::path(opts.input_filepaths[0]).replace_extension(".d").generic_string();
+            } else {
+                // stdin with no -o and no -MF: cannot write a separate dep file
+                ISSUE(INVALID_COMMAND, "-MD/-MMD requires -MF or -o when reading from stdin");
+            }
+        }
+
         bool dep = opts.dep_mode != DepMode::NONE;
-        bool not_out = opts.dM && (dep && opts.dep_file.has_value() && !opts.dep_file->empty());
+        bool not_out = opts.dM && (dep && effective_dep_file.has_value() && !effective_dep_file->empty());
 
         std::ostringstream virtual_output;
         std::ostream* actual_output = not_out ? &virtual_output : output_stream;
+
+        // Returns true for preprocessor-injected line markers: (*{#:N 'file'}*) or {#:N 'file'}.
+        // User IEC pragmas with '#' are lexed as DIRECTIVE tokens, so PRAGMA tokens whose
+        // body begins with "#:" are exclusively factory-created line markers.
+        auto is_line_marker = [](const Token& t) -> bool {
+            if (t.type != Token::PRAGMA) return false;
+            const auto& s = t.text;
+            if (s.size() > 5 && s.compare(0, 5, "(*{#:") == 0) return true;  // annotated
+            if (s.size() > 3 && s.compare(0, 3, "{#:") == 0) return true;    // standard
+            return false;
+        };
+
+        // Emit tokens to stream, optionally suppressing line markers and their
+        // immediately-following WS token (GCC-compatible -P blank-line removal).
+        auto emit_tokens = [&](const std::vector<Token>& tokens) {
+            if (opts.no_line_markers) {
+                bool skip_next_ws = false;
+                for (const auto& t : tokens) {
+                    if (is_line_marker(t)) {
+                        skip_next_ws = true;
+                        continue;
+                    }
+                    if (skip_next_ws) {
+                        skip_next_ws = false;
+                        if (t.type == Token::WS) continue;  // drop blank line only, not comments
+                    }
+                    *actual_output << t.text;
+                }
+            } else {
+                for (const auto& t : tokens)
+                    *actual_output << t.text;
+            }
+        };
 
         std::vector<Token> ots;
 
@@ -128,14 +189,12 @@ int jiepp_command(const JieppOptions& opts)
             ots.push_back(Token::newline());
             auto its = iec3_tokens(std::cin, env.get_remove_comments(), 1);
             expand(its, ots, env);
-            for (auto& t : ots)
-                *actual_output << t.text;
+            emit_tokens(ots);
             Issue::pop();
             env.pop_file();
         } else if (opts.input_filepaths.size() == 1) {
             expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env, dispath);
-            for (auto& t : ots)
-                *actual_output << t.text;
+            emit_tokens(ots);
         } else {
             ISSUE(INVALID_COMMAND, "multiple input files not supported");
         }
@@ -144,19 +203,19 @@ int jiepp_command(const JieppOptions& opts)
             dump_macros(env, *output_stream);
         }
 
-        // -M / -MM: write dependency rules
+        // -M / -MM / -MD / -MMD: write dependency rules
         if (dep) {
-            const std::string dep_target_ = dep_target(opts);
-            if (not_out && !opts.dM) {
-                // Only write dependency rules, skip writing preprocessed output
-                write_dep_rules(dep_target_, opts.dep_mode, *output_stream, env);
-            } else if (opts.dep_file.has_value() && !opts.dep_file->empty()) {
-                // Write preprocessed output first, then write dependency rules to separate file or stdout
+            const std::string dep_target_ = dep_target(opts, effective_dep_file);
+            if (effective_dep_file.has_value() && !effective_dep_file->empty()) {
+                // Write dependency rules to a separate file (-MF / -MD / -MMD auto-named)
                 std::ofstream dep_output;
-                dep_output.open(*opts.dep_file, std::ios::out | std::ios::binary);
+                dep_output.open(*effective_dep_file, std::ios::out | std::ios::binary);
                 if (!dep_output)
-                    ISSUE(FILE_ERROR, *opts.dep_file);
+                    ISSUE(FILE_ERROR, *effective_dep_file);
                 write_dep_rules(dep_target_, opts.dep_mode, dep_output, env);
+            } else {
+                // No dep file: write dep rules to main output stream (-M / -MM without -MF)
+                write_dep_rules(dep_target_, opts.dep_mode, *output_stream, env);
             }
         }
         return 0;
