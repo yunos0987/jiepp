@@ -20,17 +20,12 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::string dep_target(const JieppOptions& opts,
-                       const std::optional<std::string>& effective_dep_file) {
+std::string dep_target(const JieppOptions& opts) {
     if (opts.dep_target) {
         return *opts.dep_target;
     }
-    // For -MD/-MMD: derive target from the effective dep file so that target and
-    // dep file name are always consistent (both derived from the same source).
-    if ((opts.MD || opts.MMD) && effective_dep_file.has_value() && !effective_dep_file->empty()) {
-        return fs::path(*effective_dep_file).stem().generic_string() + ".output";
-    }
-    // Fallback for -M/-MM: derive from input file (preserves existing behaviour).
+    // Derive from input file for all dep modes (-M/-MM/-MD/-MMD).
+    // -MF only controls the destination file; it does not affect the target name.
     if (!opts.input_filepaths.empty() && opts.input_filepaths[0] != "-") {
         fs::path p(opts.input_filepaths[0]);
         p.replace_extension(".output");
@@ -205,7 +200,7 @@ int jiepp_command(const JieppOptions& opts)
 
         // -M / -MM / -MD / -MMD: write dependency rules
         if (dep) {
-            const std::string dep_target_ = dep_target(opts, effective_dep_file);
+            const std::string dep_target_ = dep_target(opts);
             if (effective_dep_file.has_value() && !effective_dep_file->empty()) {
                 // Write dependency rules to a separate file (-MF / -MD / -MMD auto-named)
                 std::ofstream dep_output;

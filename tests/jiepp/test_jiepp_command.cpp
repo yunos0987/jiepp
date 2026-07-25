@@ -1049,6 +1049,18 @@ TEST_F(JieppCommandTest, MDWithMFOverridesDepFile) {
 
     EXPECT_TRUE(fs::exists(dep_custom)) << "custom dep file not created";
     EXPECT_FALSE(fs::exists(tmpdir / "md_mf.d")) << "auto-named dep file should not exist";
+
+    // Target name must be derived from the input file, not from -MF filename.
+    std::string dep_content;
+    {
+        std::ifstream f(dep_custom);
+        ASSERT_TRUE(f) << "cannot open dep file";
+        dep_content.assign(std::istreambuf_iterator<char>(f), {});
+    }
+    EXPECT_NE(dep_content.find("md_mf.output:"), std::string::npos)
+        << "target should be derived from input file, got: " << dep_content;
+    EXPECT_EQ(dep_content.find("custom_mf.output:"), std::string::npos)
+        << "-MF should not affect target name, got: " << dep_content;
 }
 
 TEST_F(JieppCommandTest, MMDExcludesSyspaths) {
