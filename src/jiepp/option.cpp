@@ -39,6 +39,8 @@ void display_help_and_exit(int exit_code = 0) {
         "  -Werror                  Promote warnings to errors\n"
         "  -M                       Output Makefile dependency rules\n"
         "  -MM                      Like -M but exclude system includes\n"
+        "  -MD                      Write dependency rules to .d file (keep normal output)\n"
+        "  -MMD                     Like -MD but exclude system includes\n"
         "  -MF FILE                 Write dependency rules to file\n"
         "  -MT TARGET               Set dependency target name\n"
         "  --max-include-depth N    Maximum include depth (default: 100)\n"
@@ -46,8 +48,10 @@ void display_help_and_exit(int exit_code = 0) {
         "  --max-if-nesting N       Maximum if/elif nesting depth (default: 256)\n"
         "  --recursion-limit N      Set OS stack size (N * ~8KB frames)\n"
         "  --pp-output-pragma-style STYLE\n"
+        "  -P                       Suppress line markers in output\n"
         "  --remove-comments / -nC  Remove comments\n"
         "  -dM                      Dump macro definitions\n"
+        "  -dD                      Emit {#define}/{#undef} lines inline\n"
         "  --silent                 Suppress all diagnostic output\n"
         "  --                       End of options\n"
         "  --help                   Show this help\n"
@@ -162,6 +166,18 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
+        if (arg == "-MD") {
+            opts.MD = true;
+            opts.dep_mode = DepMode::ALL;
+            ++i; continue;
+        }
+
+        if (arg == "-MMD") {
+            opts.MMD = true;
+            opts.dep_mode = DepMode::USER;
+            ++i; continue;
+        }
+
         if (arg == "-MF") {
             require_value(i, argc, "-MF");
             opts.dep_file = argv[++i];
@@ -209,8 +225,18 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
+        if (arg == "-P") {
+            opts.no_line_markers = true;
+            ++i; continue;
+        }
+
         if (arg == "-dM") {
             opts.dM = true;
+            ++i; continue;
+        }
+
+        if (arg == "-dD") {
+            opts.dD = true;
             ++i; continue;
         }
 

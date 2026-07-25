@@ -44,6 +44,10 @@ public:
     void set_remove_comments(bool b);
     void fix_remove_comments(bool b);
 
+    // ---- -dD mode: emit {#define}/{#undef} lines inline ----
+    bool is_dd_mode() const { return dd_mode_; }
+    void set_dd_mode(bool b) { dd_mode_ = b; }
+
     // ---- Token cache (filepath -> tokens) ----
     const std::vector<Token>* get_cache(const std::string& key) const;
     void set_cache(std::string key, std::vector<Token> tokens);
@@ -64,6 +68,8 @@ private:
 
     bool        remove_comments_         = false;
     bool        remove_comments_fixed_   = false;
+
+    bool        dd_mode_                 = false;
 
     struct CacheImpl;
     std::unique_ptr<CacheImpl> cache_;

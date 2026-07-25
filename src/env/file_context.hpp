@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 class FileContext {
@@ -36,10 +37,17 @@ public:
     };
     const std::vector<Dependency>& dependencies() const { return deps_; }
 
+    // ---- pragma once (for {#pragma once}) ----
+    // Record that a file (by its absolute path) has been seen with {#pragma once}.
+    void record_pragma_once(const std::string& absolute_path);
+    // Returns true if the file was previously marked with {#pragma once}.
+    bool is_pragma_once_seen(const std::string& absolute_path) const;
+
 private:
     std::vector<std::string> file_stack_;
     std::vector<int>         lineno_stack_;
     std::vector<std::string> syspaths_;
     int lineno_ = 1;
     std::vector<Dependency> deps_;
+    std::unordered_set<std::string> once_files_;  // files marked with {#pragma once}
 };

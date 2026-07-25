@@ -281,4 +281,10 @@ void handle_pragma_style(const std::string& raw_arg, Env& env) {
     env.set_pragma_style(std::string(Util::trim_view(raw_arg)));
 }
 
+void handle_pragma_once(const std::string& raw_arg, Env& env) {
+    // Only "once" is recognised; all other pragma names are silently ignored.
+    if (Util::trim_view(raw_arg) == "once")
+        env.record_pragma_once(env.current_file());
+}
+
 } // namespace jiepp::preprocessor_detail

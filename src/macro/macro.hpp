@@ -122,6 +122,7 @@ public:
     static constexpr int         NUM_OF_MAX_ARGS = (1 << 24) - 1;
     static constexpr const char* VA_ARGS = "__VA_ARGS__";
     static constexpr const char* VA_ARGC = "__VA_ARGC__";
+    static constexpr const char* VA_OPT  = "__VA_OPT__";
     static constexpr const char* VA_SYM  = "...";
 
     // args_list: parameter names in order; last may be "..."
