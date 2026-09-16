@@ -28,7 +28,7 @@ bool validate_parameter(int n, std::string_view name) {
 // ---------------------------------------------------------------------------
 
 struct Param::CacheImpl {
-    std::unordered_map<std::string, std::vector<Token>> data;
+    std::unordered_map<std::string, std::shared_ptr<const std::vector<Token>>> data;
 };
 
 Param::Param() : cache_(std::make_unique<CacheImpl>()) {}
@@ -134,13 +134,14 @@ void Param::fix_remove_comments(bool b) {
 // Token cache
 // ---------------------------------------------------------------------------
 
-const std::vector<Token>* Param::get_cache(const std::string& key) const {
+std::shared_ptr<const std::vector<Token>> Param::get_cache(const std::string& key) const {
     auto it = cache_->data.find(key);
     if (it != cache_->data.end())
-        return &it->second;
+        return it->second;
     return nullptr;
 }
 
 void Param::set_cache(std::string key, std::vector<Token> tokens) {
-    cache_->data.insert_or_assign(std::move(key), std::move(tokens));
+    cache_->data.insert_or_assign(
+        std::move(key), std::make_shared<const std::vector<Token>>(std::move(tokens)));
 }

@@ -102,6 +102,25 @@ TEST_F(IncludeTest, InlineInclude) {
     EXPECT_TRUE(empty());
 }
 
+#ifdef _WIN32
+TEST_F(IncludeTest, PragmaOnceDifferentCaseSamePath) {
+    // Windows/NTFS is case-insensitive: two differently-cased spellings of
+    // the same include path must be recognised as the same file by
+    // {#pragma once} (Loader::fullpath() now returns a canonical path).
+    fs::current_path(jiepp_root_dir());
+    std::string o;
+    EXPECT_NO_THROW({o = pp_file(DIR / "pragma_once_case_main.iec");});
+    static const std::string needle = "header_body;";
+    std::size_t count = 0;
+    for (std::size_t pos = 0; (pos = o.find(needle, pos)) != std::string::npos;
+         pos += needle.size())
+        ++count;
+    EXPECT_EQ(1u, count);
+    EXPECT_NE(std::string::npos, o.find("after;"));
+    EXPECT_TRUE(empty());
+}
+#endif
+
 TEST_F(IncludeTest, CircularInclude) {
     fs::current_path(jiepp_root_dir());
     Env env = setup();

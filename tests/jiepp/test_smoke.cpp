@@ -168,3 +168,27 @@ TEST_F(SmokeTest, OOption) {
     EXPECT_NE(content.find("7"), std::string::npos)
         << "output content: " << content;
 }
+
+// ---- 9. Windows stdout binary mode (B15) ----
+
+TEST_F(SmokeTest, StdoutMatchesOutputFileBytes) {
+    // B15: on Windows, redirected stdout must be byte-identical to -o FILE
+    // output for the same input (both LF, no CRLF translation on stdout).
+    fs::path input = tmp_dir_ / "stdout_bytes.iec";
+    write_file(input, "x := 1;\ny := 2;\n");
+    fs::path output = tmp_dir_ / "stdout_bytes_o.piec";
+
+    auto r_stdout = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r_stdout.exit_code, 0) << "stderr: " << r_stdout.err;
+
+    auto r_file = run("-o \"" + output.generic_string() + "\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r_file.exit_code, 0) << "stderr: " << r_file.err;
+
+    std::string file_content = read_file(output);
+    EXPECT_EQ(file_content, r_stdout.out)
+        << "redirected stdout and -o FILE output must be byte-identical";
+#ifdef _WIN32
+    EXPECT_EQ(std::string::npos, r_stdout.out.find("\r\n"))
+        << "stdout must not contain CRLF on Windows";
+#endif
+}

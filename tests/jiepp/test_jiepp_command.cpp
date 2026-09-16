@@ -76,6 +76,11 @@ static void run_e2e(const std::string& testid,
     opts.remove_comments = remove_comments;
     opts.dM = dM;
     opts.dep_mode = DepMode::ALL;
+    // B16 fix: -M/-MM alone now suppress the preprocessed output. This
+    // harness always requests a dependency file (below) for golden-output
+    // coverage, so it must also set -MD to keep "preprocessed output + dep
+    // file" semantics and preserve every existing golden byte-for-byte.
+    opts.MD = true;
     if (!dep_target.empty())
         opts.dep_target = dep_target;
     opts.dep_file = actual_dep_filepath;
@@ -401,9 +406,13 @@ TEST_F(JieppCommandTest, DepOutputM) {
 // ---- Error format consistency tests ----
 
 TEST_F(JieppCommandTest, ErrorFormatFileError) {
+    // Uses a valid, existing input (B11/B12: -o is now opened only after
+    // expansion succeeds, so an invalid input path would instead surface
+    // FILE_NOT_FOUND for the input before -o is ever touched; use a real
+    // input here so this test still exercises the -o open-failure message).
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
-    opts.input_filepaths = {"nonexistent.iec"};
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
     opts.output_filepath = "/nonexistent/dir/output.iec";
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_EQ("<unknown location>:1.0: error: PP10: An error occurred with the file; '/nonexistent/dir/output.iec'", message());
@@ -1295,4 +1304,205 @@ TEST_F(JieppCommandTest, VaOptNested) {
 
     ASSERT_NE(0, jiepp_command(opts)) << "expected PP37 error for nested __VA_OPT__";
     EXPECT_NE(std::string::npos, message().find("PP37")) << "PP37 not in error message";
+}
+
+// ─── B11/B12: -o safety (open only after expansion succeeds) ───────────────
+
+TEST_F(JieppCommandTest, OutputSameAsInputRoundTrips) {
+    // B11: -o naming the same path as the input file must not lose the
+    // input content -- the whole preprocessed output is now accumulated in
+    // memory before -o is (re)opened, so the input is fully read before its
+    // own path is truncated.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path self_path = tmpdir / "self_roundtrip.iec";
+    {
+        std::ofstream f(self_path);
+        f << "x := 1;\ny := 2;\n";
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {self_path.generic_string()};
+    opts.output_filepath = self_path.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(self_path, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, content.find("x := 1;")) << "input content lost when -o == input path";
+    EXPECT_NE(std::string::npos, content.find("y := 2;")) << "input content lost when -o == input path";
+}
+
+TEST_F(JieppCommandTest, OutputFileNotTruncatedOnFailure) {
+    // B12: a failing run must not truncate a pre-existing -o target. Since
+    // -o is now opened only after expansion has fully succeeded, a failure
+    // during expansion (before -o is ever opened) leaves the target
+    // completely untouched.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "fail_err.iec";
+    {
+        std::ofstream f(src);
+        f << "before;\n{#error boom}\nafter;\n";
+    }
+    fs::path output = tmpdir / "fail_stale.out";
+    const std::string preexisting = "PREEXISTING\n";
+    {
+        std::ofstream f(output, std::ios::binary);
+        f << preexisting;
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_NE(0, jiepp_command(opts)) << "expected failure for {#error}";
+
+    ASSERT_TRUE(fs::exists(output)) << "-o target should still exist after a failing run";
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(preexisting, content) << "-o target was truncated on a failing run";
+}
+
+// ─── B16: -M / -MM / -MD / -MMD / -dM output gating ────────────────────────
+
+TEST_F(JieppCommandTest, MSuppressesPreprocessedOutput) {
+    // B16: plain -M (dep_mode ALL without -MD/-MMD) must suppress the
+    // preprocessed output; only the dependency rule is written.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "m_alone.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path output  = tmpdir / "m_alone.piec";
+    fs::path dep_out = tmpdir / "m_alone.d";
+    fs::remove(output);
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    // -o must exist (still created) but be empty: preprocessed output suppressed.
+    ASSERT_TRUE(fs::exists(output));
+    std::ifstream pf(output, std::ios::binary);
+    std::string pout((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+    EXPECT_TRUE(pout.empty()) << "plain -M must not write preprocessed output, got: " << pout;
+
+    ASSERT_TRUE(fs::exists(dep_out));
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, dcontent.find(src.generic_string())) << "dep file missing source";
+}
+
+TEST_F(JieppCommandTest, MDKeepsPreprocessedOutput) {
+    // -MD combines dependency output with normal preprocessed output --
+    // positive control for the MSuppressesPreprocessedOutput fix above.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "md_keeps.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path output  = tmpdir / "md_keeps.piec";
+    fs::path dep_out = tmpdir / "md_keeps.d";
+    fs::remove(output);
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream pf(output, std::ios::binary);
+    std::string pout((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, pout.find("x: INT")) << "-MD must keep preprocessed output";
+
+    ASSERT_TRUE(fs::exists(dep_out));
+}
+
+TEST_F(JieppCommandTest, DMAloneSuppressesPreprocessedOutput) {
+    // -dM alone (no -M/-MM/-MD/-MMD) must dump macros only, suppressing the
+    // preprocessed body -- SPECIFICATION.md already documents this; the old
+    // not_out formula gated suppression on an unrelated dep-file check.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "dm_alone.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define FOO 1}\nVAR x: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dm_alone.piec";
+    fs::remove(output);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.dM = true;
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream pf(output, std::ios::binary);
+    std::string pout((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, pout.find("{#define FOO 1}")) << "-dM must dump macro definitions";
+    EXPECT_EQ(std::string::npos, pout.find("VAR x: INT")) << "-dM alone must suppress preprocessed body";
+}
+
+// ─── I1: dependency-rule path escaping ──────────────────────────────────────
+
+TEST_F(JieppCommandTest, DepRulePathEscaping) {
+    // I1: a dependency prerequisite path containing a space must be escaped
+    // as "\ " in the generated Makefile rule (gcc/clang convention);
+    // otherwise a consuming make/ninja would misparse the rule.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path inc_dir = tmpdir / "dep escape dir";
+    fs::create_directories(inc_dir);
+    fs::path hdr = inc_dir / "esc_hdr.iec";
+    {
+        std::ofstream f(hdr);
+        f << "VAR h: INT; END_VAR\n";
+    }
+    fs::path src = tmpdir / "dep_escape_main.iec";
+    {
+        std::ofstream f(src);
+        f << "{#include 'dep escape dir/esc_hdr.iec'}\n";
+    }
+    fs::path output  = tmpdir / "dep_escape_main.piec";
+    fs::path dep_out = tmpdir / "dep_escape_main.d";
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    ASSERT_TRUE(fs::exists(dep_out));
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, dcontent.find("dep\\ escape\\ dir/esc_hdr.iec"))
+        << "space in dependency path not escaped: " << dcontent;
+    EXPECT_EQ(std::string::npos, dcontent.find("dep escape dir/esc_hdr.iec"))
+        << "unescaped space present in dep rule: " << dcontent;
 }

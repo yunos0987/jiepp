@@ -16,21 +16,21 @@ bool Symtab::define(std::string name, std::unique_ptr<Macro> macro) {
 }
 
 bool Symtab::exist(std::string_view name) const {
-    auto it = sym_index_.find(std::string(name));
+    auto it = sym_index_.find(name);
     if (it != sym_index_.end())
         return sym_order_[it->second].macro != nullptr;
     return false;
 }
 
 Macro* Symtab::lookup(std::string_view name) const {
-    auto it = sym_index_.find(std::string(name));
+    auto it = sym_index_.find(name);
     if (it != sym_index_.end())
         return sym_order_[it->second].macro.get();
     return nullptr;
 }
 
 std::unique_ptr<Macro> Symtab::undef(std::string_view name) {
-    auto it = sym_index_.find(std::string(name));
+    auto it = sym_index_.find(name);
     if (it != sym_index_.end()) {
         std::size_t idx = it->second;
         std::unique_ptr<Macro> old = std::move(sym_order_[idx].macro);

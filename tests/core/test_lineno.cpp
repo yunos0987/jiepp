@@ -105,6 +105,26 @@ TEST_F(LinenoTest, Omacro) {
 }
 
 
+TEST_F(LinenoTest, DollarNewlineInStringLiteral) {
+    // B13: a $-escaped newline inside a string literal must count toward the
+    // running line number so that diagnostics after the literal report the
+    // correct physical line (4), not the line before the embedded newline (3).
+    const std::string input =
+        "{#define X 1}\n"
+        "s1 := 'line1 $\n"
+        "line2';\n"
+        "{#define X 2}\n";
+    const std::string expected_output = "\ns1 := 'line1 $\nline2';\n\n";
+
+    const std::string output = pp(input);
+    EXPECT_EQ(expected_output, output);
+    auto actual_diags = messages();
+    const std::vector<std::string> expected_diags = {
+        "<unknown location>:4.0: warning: PP35: Macro redefined; 'X'",
+    };
+    EXPECT_EQ(expected_diags, actual_diags);
+}
+
 TEST_F(LinenoTest, AllLineno) {
     const auto test_case = TestCase{
         "all-token-kinds",

@@ -154,6 +154,13 @@ std::vector<Token> subst(
 
     std::vector<Token> result;
     result.reserve(body.size());
+    // Tracks whether the token most recently produced for `result` (or, before any
+    // token has been produced, the position just before the first GLUE) is a
+    // placemarker (C17 6.10.3.3p2): an empty token sequence that participates in
+    // `@@` pasting as if it were an actual, invisible token. Set when a formal
+    // parameter adjacent to `@@` substitutes to zero tokens; cleared whenever any
+    // other token is pushed to `result`.
+    bool pending_placemarker = false;
     std::vector<bool> glue_adjacent(body.size(), false);
     for (std::size_t i = 0; i < body.size(); ++i) {
         if (body[i].type != Token::GLUE)
@@ -177,8 +184,15 @@ std::vector<Token> subst(
 
         // §subst case: IS is ## • T • IS' (paste)
         if (t.type == Token::GLUE) {
-            while (!result.empty() && (result.back().type & Token::MASK_WS))
-                result.pop_back();
+            // The left operand is a placemarker (an empty formal-param substitution
+            // adjacent to this @@) when `pending_placemarker` is set. In that case the
+            // whitespace preceding it belongs to the surrounding text, not to the
+            // (nonexistent) left operand, so it must not be stripped.
+            bool left_is_placemarker = pending_placemarker;
+            if (!left_is_placemarker) {
+                while (!result.empty() && (result.back().type & Token::MASK_WS))
+                    result.pop_back();
+            }
 
             std::size_t j = i + 1;
             while (j < body.size() && (body[j].type & Token::MASK_WS)) ++j;
@@ -186,6 +200,7 @@ std::vector<Token> subst(
                 continue;
 
             std::vector<Token> item;
+            bool nb_is_param = false;
             const Token& nb = body[j];
             if (nb.type == Token::ANY && nb.text == FunctionMacro::VA_OPT) {
                 // Handle:  X @@ __VA_OPT__(content)
@@ -204,21 +219,37 @@ std::vector<Token> subst(
                 if (nb.type == Token::ANY) {
                     auto pit = formal_params.find(nb.text);
                     if (pit != formal_params.end()) {
+                        nb_is_param = true;
                         auto [pidx, is_va] = pit->second;
                         item = ts_flatten(select_arg(pidx, actual_params, is_va));
                     }
                 }
-                if (item.empty())
+                // Only fall back to the literal spelling of `nb` when it was NOT a
+                // formal parameter. A formal parameter that substitutes to zero
+                // tokens is a placemarker (C17 6.10.3.3p2), not a request to paste
+                // the parameter's own name.
+                if (item.empty() && !nb_is_param)
                     item = {nb.clone()};
                 i = j;
             }
 
-            glue_tokens(result, item);
+            if (left_is_placemarker) {
+                // Placemarker @@ item == item: append verbatim, no pasting.
+                for (auto& tk : item)
+                    result.push_back(std::move(tk));
+                pending_placemarker = item.empty();
+            } else {
+                glue_tokens(result, item);
+                pending_placemarker = false;
+            }
             continue;
         }
 
         // §subst case: IS is # • T • IS' (stringize)
         if (t.type == Token::STRINGIZE) {
+            // A stringized result is always a real (possibly empty-text) STRING
+            // token, never a placemarker.
+            pending_placemarker = false;
             std::size_t j = i + 1;
             while (j < body.size() && (body[j].type & Token::MASK_WS)) ++j;
             if (j < body.size() && body[j].type == Token::ANY) {
@@ -254,6 +285,7 @@ std::vector<Token> subst(
         if (t.type == Token::ANY) {
             // Handle standalone __VA_OPT__(content)
             if (t.text == FunctionMacro::VA_OPT) {
+                pending_placemarker = false;
                 if (formal_params.find(FunctionMacro::VA_ARGS) == formal_params.end()) {
                     ISSUE(INVALID_VA_OPT, "__VA_OPT__ used outside variadic macro");
                     result.push_back(t.clone());
@@ -279,6 +311,7 @@ std::vector<Token> subst(
                 auto [pidx, is_va] = pit->second;
 
                 if (t.text == FunctionMacro::VA_ARGC) {
+                    pending_placemarker = false;
                     int cnt = argc_from(pidx, actual_params);
                     result.push_back(Token::create(Token::ANY, std::to_string(cnt)));
                     continue;
@@ -287,20 +320,30 @@ std::vector<Token> subst(
                 auto actual = select_arg(pidx, actual_params, is_va);
 
                 if (glue_adjacent[i]) {
+                    // A formal parameter directly adjacent to @@ that substitutes to
+                    // zero tokens is a placemarker (C17 6.10.3.3p2): it must not fall
+                    // back to being pasted as its own literal name.
                     auto flat = ts_flatten(actual);
-                    for (auto& ft : flat)
-                        result.push_back(ft);
+                    if (flat.empty()) {
+                        pending_placemarker = true;
+                    } else {
+                        for (auto& ft : flat)
+                            result.push_back(ft);
+                        pending_placemarker = false;
+                    }
                 } else {
                     std::vector<Token> expanded;
                     expand(actual, expanded, env);
                     for (auto& et : expanded)
                         result.push_back(et);
+                    pending_placemarker = false;
                 }
                 continue;
             }
         }
 
         // §subst fallthrough: IS must be T_HS' • IS'
+        pending_placemarker = false;
         result.push_back(t.clone());
     }
 

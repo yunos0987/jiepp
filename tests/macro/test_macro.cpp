@@ -53,6 +53,23 @@ TEST_F(MacroTest, Time) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(MacroTest, RedefineIdenticalModuloWhitespaceAmount) {
+    // C17 6.10.3p2: redefinitions are identical if "all white-space
+    // separations are considered identical" -- presence/absence, not amount.
+    EXPECT_EQ(";;", pp("{#define X 1 + 2};{#define X 1  +  2};"));
+    EXPECT_TRUE(empty());
+
+    // Differing presence/absence of a separation must still be flagged.
+    EXPECT_EQ(";;", pp("{#define Y 1+2};{#define Y 1 + 2};"));
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, code());
+
+    // Function-macro bodies: same rule applies.
+    EXPECT_EQ(";;", pp("{#define F(a,b) a + b};{#define F(a,b) a  +  b};"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(";;", pp("{#define G(a,b) a+b};{#define G(a,b) a + b};"));
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, code());
+}
+
 TEST_F(MacroTest, Line) {
     const std::string input =
         "__LINE__;\n"

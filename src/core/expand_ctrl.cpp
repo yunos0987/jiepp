@@ -46,6 +46,18 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
         }
         result.append(raw_cond, pos, found - pos);
 
+        if (found > 0) {
+            unsigned char prev = static_cast<unsigned char>(raw_cond[found - 1]);
+            if (std::isalnum(prev) || prev == '_') {
+                // KW is the tail of a longer identifier (e.g. a user macro
+                // name ending in __has_include), not the operator itself.
+                // Treat it as ordinary text and keep scanning after it.
+                result.append(KW);
+                pos = found + KW.size();
+                continue;
+            }
+        }
+
         std::size_t i = found + KW.size();
         // skip whitespace
         while (i < raw_cond.size() && std::isspace(static_cast<unsigned char>(raw_cond[i]))) ++i;

@@ -49,7 +49,10 @@ public:
     void set_dd_mode(bool b) { dd_mode_ = b; }
 
     // ---- Token cache (filepath -> tokens) ----
-    const std::vector<Token>* get_cache(const std::string& key) const;
+    // Returns a shared, immutable view of the cached RAW tokens (comment
+    // removal is applied by the caller, not baked into the cache) so a cache
+    // hit avoids a deep copy of the file's token vector.
+    std::shared_ptr<const std::vector<Token>> get_cache(const std::string& key) const;
     void set_cache(std::string key, std::vector<Token> tokens);
 
 private:

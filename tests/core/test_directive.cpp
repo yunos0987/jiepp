@@ -82,8 +82,42 @@ TEST_F(DirectiveTest, OperationNotAllowedDefine) {
     EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
 }
 
+TEST_F(DirectiveTest, OperationNotAllowedDefineWithBody) {
+    // Not just the bare {#define defined} form: any redefinition of the
+    // "defined" operator (object-like with a body, or function-like) must be
+    // rejected at the define site, not silently accepted (which would corrupt
+    // every later {#if defined(...)} in the file).
+    EXPECT_THROW(pp("{#define defined 1}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_THROW(pp("{#define defined(x) x}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    // A later {#if defined(...)} must still work using the real operator.
+    EXPECT_EQ(";yes;", pp("{#define FOO 1};{#if defined(FOO)}yes;{#endif}"));
+}
+
 TEST_F(DirectiveTest, OperationNotAllowedUndef) {
     EXPECT_THROW(pp("{#undef defined}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+}
+
+TEST_F(DirectiveTest, DirectiveInsideMacroArgumentExecutedOnce) {
+    // A directive embedded in a macro-call argument must execute exactly once,
+    // during argument collection, not once per occurrence of the parameter in
+    // the macro body.
+    EXPECT_EQ(";[Y] [Y]\n\n",
+              pp("{#define F(x) [x] [x]};F(\n{#warning side-effect}\nY)"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::WARNING_MESSAGE, cs[0]);
+}
+
+TEST_F(DirectiveTest, ControlDirectiveInsideMacroArgumentRejected) {
+    // Control directives ({#if}/{#elif}/{#else}/{#endif}/{#ifdef}/{#ifndef})
+    // found while collecting a macro call's argument list cannot be executed
+    // safely (they would run once per parameter occurrence, or not at all if
+    // the parameter is never referenced), so they are rejected diagnostically
+    // instead of silently misbehaving.
+    EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#if TRUE}\nY\n{#endif}\n)"), Issue::Exception);
     EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
 }
 

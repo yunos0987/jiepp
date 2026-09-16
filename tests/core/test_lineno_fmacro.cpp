@@ -274,6 +274,27 @@ d
     }
 }
 
+TEST_F(LinenoTest, FmacroLineInBody) {
+    // (a) __LINE__ textually inside a function-macro's own replacement list:
+    // for a multi-line invocation it must report the line of the closing ')',
+    // matching gcc/clang, not the line the macro name appeared on.
+    EXPECT_EQ(";1 3\n\n;\n4;",
+              pp("{#define F(x) x __LINE__};F(\n  1\n);\n__LINE__;"));
+    EXPECT_TRUE(empty());
+
+    // (b) __LINE__ passed as an argument: same closing-paren line applies to
+    // the recursive expansion of the actual parameter.
+    EXPECT_EQ(";3\n\n;\n4;",
+              pp("{#define F(x) x};F(\n__LINE__\n);\n__LINE__;"));
+    EXPECT_TRUE(empty());
+
+    // (c) __LINE__ after the call is unaffected (already covered by
+    // LinenoTest.Fmacro, spot-checked again here alongside (a)/(b)).
+    EXPECT_EQ(";a\n\n;3;",
+              pp("{#define F(x) x};F(\n  a\n);__LINE__;"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(LinenoTest, FmacroInvalidPragma) {
     const auto test_case = TestCase{
         "pragma-stops-at-inner-st",

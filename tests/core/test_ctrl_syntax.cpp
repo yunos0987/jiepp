@@ -155,6 +155,36 @@ TEST_F(CtrlSyntaxTest, Error) {
     EXPECT_TRUE(empty());
 }
 
+// Fact: {#ignore} of a structural conditional error (PP25/PP26/PP27) must
+// suppress only the diagnostic, never destabilise the ctrl stack or the
+// rest of the file's output.
+TEST_F(CtrlSyntaxTest, IgnoredStrayEndifDoesNotCorruptStack) {
+    // A second stray {#endif} after the first is ignored must not pop the
+    // sentinel entry off an already-balanced stack (which used to crash /
+    // hang the process); content after both stray directives must still be
+    // emitted.
+    EXPECT_NO_THROW({
+        EXPECT_EQ("after;", pp("{#ignore PP27}{#endif}{#endif}after;"));
+    });
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(CtrlSyntaxTest, IgnoredStrayElifDoesNotSuppressFile) {
+    // A stray {#elif} at file scope must not silently mutate the sentinel
+    // and suppress every token for the rest of the file.
+    EXPECT_NO_THROW({
+        EXPECT_EQ("after_stray_elif;", pp("{#ignore PP25}{#elif true}after_stray_elif;"));
+    });
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(CtrlSyntaxTest, IgnoredStrayElseDoesNotSuppressFile) {
+    EXPECT_NO_THROW({
+        EXPECT_EQ("after_stray_else;", pp("{#ignore PP26}{#else}after_stray_else;"));
+    });
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(CtrlSyntaxTest, ExactCases) {
     static const std::vector<std::pair<const char*, const char*>> cases = {
         {"{#if false}1;{#if true }2;{#endif}3;{#endif}e;", "e;"},

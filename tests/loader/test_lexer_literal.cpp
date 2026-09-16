@@ -98,6 +98,21 @@ TEST_F(LexerLiteralTest, String2) {
     EXPECT_TRUE(empty());
 }
 
+// ---- $-newline continuation inside a string literal (B13) ----
+
+TEST_F(LexerLiteralTest, DollarNewlineContinuationCountsLines) {
+    // One embedded $-escaped newline: the token must carry num_of_lines = 1
+    // so downstream line-number bookkeeping (advance_lineno) is not silently
+    // dropped, even though the raw text is passed through unchanged.
+    expect_tokens({make(Token::STRING, "'line1 $\nline2'", 1)}, "'line1 $\nline2'");
+    // Two embedded $-escaped newlines in one literal.
+    expect_tokens({make(Token::WSTRING, "\"a$\nb$\nc\"", 2)}, "\"a$\nb$\nc\"");
+    // A plain (non-escaped) newline inside a string is not reachable (the
+    // scanner stops at the quote or bare newline), so only $-escaped ones
+    // contribute to num_of_lines here.
+    EXPECT_TRUE(empty());
+}
+
 // ---- adjacent string literals: Python-compatible merging across whitespace ----
 
 TEST_F(LexerLiteralTest, StringSequence1) {

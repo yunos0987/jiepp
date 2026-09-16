@@ -15,6 +15,7 @@ extern CfValue cflval;  // defined in constfold_parser.cpp (bison %code section)
 %option prefix="cf"
 
 DIGIT   [0-9]
+DIGITS  [0-9](_?[0-9])*
 ALNUM   [0-9A-Za-z_]
 ALPHA   [A-Za-z_]
 
@@ -58,10 +59,17 @@ ALPHA   [A-Za-z_]
     return cf::CfParser::token::CF_INT;
 }
 
-[0-9]+"."[0-9]+([eE][+-]?[0-9]+)?  {
+{DIGITS}"."{DIGITS}([eE][+-]?{DIGITS})?  {
+    // I2: IEC 61131-3 digit separators are allowed in plain decimal/float
+    // literals too, not only based ones (mirrors the based-literal rule
+    // above); strip them before handing the text to stod.
+    std::string clean;
+    clean.reserve(yyleng);
+    for (const char* p = yytext; *p; ++p)
+        if (*p != '_') clean.push_back(*p);
     double fval = 0.0;
     try {
-        fval = std::stod(yytext);
+        fval = std::stod(clean);
     } catch (const std::out_of_range&) {
         ISSUE(INVALID_EXPRESSION, std::string("float literal overflow: ") + yytext);
     }
@@ -69,10 +77,15 @@ ALPHA   [A-Za-z_]
     return cf::CfParser::token::CF_FLOAT;
 }
 
-[0-9]+  {
+{DIGITS}  {
+    // I2: strip digit separators before stoll, mirroring the based-literal rule.
+    std::string clean;
+    clean.reserve(yyleng);
+    for (const char* p = yytext; *p; ++p)
+        if (*p != '_') clean.push_back(*p);
     int64_t ival = 0;
     try {
-        ival = std::stoll(yytext);
+        ival = std::stoll(clean);
     } catch (const std::out_of_range&) {
         ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
     }

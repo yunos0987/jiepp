@@ -126,7 +126,7 @@ TEST_F(ParamTest, Cache) {
     EXPECT_EQ(nullptr, env.get_cache("key"));
     std::vector<Token> tokens;
     env.set_cache("key", tokens);
-    const auto* cached = env.get_cache("key");
+    auto cached = env.get_cache("key");
     ASSERT_NE(nullptr, cached);
     EXPECT_TRUE(cached->empty());
 }

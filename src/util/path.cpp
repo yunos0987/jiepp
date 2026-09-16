@@ -13,3 +13,13 @@ std::string Util::absolute_path(std::string_view path_text) {
         return a.lexically_normal().generic_string();
     }
 }
+
+std::string Util::canonical_path(std::string_view path_text) {
+    fs::path p = std::string(path_text);
+    std::error_code ec;
+    fs::path c = fs::canonical(p, ec);
+    if (!ec) {
+        return c.generic_string();
+    }
+    return Util::absolute_path(path_text);
+}

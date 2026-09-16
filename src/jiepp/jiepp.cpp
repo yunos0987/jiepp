@@ -13,6 +13,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <unordered_set>
 #include <vector>
 
@@ -39,13 +40,32 @@ std::string dep_target(const JieppOptions& opts) {
     }
 }
 
+// Escape a dependency prerequisite/target path for Makefile syntax, mirroring
+// gcc/clang: '$' doubles to "$$", '#' and whitespace get a backslash prefix.
+// The colon is deliberately left unescaped (gcc does not escape it either,
+// and escaping it would break Windows drive-letter paths such as "C:/...").
+std::string escape_make_path(const std::string& path) {
+    std::string out;
+    out.reserve(path.size());
+    for (char c : path) {
+        switch (c) {
+        case '$':  out += "$$"; break;
+        case '#':  out += "\\#"; break;
+        case ' ':  out += "\\ "; break;
+        case '\t': out += "\\t"; break;
+        default:   out += c; break;
+        }
+    }
+    return out;
+}
+
 // Write Makefile-style dependency rules
 void write_dep_rules(const std::string& target, DepMode dep_mode, std::ostream& output, const Env& env) {
     // Collect dependencies with deduplication by resolved_path
     // Track resolved paths we've already seen (only first display_path is output)
     std::unordered_set<std::string> seen_resolved;
     std::vector<std::string> deps;
-    
+
     for (const auto& dep : env.dependencies()) {
         // Skip system includes if -MM mode
         if (dep_mode == DepMode::USER && dep.is_system)
@@ -53,12 +73,12 @@ void write_dep_rules(const std::string& target, DepMode dep_mode, std::ostream& 
         // Deduplicate by resolved_path (only add first occurrence of each resolved path)
         if (seen_resolved.find(dep.resolved_path) == seen_resolved.end()) {
             seen_resolved.insert(dep.resolved_path);
-            deps.push_back(dep.display_path);
+            deps.push_back(escape_make_path(dep.display_path));
         }
     }
 
     // Format output
-    output << target << ":";
+    output << escape_make_path(target) << ":";
     for (const auto& d : deps)
         output << " \\\n  " << d;
     output << "\n";
@@ -71,12 +91,18 @@ int jiepp_command(const JieppOptions& opts)
     std::ostream* output_stream = &std::cout;
     std::ofstream output_file;
     try {
-        if (opts.output_filepath) {
-            output_file.open(*opts.output_filepath, std::ios::out | std::ios::binary);
-            if (!output_file)
-                ISSUE(FILE_ERROR, *opts.output_filepath);
-            output_stream = &output_file;
-        }
+        // Deferred until after the whole preprocessed output has been built
+        // in memory (see the emit_tokens call below): opening -o eagerly here
+        // would truncate the destination before the input file is even read,
+        // which is catastrophic when -o names the same path as the input.
+        auto open_output = [&]() {
+            if (opts.output_filepath) {
+                output_file.open(*opts.output_filepath, std::ios::out | std::ios::binary);
+                if (!output_file)
+                    ISSUE(FILE_ERROR, *opts.output_filepath);
+                output_stream = &output_file;
+            }
+        };
 
         std::vector<std::pair<std::string,std::string>> predefine_macros;
         for (const auto& dm : opts.define_macros)
@@ -123,10 +149,12 @@ int jiepp_command(const JieppOptions& opts)
         }
 
         bool dep = opts.dep_mode != DepMode::NONE;
-        bool not_out = opts.dM && (dep && effective_dep_file.has_value() && !effective_dep_file->empty());
+        // -M/-MM (dependency-only modes) suppress the preprocessed output;
+        // -MD/-MMD (and -dM, unrelated to dep mode) keep it. Resolved lazily
+        // by emit_tokens below since output_stream is not yet finalized here.
+        bool not_out = opts.dM || (dep && !opts.MD && !opts.MMD);
 
         std::ostringstream virtual_output;
-        std::ostream* actual_output = not_out ? &virtual_output : output_stream;
 
         // Returns true for preprocessor-injected line markers: (*{#:N 'file'}*) or {#:N 'file'}.
         // User IEC pragmas with '#' are lexed as DIRECTIVE tokens, so PRAGMA tokens whose
@@ -141,7 +169,10 @@ int jiepp_command(const JieppOptions& opts)
 
         // Emit tokens to stream, optionally suppressing line markers and their
         // immediately-following WS token (GCC-compatible -P blank-line removal).
+        // actual_output is resolved here (not captured earlier) because
+        // output_stream may still change when open_output() runs later.
         auto emit_tokens = [&](const std::vector<Token>& tokens) {
+            std::ostream* actual_output = not_out ? &virtual_output : output_stream;
             if (opts.no_line_markers) {
                 bool skip_next_ws = false;
                 for (const auto& t : tokens) {
@@ -184,15 +215,19 @@ int jiepp_command(const JieppOptions& opts)
             ots.push_back(Token::newline());
             auto its = iec3_tokens(std::cin, env.get_remove_comments(), 1);
             expand(its, ots, env);
-            emit_tokens(ots);
             Issue::pop();
             env.pop_file();
         } else if (opts.input_filepaths.size() == 1) {
             expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env, dispath);
-            emit_tokens(ots);
         } else {
             ISSUE(INVALID_COMMAND, "multiple input files not supported");
         }
+
+        // The whole preprocessed output is accumulated in ots by this point;
+        // only now is it safe to (re)open -o, even if -o names the same path
+        // as the input file.
+        open_output();
+        emit_tokens(ots);
 
         if (opts.dM) {
             dump_macros(env, *output_stream);
@@ -215,6 +250,16 @@ int jiepp_command(const JieppOptions& opts)
         }
         return 0;
     } catch (const Issue::Exception&) {
+        // Do not leave a truncated/empty -o target behind on failure: a
+        // Make-based build system must reprocess the file on the next run,
+        // not treat a 0-byte, freshly-mtime'd file as an up-to-date target.
+        if (output_file.is_open()) {
+            output_file.close();
+            if (opts.output_filepath) {
+                std::error_code ec;
+                fs::remove(*opts.output_filepath, ec);
+            }
+        }
         return 1;
     }
 }

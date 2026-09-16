@@ -74,6 +74,7 @@ void dispatch_directive(const Token& t,
         case DirectiveToken::ELIF:
             if (ctrl.size() <= 1) {
                 ISSUE(ELIF_ERROR, "elif without matching if");
+                return;
             }
             {
                 auto& last = ctrl.back();
@@ -95,6 +96,7 @@ void dispatch_directive(const Token& t,
         case DirectiveToken::ELSE:
             if (ctrl.size() <= 1) {
                 ISSUE(ELSE_ERROR, "else without matching if");
+                return;
             }
             {
                 auto& last = ctrl.back();
@@ -113,8 +115,11 @@ void dispatch_directive(const Token& t,
         case DirectiveToken::ENDIF:
             if (ctrl.size() <= 1) {
                 ISSUE(ENDIF_ERROR, "endif without matching if");
+                return;
             }
-            ctrl.pop_back();
+            if (ctrl.size() > 1) {
+                ctrl.pop_back();
+            }
             break;
         default:
             break;
@@ -290,7 +295,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
         Token t = std::move(work.back());
         work.pop_back();
 
-        if (t.num_of_lines > 0) {
+        if (t.num_of_lines > 0 && !t.lineno_counted) {
             advance_lineno(t.num_of_lines, env);
         }
 
@@ -380,9 +385,18 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
 
                 if (found_lp) {
                     // Collect parameters until matching ')'
+                    // sum_num_of_lines: every newline consumed while scanning past the
+                    // macro name and its argument list, for output line-count fidelity.
+                    // sum_uncounted: the subset not already applied to env's line
+                    // counter by an earlier (outer) pass over these same tokens, used
+                    // to advance the counter exactly once per physical newline.
                     int sum_num_of_lines = 0;
-                    for (auto& s : pre_lp)
+                    int sum_uncounted = 0;
+                    for (auto& s : pre_lp) {
                         sum_num_of_lines += s.num_of_lines;
+                        if (!s.lineno_counted)
+                            sum_uncounted += s.num_of_lines;
+                    }
 
                     std::vector<std::vector<Token>> params;
                     std::vector<Token> cur;
@@ -394,6 +408,29 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         Token pt = std::move(work.back());
                         work.pop_back();
                         sum_num_of_lines += pt.num_of_lines;
+                        if (!pt.lineno_counted) {
+                            sum_uncounted += pt.num_of_lines;
+                            pt.lineno_counted = true;
+                        }
+
+                        // jiepp extension: a directive found while collecting a macro
+                        // call's argument list is executed exactly once here, and
+                        // dropped from the argument stream, instead of being captured
+                        // as a raw token and re-executed once per occurrence of the
+                        // parameter in the macro body (see subst()'s formal-parameter
+                        // substitution, which calls expand() per occurrence).
+                        if (pt.type == Token::DIRECTIVE) {
+                            auto [dkey, draw_arg] = parse_directive(pt.text);
+                            int dkind = DirectiveToken::name_to_kind(dkey);
+                            if (dkind != -1 &&
+                                (dkind & (DirectiveToken::MASK_CTRL | DirectiveToken::MASK_CTRLEX))) {
+                                ISSUE(OPERATION_NOT_ALLOWED,
+                                      "control directive inside macro argument");
+                            } else {
+                                dispatch_directive(pt, ctrl, env, ots);
+                            }
+                            continue;
+                        }
 
                         if (depth == 0 && pt.type == Token::RP) {
                             rp_token = std::move(pt);
@@ -453,10 +490,23 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         );
                     }
                     new_hs.insert(t.text);
+
+                    // Advance the line counter to the closing ')' BEFORE subst(), so a
+                    // __LINE__ reference inside the macro body or an argument reports
+                    // the invocation's closing-paren line (gcc/clang behaviour for a
+                    // function-macro call spanning multiple lines), not the line the
+                    // macro name appeared on.
+                    advance_lineno(sum_uncounted, env);
+
                     auto replaced = subst(fm->body(), fm->args(), params, new_hs, env);
 
                     if (sum_num_of_lines > 0) {
-                        replaced.push_back(Token::newline(sum_num_of_lines));
+                        Token nl = Token::newline(sum_num_of_lines);
+                        // Already reflected in env's line counter above; prevent the
+                        // main loop from advancing it a second time when this token is
+                        // later popped.
+                        nl.lineno_counted = true;
+                        replaced.push_back(std::move(nl));
                     }
 
                     // Push replacement in reverse for re-scanning
@@ -528,7 +578,7 @@ std::vector<Token>& expand(const std::string& filepath,
     ots.push_back(Token::line_pragma(0, disppath, env.is_standard_pragma_style()));
     ots.push_back(Token::newline());
     auto its = Loader::tokens(fullpath, env);
-    expand(its, ots, env);
+    expand(*its, ots, env);
 
     Issue::pop();
     env.pop_file();

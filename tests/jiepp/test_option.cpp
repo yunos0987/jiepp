@@ -166,6 +166,16 @@ TEST_F(OptionTest, ParseArgsUSeparate) {
     EXPECT_EQ(opts.undef_macros[0], "BAR");
 }
 
+TEST_F(OptionTest, UndefMissingValueIsError) {
+    // B14: "-U" with no following value (e.g. the very last argv token) must
+    // raise a diagnostic, mirroring how -I/-o require a value, instead of
+    // silently pushing an empty undef name that is a harmless no-op downstream.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("-U")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
 TEST_F(OptionTest, ParseArgsIncludeFile) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("-include"), const_cast<char*>("header.iec")};

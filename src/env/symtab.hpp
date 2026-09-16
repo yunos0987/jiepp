@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -26,6 +27,15 @@ private:
         std::string            name;
         std::unique_ptr<Macro> macro; // nullptr means the entry was undef'd
     };
-    std::vector<SymEntry>                        sym_order_; // insertion order
-    std::unordered_map<std::string, std::size_t> sym_index_; // name -> index
+    // Transparent hash so exist()/lookup()/undef() can probe the map with a
+    // std::string_view directly, without allocating a temporary std::string.
+    struct StringHash {
+        using is_transparent = void;
+        std::size_t operator()(std::string_view sv) const noexcept {
+            return std::hash<std::string_view>{}(sv);
+        }
+    };
+    std::vector<SymEntry> sym_order_; // insertion order
+    std::unordered_map<std::string, std::size_t, StringHash, std::equal_to<>>
+        sym_index_; // name -> index
 };

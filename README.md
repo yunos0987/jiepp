@@ -137,7 +137,7 @@ cat input.iec | jiepp -
 | `-include FILE` | 入力前に強制インクルード | — |
 | `-w` | 警告抑制 | off |
 | `-Werror` | 警告→エラー昇格 | off |
-| `-M` / `-MM` | Makefile 依存関係出力 | off |
+| `-M` / `-MM` | Makefile 依存関係出力（プリプロセス結果は出力しない。`-MD`/`-MMD` は出力も残す） | off |
 | `-nC` | コメント除去 | off |
 | `-dM` | マクロ一覧出力 | off |
 | `--` | オプション終端 | — |

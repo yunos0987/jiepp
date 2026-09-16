@@ -74,3 +74,16 @@ TEST_F(ConstfoldTest, ExprMod) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(ConstfoldTest, DigitSeparatorsInDecimalAndFloat) {
+    // I2: IEC 61131-3 digit separators are valid in plain decimal/float
+    // literals too, not only based ones -- constfold.l previously only
+    // stripped '_' for the N#... rule, so "1_000" was a syntax error.
+    EXPECT_NE(0LL, eval_const_expr("1_000=1000"));
+    EXPECT_NE(0LL, eval_const_expr("1_2_3=123"));
+    EXPECT_NE(0LL, eval_const_expr("1_000.5=1000.5"));
+    EXPECT_NE(0LL, eval_const_expr("1_0.0e1=100.0"));
+    // Based literals must still work unaffected by this change.
+    EXPECT_NE(0LL, eval_const_expr("16#1_00=256"));
+    EXPECT_TRUE(empty());
+}
+

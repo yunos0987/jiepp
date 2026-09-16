@@ -71,6 +71,8 @@ ctest --preset <preset-name>          # test
 | `macro/` | `macro.hpp/cpp` | `Macro` クラス。オブジェクト形式マクロ・関数形式マクロの定義を表現する |
 | `constfold/` | `constfold.hpp/cpp`, `constfold_internal.hpp`, `constfold_scanner.cpp`, `constfold_parser.cpp` | `#if` / `#elif` 式の定数畳み込み評価。算術・比較・論理・ビット演算およびビットシフト (`<<`, `>>`) をサポート |
 
+`Loader::fullpath()` はインクルードパス解決の結果を `Util::canonical_path()`（symlink 解決・OS 正規化）で正規化して返す。この正規化済みパスは、`{#pragma once}` の処理済みファイル集合・`Loader::tokens()` のトークンキャッシュのキー・`-M`/`-MM` 依存関係の重複排除のいずれにも共通して使われる同一性キーである。
+
 ### CLI 構成
 
 ```
@@ -82,10 +84,7 @@ jiepp/
 
 `jiepp_command` のシグネチャ:
 ```cpp
-int jiepp_command(
-    const JieppOptions& opts,
-    std::ostream&       err,
-    const std::string&  cwd = "");
+int jiepp_command(const JieppOptions& opts);
 ```
 
 `JieppOptions` は CLI オプションを集約した構造体:
@@ -192,7 +191,7 @@ flowchart TD
 ### 処理の流れ（概略）
 
 1. `jiepp/main.cpp` が `parse_args()` で引数を解析して `jiepp_command()` を呼ぶ
-2. `jiepp_command()` が `Env` を構築し、`expand_file()` または `preprocess()` を呼ぶ
+2. `jiepp_command()` が `Env` を構築し、`expand()` を直接呼ぶ（ファイルパスを取るオーバーロードでトップレベル入力ファイルを展開するか、標準入力の場合はトークン列を取るオーバーロードを呼ぶ）。`core/preprocessor.hpp` にはストリーム入出力向けの簡易 API `preprocess()` も存在するが、CLI (`jiepp_command()`) はこれを使わず `expand()` を直接呼んでいる（`preprocess()` は主に `tests/test_helper.hpp` から利用される）
 3. 入力は `lexer` でトークン化され `Token` 列になる
 4. `core/expand.cpp` がトークン列を走査し:
    - ディレクティブ（`#define`, `#if` など）は `directive_parser` → `directive_handlers` が処理
@@ -208,9 +207,9 @@ flowchart TD
 | `Env` | `env/env.hpp` | プリプロセッサ全体の状態。マクロ辞書・インクルードスタック・パラメータを一元管理 |
 | `Token` | `loader/token.hpp` | トークン 1 個を表す構造体 (`text`, `kind` など) |
 | `Macro` | `macro/macro.hpp` | マクロ 1 件の定義（パラメータ一覧・本体トークン列） |
-| `expand_file()` | `core/preprocessor.hpp` | `#include` / `#sinclude` の解決とファイル展開 |
-| `preprocess()` | `core/preprocessor.hpp` | ストリームを受け取ってプリプロセス出力を書き出す主関数 |
-| `expand()` | `core/preprocessor.hpp` | トークン列を展開して出力トークン列を返す |
+| `expand()`（ファイルパス版オーバーロード） | `core/preprocessor.hpp` | `Loader::fullpath()`/`Loader::tokens()` で対象ファイルを解決・読み込み、トークン版 `expand()` に委譲する。`#include` / `#sinclude` および CLI のトップレベル入力ファイル展開はこちらを呼ぶ |
+| `expand()`（トークン列版オーバーロード） | `core/preprocessor.hpp` | Prosser のアルゴリズムに基づく展開の主ループ。トークン列を受け取りマクロ展開・ディレクティブ処理を行って出力トークン列を返す |
+| `preprocess()` | `core/preprocessor.hpp` | ストリーム/ファイルパスを受け取ってプリプロセス出力を書き出す簡易 API。CLI (`jiepp_command()`) は使用せず、主に `tests/test_helper.hpp` から利用される |
 | `eval_const_expr()` | `constfold/constfold.hpp` | `#if` 式文字列を評価して int64_t 値を返す |
 | `Issue` | `env/issue.hpp` | エラー/イシュー発生時の出力・例外送出ユーティリティ。`-w` (警告抑制) / `-Werror` (警告→エラー昇格) サポート。`output()` は非スロー版出力メソッド |
 | `jiepp_command()` | `jiepp/jiepp.hpp` | 前処理の実行エントリポイント |

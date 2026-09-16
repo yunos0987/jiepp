@@ -36,11 +36,6 @@ bool strip_path(const std::string_view raw_path, std::string& path, bool& syspat
 namespace jiepp::preprocessor_detail {
 
 void handle_define(const std::string& raw_arg, Env& env) {
-    if (raw_arg == "defined") {
-        ISSUE(OPERATION_NOT_ALLOWED, "redefine 'defined'");
-        return;
-    }
-
     auto ts = iec3_tokens_from_string(raw_arg, false);
     ts = ts_ltrim(std::move(ts));
     if (ts.empty() || ts[0].type != Token::ANY) {
@@ -49,6 +44,11 @@ void handle_define(const std::string& raw_arg, Env& env) {
     }
 
     std::string name = ts[0].text;
+    if (name == "defined") {
+        ISSUE(OPERATION_NOT_ALLOWED, "redefine 'defined'");
+        return;
+    }
+
     std::size_t i = 1;
     bool is_function = (i < ts.size() && ts[i].type == Token::LP);
     std::vector<std::string> param_names;

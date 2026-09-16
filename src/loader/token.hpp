@@ -19,6 +19,11 @@ struct Token {
     int         type   = ANY;
     std::string text;
     int         num_of_lines = 0; // number of newlines this token contributes
+    // True once this token's num_of_lines has already been applied to Env's line
+    // counter (see expand.cpp's function-macro argument collection). Bookkeeping
+    // only: deliberately excluded from operator== so existing token-equality
+    // callers (macro redefinition checks, tests) are unaffected.
+    bool        lineno_counted = false;
     HideSetPtr  hs;          // hide-set (shared, copy-on-write)
 
     // Factories

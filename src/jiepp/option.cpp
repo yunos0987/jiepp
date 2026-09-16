@@ -125,7 +125,10 @@ JieppOptions parse_args(int argc, char* argv[]) {
         }
 
         if (arg.size() >= 2 && arg.compare(0, 2, "-U") == 0) {
-            opts.undef_macros.push_back(arg.substr(2));
+            std::string name = arg.substr(2);
+            if (name.empty())
+                ISSUE(MISSING_OPTION_VALUE, "-U");
+            opts.undef_macros.push_back(name);
             ++i; continue;
         }
 

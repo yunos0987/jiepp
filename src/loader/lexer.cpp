@@ -130,13 +130,24 @@ std::vector<Token> tokenize(const std::string& text, int lineno) {
             int tok_type = (c == '\'') ? Token::STRING : Token::WSTRING;
             char quote = c;
             std::size_t start = p++;
+            int dollar_nl = 0;
             while (p < n && text[p] != quote && !is_nl_char(text[p])) {
+                if (text[p] == '$' && p + 1 < n && is_nl_char(text[p + 1])) {
+                    // $-escaped newline (line continuation): consume the full
+                    // newline sequence (\r\n, \r or \n) and count it so the
+                    // running line counter and the token's num_of_lines stay
+                    // in sync with the physical lines this literal spans.
+                    ++p; // skip '$'
+                    dollar_nl += consume_one_nl(text, p);
+                    continue;
+                }
                 if (text[p] == '$') ++p;
                 if (p < n) ++p;
             }
             if (p < n && text[p] == quote)
                 ++p;
-            push_string_token(r, tok_type, text.substr(start, p - start));
+            lineno += dollar_nl;
+            push_string_token(r, tok_type, text.substr(start, p - start), dollar_nl);
             continue;
         }
 

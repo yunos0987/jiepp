@@ -123,3 +123,17 @@ TEST_F(HasIncludeTest, NonExistingSingleQuote) {
     EXPECT_EQ(std::string::npos, r.find("YES"));
     EXPECT_TRUE(empty());
 }
+
+// ---- Word-boundary requirement ----
+
+TEST_F(HasIncludeTest, KeywordRequiresLeftWordBoundary) {
+    // A user function-macro whose name happens to end in "__has_include"
+    // must still expand normally: the raw substring scan for the operator
+    // must not treat the tail of a longer identifier as the keyword.
+    auto r = pp(
+        "{#define weird__has_include(x) 99}"
+        "{#if weird__has_include('foo') = 99}YES{#else}NO{#endif}");
+    EXPECT_NE(std::string::npos, r.find("YES"));
+    EXPECT_EQ(std::string::npos, r.find("NO"));
+    EXPECT_TRUE(empty());
+}

@@ -5,6 +5,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
+#include <fcntl.h>
 #else
 #include <sys/resource.h>
 #endif
@@ -32,6 +34,14 @@ DWORD WINAPI jiepp_thread_func(LPVOID arg) {
 } // namespace
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // B15: the Windows CRT defaults stdout to text mode, silently translating
+    // '\n' to "\r\n" on write. -o FILE is already opened in binary mode, so
+    // without this, redirected stdout and -o output would differ byte-for-byte
+    // for identical content. stderr is left in text mode: it only carries
+    // human-facing diagnostics, never diffed against file output.
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     Issue::initialize(std::cerr);
 
     try {
