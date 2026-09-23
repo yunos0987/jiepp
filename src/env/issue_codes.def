@@ -56,6 +56,7 @@ JIEPP_ISSUE_CODE(INVALID_PARAMETER_VALUE,     44, ERROR,   "Invalid parameter va
 JIEPP_ISSUE_CODE(UNKNOWN_DIRECTIVE,           45, WARNING, "Unknown directive")
 JIEPP_ISSUE_CODE(INVALID_DIRECTIVE_NAME,      46, ERROR,   "Invalid directive name")
 JIEPP_ISSUE_CODE(INVALID_PATH,                47, ERROR,   "Invalid path")
+JIEPP_ISSUE_CODE(INVALID_PRAGMA_STYLE_OPERAND, 48, WARNING, "Invalid operand for pragma style directive")
 
 // --- Expression (50-59) ---
 JIEPP_ISSUE_CODE(EXPR_TYPE_ERROR,             50, ERROR,   "Type error in expression")

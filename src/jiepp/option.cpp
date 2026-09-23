@@ -1,5 +1,6 @@
 ﻿#include "option.hpp"
 #include "../env/issue.hpp"
+#include "../env/param_constants.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -19,6 +20,12 @@ int parse_positive_int(const std::string& arg, const std::string& opt_name) {
         ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
         return -1;
     }
+}
+
+std::string parse_pragma_style(const std::string& arg, const std::string& opt_name) {
+    if (arg != VAL_PRAGMA_STANDARD && arg != VAL_PRAGMA_ANNOTATED)
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be annotated or standard");
+    return arg;
 }
 
 void require_value(int i, int argc, const std::string& opt_name) {
@@ -213,7 +220,7 @@ JieppOptions parse_args(int argc, char* argv[]) {
 
         if (arg == "--pp-output-pragma-style" || arg == "--pp_output_pragma_style") {
             require_value(i, argc, arg);
-            opts.pp_output_pragma_style = argv[++i];
+            opts.pp_output_pragma_style = parse_pragma_style(argv[++i], arg);
             ++i; continue;
         }
 

@@ -149,6 +149,17 @@ TEST_F(OptionTest, ParseArgsPragmaStyle) {
     EXPECT_EQ(*opts.pp_output_pragma_style, "annotated");
 }
 
+TEST_F(OptionTest, ParseArgsPragmaStyleInvalid) {
+    // Unlike the in-source {#pp-output-pragma-style} directive (a non-fatal
+    // WARNING), an invalid CLI value is a hard startup ERROR, matching
+    // gcc/clang's convention for bad enum-like option arguments.
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--pp-output-pragma-style"),
+                    const_cast<char*>("bogus")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_OPTION_VALUE, code());
+}
+
 // ---- New CLI options ----
 
 TEST_F(OptionTest, ParseArgsUJoined) {

@@ -514,6 +514,10 @@ CLI オプションで設定した値はソースコード内のディレクテ�
 | `annotated` | `(*{#:100 file.iec}*)` | IEC 61131-3 コメントで囲まれ、処理系に影響しない |
 | `standard` | `{#:100 file.iec}` | プラグマ形式で出力される |
 
+`{#pp_output_pragma_style}` ディレクティブに `annotated` / `standard` 以外の値を指定した場合、`INVALID_PRAGMA_STYLE_OPERAND` (`PP48`) 警告が発行され、その指定は無視されます（現在のスタイルを維持したまま処理を継続）。CLI の `--pp-output-pragma-style` に不正な値を指定した場合は `INVALID_OPTION_VALUE` (`PP71`) エラーで即座に終了します。
+
+> **注意（既知の制限）**: 8 行以上の空行区間が圧縮されるとき（§1・§9）、挿入される圧縮マーカーのスタイルは直近に出力された行マーカー（ファイル/インクルード境界のマーカー等）のスタイルを引き継ぎます。`{#pp_output_pragma_style}` によるスタイル切り替え自体は行マーカーを生成しないため、切り替え直後・次の行マーカーが現れる前に 8 行以上の空行が生じた場合、そこに挿入される圧縮マーカーは切り替え「前」のスタイルで出力されます。
+
 ### `{#nop}` — 無操作 / No Operation
 
 ```
@@ -641,7 +645,7 @@ jiepp [filepath] [options]
 | `--max-include-depth N` | インクルード深度上限 | 100 |
 | `--max-expansion-depth N` | マクロ展開深度上限 | 256 |
 | `--max-if-nesting N` | 条件分岐ネスト深度上限 | 256 |
-| `--pp-output-pragma-style STYLE` | プラグマ出力スタイル (`annotated` / `standard`) | `annotated` |
+| `--pp-output-pragma-style STYLE` | プラグマ出力スタイル (`annotated` / `standard`)。不正な値は `INVALID_OPTION_VALUE` (`PP71`) エラー | `annotated` |
 | `--remove-comments` / `-nC` | コメントを除去 | off |
 | `-dM` | 定義されたマクロの一覧を出力（プリプロセス結果は出力しない） | off |
 | `-dD` | プリプロセス出力に `{#define}` / `{#undef}` 行をインライン挿入（`-dM` の処理中版） | off |
@@ -883,6 +887,7 @@ CLI オプションのエラーは `jiepp:` をファイルパスの代わりに
 | PP44 | `INVALID_PARAMETER_VALUE` | ERROR | Invalid parameter value | パラメータ値が不正（0以下等） |
 | PP45 | `UNKNOWN_DIRECTIVE` | WARNING | Unknown directive | 未知のディレクティブ |
 | PP46 | `INVALID_DIRECTIVE_NAME` | ERROR | Invalid directive name | 不正なディレクティブ名（先頭が数字等） |
+| PP48 | `INVALID_PRAGMA_STYLE_OPERAND` | WARNING | Invalid operand for pragma style directive | `{#pp_output_pragma_style}` の不正なオペランド |
 | PP50 | `EXPR_TYPE_ERROR` | ERROR | Type error in expression | 式中の型エラー（ゼロ除算等） |
 | PP51 | `MISSING_EXPRESSION` | ERROR | Missing expression | `{#if}` に式がない |
 | PP52 | `INVALID_EXPRESSION` | ERROR | Invalid expression | 不正な式 |

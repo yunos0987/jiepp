@@ -38,6 +38,39 @@ TEST_F(PragmaStyleTest, Standard) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(PragmaStyleTest, UnknownValue) {
+    // Unknown STYLE operand: non-fatal WARNING (PP48), pragma ignored,
+    // effective style left unchanged (stays at the default: annotated).
+    const std::string input =
+        "\n"
+        "{#pp-output-pragma-style bogus}\n"
+        "{#line 2}\n"
+        "program {id Main} end\n";
+    const std::string expected =
+        "\n"
+        "\n"
+        "(*{#:2}*)\n"
+        "program (*{id Main}*) end\n";
+    EXPECT_EQ(expected, pp(input));
+    EXPECT_EQ(Issue::Code::INVALID_PRAGMA_STYLE_OPERAND, code());
+}
+
+TEST_F(PragmaStyleTest, UnknownValueUnderscoreAlias) {
+    // Underscore-spelled directive alias validates the same way.
+    const std::string input =
+        "\n"
+        "{#pp_output_pragma_style bogus}\n"
+        "{#line 2}\n"
+        "program {id Main} end\n";
+    const std::string expected =
+        "\n"
+        "\n"
+        "(*{#:2}*)\n"
+        "program (*{id Main}*) end\n";
+    EXPECT_EQ(expected, pp(input));
+    EXPECT_EQ(Issue::Code::INVALID_PRAGMA_STYLE_OPERAND, code());
+}
+
 TEST_F(PragmaStyleTest, Switch) {
     // mid-stream switches: annotated → standard → annotated
     const std::string input =

@@ -1,6 +1,7 @@
 #include "preprocessor.hpp"
 #include "preprocessor_internal.hpp"
 
+#include "../env/param_constants.hpp"
 #include "../loader/lexer.hpp"
 #include "../loader/directive_parser.hpp" //kludge
 #include "../macro/macro.hpp"
@@ -278,7 +279,12 @@ void handle_max_if_nesting(const std::string& raw_arg, Env& env) {
 }
 
 void handle_pragma_style(const std::string& raw_arg, Env& env) {
-    env.set_pragma_style(std::string(Util::trim_view(raw_arg)));
+    std::string style(Util::trim_view(raw_arg));
+    if (style != VAL_PRAGMA_STANDARD && style != VAL_PRAGMA_ANNOTATED) {
+        ISSUE(INVALID_PRAGMA_STYLE_OPERAND, style);
+        return;
+    }
+    env.set_pragma_style(std::move(style));
 }
 
 void handle_pragma_once(const std::string& raw_arg, Env& env) {
