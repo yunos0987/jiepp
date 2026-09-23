@@ -58,7 +58,7 @@ Tests live in `tests/` and use Google Test. Group related tests in the appropria
 
 **推奨手順（スクリプト一括再生成）:**
 
-`tools/pp_iec61131-3_samples.ps1` がサンプル再生成の公式手順です。`iec_61131-3/samples/*.iec` を自動列挙し（`_` 始まりのファイルは除外）、`build/windows-clang-ninja-debug/jiepp.exe`（無ければ release ビルド）を使って各サンプルを `.piec` へ再生成します。`{#syspath 'lib'}` を使う `include` / `syspath` サンプルには `-I iec_61131-3/samples/lib` を自動付与します。
+`tools/pp_iec61131-3_samples.ps1` がサンプル再生成の公式手順です。`iec_61131-3/samples/*.iec` を自動列挙し（`_` 始まりのファイルは除外）、`build/windows-clang-ninja-debug/jiepp.exe`（無ければ release ビルド）を使って各サンプルを `.piec` へ再生成します。`{#syspath}` はディレクティブを含むファイル自身のディレクトリを基準に解決されるため、`{#syspath 'lib'}` を使う `include` / `syspath` サンプルでも `-I` は不要です。
 
 ```powershell
 # 全サンプルを再生成
@@ -76,11 +76,7 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 .\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/example.iec -o iec_61131-3/samples/example.piec
 ```
 
-`{#syspath 'lib'}` または `{#sinclude}` を使うサンプルには `-I iec_61131-3/samples/lib` を追加します：
-
-```powershell
-.\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/include.iec -o iec_61131-3/samples/include.piec -I iec_61131-3/samples/lib
-```
+`{#syspath 'lib'}` はディレクティブを含むファイル自身のディレクトリ（この場合 `iec_61131-3/samples`）を基準に解決されるため、`{#syspath}` や `{#sinclude}` を使うサンプルでも追加のフラグは不要です。
 
 再生成後は、テストスイートが pass することを確認し、ドキュメント（SPECIFICATION.md 等）での参照が正確であることを確認してください。
 

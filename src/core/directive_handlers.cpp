@@ -32,6 +32,19 @@ bool strip_path(const std::string_view raw_path, std::string& path, bool& syspat
     return false;
 }
 
+// Resolve a {#syspath} operand relative to the directory of the file
+// containing the directive (same rule as {#include}'s relative-path lookup
+// in Loader::fullpath: an absolute operand, or a Windows '/x'/'C:x' operand
+// that fs::path::operator/ treats as rooted, replaces the base outright).
+// When no file is currently open (e.g. library/string input, stdin), falls
+// back to the current working directory.
+std::string resolve_syspath_base(const std::string& raw_syspath, Env& env) {
+    const std::string& cur_file = env.current_file();
+    fs::path base_dirpath = cur_file.empty() ? fs::current_path() : fs::path(cur_file).parent_path();
+    fs::path candidate = base_dirpath / raw_syspath;
+    return candidate.lexically_normal().generic_string();
+}
+
 } // namespace
 
 namespace jiepp::preprocessor_detail {
@@ -206,7 +219,7 @@ void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ot
     std::string syspath;
     bool _;
     if (strip_path(raw_path, syspath, _)) {
-        env.add_syspath(syspath);
+        env.add_syspath(resolve_syspath_base(syspath, env));
         ots.push_back(Token::pragma("syspath", Util::encode_iec_string(syspath, '\''), env.is_standard_pragma_style()));
         return;
     }

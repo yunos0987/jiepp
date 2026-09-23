@@ -1,0 +1,2 @@
+{#syspath ''}
+{#sinclude 'main2_target.iec'}

@@ -1,6 +1,6 @@
 (*{#:0 'tests/jiepp/input/sinclude_with_syspath_directive/sinclude_with_syspath_directive_x.iec'}*)
 
-(*{syspath:'tests/jiepp/input/sinclude_with_syspath_directive'}*)
+(*{syspath:'.'}*)
 (*{#:0 'module.iec'}*)
 
 program x

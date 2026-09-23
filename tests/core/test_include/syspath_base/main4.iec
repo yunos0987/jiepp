@@ -1,0 +1,3 @@
+{#include 'macrodef/header.iec'}
+{#syspath MY_LIB_PATH}
+{#sinclude 'sb_target.iec'}
