@@ -121,6 +121,89 @@ TEST_F(DirectiveTest, ControlDirectiveInsideMacroArgumentRejected) {
     EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
 }
 
+TEST_F(DirectiveTest, OutputDirectiveInsideMacroArgumentRejected) {
+    // F3: a directive whose handler pushes token(s) directly to the output
+    // stream (its output would be emitted before the enclosing macro call's
+    // own expansion) is rejected -- not silently misordered -- when found
+    // while collecting a macro call's argument list.
+    EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#include 'nope.iec'}\nY)"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+
+    EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#sinclude 'nope.iec'}\nY)"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+
+    EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#line 100}\nY)"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+
+    EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#string Y}\nY)"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+
+    EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#wstring Y}\nY)"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+
+    EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#token Y}\nY)"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+
+    EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#syspath 'lib'}\nY)"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+}
+
+TEST_F(DirectiveTest, StateDirectiveInsideMacroArgumentStillAllowed) {
+    // F3: state-only directives (their handler takes no `ots` parameter, so
+    // they are structurally incapable of emitting output) remain permitted
+    // inside a macro-call argument list.
+    EXPECT_EQ(";[Y]\n\n", pp("{#define F(x) [x]};F(\n{#warning noted}\nY)"));
+    EXPECT_EQ(Issue::Code::WARNING_MESSAGE, code());
+
+    EXPECT_EQ(";[Y]\n\n", pp("{#define G(x) [x]};G(\n{#pragma once}\nY)"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, UnknownDirectiveInsideMacroArgumentSingleDiagnostic) {
+    // F3 design-review guard: an unrecognised directive name (dkind == -1)
+    // must not be misclassified as an "output directive" -- in two's-
+    // complement, -1 has every bit set, so -1 & MASK_OUTPUT is nonzero --
+    // and must not receive a second, wrong OPERATION_NOT_ALLOWED diagnostic
+    // on top of the single lex-time UNKNOWN_DIRECTIVE warning already
+    // raised for the same malformed text (DirectiveToken::ready()).
+    EXPECT_EQ(";[1]\n\n", pp("{#define F(x) [x]};F(\n{#bogus}\n1)"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, cs[0]);
+}
+
+TEST_F(DirectiveTest, UndefOfEnclosingMacroInsideItsOwnArgumentList) {
+    // F14: {#undef F} embedded in F's own call argument list used to
+    // Symtab::undef() the Macro out from under the FunctionMacro* already
+    // captured for this call (use-after-free: garbage argument-count
+    // numbers, MSVC debug-heap fill pattern 0xDDDDDDDD / -572662307). The
+    // retirement list keeps the superseded Macro alive for the Symtab's
+    // lifetime, so this call still substitutes with the *old* definition,
+    // and F is genuinely undefined afterwards.
+    EXPECT_EQ(";[1]\n\n;F", pp("{#define F(x) [x]};F(\n{#undef F}\n1);F"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, RedefineOfEnclosingMacroInsideItsOwnArgumentList) {
+    // F14: {#define F(x) <x>} embedded in F's own call argument list used to
+    // destroy the old Macro (Symtab::define()'s replace-in-place branch) out
+    // from under the live FunctionMacro* for this call. The current call
+    // must still use the *old* definition; the next call uses the new one.
+    EXPECT_EQ(";[1]\n\n;<2>",
+              pp("{#define F(x) [x]};F(\n{#define F(x) <x>}\n1);F(2)"));
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, code());
+}
+
+TEST_F(DirectiveTest, MaxBlankLinesDirectiveInvalidOperand) {
+    // F6: parse failure -> INVALID_LIMIT_OPERAND; a negative (but
+    // parseable) value -> INVALID_PARAMETER_VALUE (0 is valid: it disables
+    // compaction, see BlankLinesTest.MaxBlankLinesDirectiveZeroDisables).
+    EXPECT_THROW(pp("{#max_blank_lines abc}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_LIMIT_OPERAND, code());
+    EXPECT_THROW(pp("{#max_blank_lines -1}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_PARAMETER_VALUE, code());
+}
+
 TEST_F(DirectiveTest, Undef) {
     // Define, undef, redefine
     EXPECT_EQ(";2;;N;;3", pp("{#define N 2};N;{#undef N};N;{#define N 3};N"));

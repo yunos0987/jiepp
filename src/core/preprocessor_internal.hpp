@@ -28,6 +28,7 @@ void handle_ignore(const std::string& raw_arg, Env& env);
 void handle_max_include_depth(const std::string& raw_arg, Env& env);
 void handle_max_expansion_depth(const std::string& raw_arg, Env& env);
 void handle_max_if_nesting(const std::string& raw_arg, Env& env);
+void handle_max_blank_lines(const std::string& raw_arg, Env& env);
 void handle_pragma_style(const std::string& raw_arg, Env& env);
 void handle_pragma_once(const std::string& raw_arg, Env& env);
 

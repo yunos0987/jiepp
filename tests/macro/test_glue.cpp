@@ -146,6 +146,25 @@ TEST_F(GlueTest, CommaPasteEmptyVaArgs) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(GlueTest, PasteVaArgc) {
+    // F16: __VA_ARGC__ as a @@ (paste) raw operand must substitute the
+    // variadic-argument *count*, not the raw __VA_ARGS__ text -- the paste
+    // right-hand-operand resolution used to fall through to selecting the
+    // raw actual-argument tokens (the same bypass as the pre-fix VA_ARGC
+    // path used by the stringize test below).
+    EXPECT_EQ(";X2;", pp("{#define T(...) X @@ __VA_ARGC__};T(a,b);"));
+    EXPECT_EQ(";X0;", pp("{#define T(...) X @@ __VA_ARGC__};T();"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(GlueTest, StringizeVaArgc) {
+    // F16: __VA_ARGC__ as a @ (stringize) raw operand must also substitute
+    // the count, not the stringized raw __VA_ARGS__ text.
+    EXPECT_EQ(";'2';", pp("{#define T(...) @__VA_ARGC__};T(a,b);"));
+    EXPECT_EQ(";'0';", pp("{#define T(...) @__VA_ARGC__};T();"));
+    EXPECT_TRUE(empty());
+}
+
 // NOTE: C++ impl: bracket token arguments cause ARGUMENT_COUNT_MISMATCH, not
 // INVALID_TOKEN_PASTING, when token pasting would form invalid results.
 TEST_F(GlueTest, PasteErrors) {

@@ -32,10 +32,30 @@ TEST_F(SymtabTest, Undef) {
     Env env;
     env.define("FOO", std::make_unique<UserDefinedObjectMacro>(std::vector<Token>{}));
     EXPECT_TRUE(env.exist("FOO"));
-    auto old = env.undef("FOO");
-    EXPECT_NE(nullptr, old);
+    // F14: undef() returns void — the superseded Macro is retired inside the
+    // Symtab (not handed back to the caller) so that a raw Macro* obtained
+    // via an earlier lookup() stays valid for the Symtab's lifetime.
+    env.undef("FOO");
     EXPECT_FALSE(env.exist("FOO"));
     EXPECT_EQ(nullptr, env.lookup("FOO"));
+}
+
+TEST_F(SymtabTest, RedefineAfterUndefKeepsInsertionOrder) {
+    // F11: undef() no longer erases the name from the index, so a later
+    // define() of the same name replaces the retained slot in place instead
+    // of appending a brand-new entry at the end — insertion order (as seen
+    // via symbols()) is preserved across undef-then-redefine.
+    Env env;
+    env.define("A", std::make_unique<UserDefinedObjectMacro>(std::vector<Token>{}));
+    env.define("B", std::make_unique<UserDefinedObjectMacro>(std::vector<Token>{}));
+    env.define("C", std::make_unique<UserDefinedObjectMacro>(std::vector<Token>{}));
+    env.undef("B");
+    env.define("B", std::make_unique<UserDefinedObjectMacro>(std::vector<Token>{}));
+    auto syms = env.symbols();
+    ASSERT_EQ(3u, syms.size());
+    EXPECT_EQ("A", syms[0].first);
+    EXPECT_EQ("B", syms[1].first);
+    EXPECT_EQ("C", syms[2].first);
 }
 
 TEST_F(SymtabTest, Symbols) {

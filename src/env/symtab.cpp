@@ -6,7 +6,13 @@
 bool Symtab::define(std::string name, std::unique_ptr<Macro> macro) {
     auto it = sym_index_.find(name);
     if (it != sym_index_.end()) {
-        // Replace in place to preserve insertion order.
+        // Replace in place to preserve insertion order. Retire (do not
+        // destroy) the superseded Macro: a raw Macro*/FunctionMacro*
+        // obtained via an earlier lookup() may still be in use for the rest
+        // of the current expansion (F14) — see the lifetime invariant in
+        // symtab.hpp.
+        if (sym_order_[it->second].macro)
+            retired_.push_back(std::move(sym_order_[it->second].macro));
         sym_order_[it->second].macro = std::move(macro);
     } else {
         sym_index_[name] = sym_order_.size();
@@ -29,16 +35,18 @@ Macro* Symtab::lookup(std::string_view name) const {
     return nullptr;
 }
 
-std::unique_ptr<Macro> Symtab::undef(std::string_view name) {
+void Symtab::undef(std::string_view name) {
     auto it = sym_index_.find(name);
     if (it != sym_index_.end()) {
         std::size_t idx = it->second;
-        std::unique_ptr<Macro> old = std::move(sym_order_[idx].macro);
-        sym_order_[idx].macro = nullptr; // mark as undef'd
-        sym_index_.erase(it);
-        return old;
+        if (sym_order_[idx].macro)
+            // Retire (do not destroy): see the lifetime invariant in
+            // symtab.hpp (F14).
+            retired_.push_back(std::move(sym_order_[idx].macro));
+        // Keep the slot mapped in sym_index_ (F11): a subsequent define()
+        // for the same name then replaces in place instead of appending a
+        // new SymEntry, preserving insertion order in symbols()/-dM output.
     }
-    return nullptr;
 }
 
 std::vector<std::pair<std::string, Macro*>> Symtab::symbols() const {

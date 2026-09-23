@@ -96,6 +96,14 @@ int argc_from(int idx, const std::vector<std::vector<Token>>& actuals) {
     return std::max(0, static_cast<int>(actuals.size()) - idx);
 }
 
+// Shared by every site that resolves __VA_ARGC__ as a formal parameter:
+// the normal substitution path, the `@@` (paste) raw-operand path, and the
+// `@` (stringize) raw-operand path (F16). Kept as a single helper so the
+// three sites cannot drift out of sync again.
+Token va_argc_token(int idx, const std::vector<std::vector<Token>>& actuals) {
+    return Token::create(Token::ANY, std::to_string(argc_from(idx, actuals)));
+}
+
 Token stringize_tokens(const std::vector<Token>& ts) {
     std::string text;
     for (auto& t : ts_flatten(ts))
@@ -221,7 +229,11 @@ std::vector<Token> subst(
                     if (pit != formal_params.end()) {
                         nb_is_param = true;
                         auto [pidx, is_va] = pit->second;
-                        item = ts_flatten(select_arg(pidx, actual_params, is_va));
+                        if (nb.text == FunctionMacro::VA_ARGC) {
+                            item = {va_argc_token(pidx, actual_params)};
+                        } else {
+                            item = ts_flatten(select_arg(pidx, actual_params, is_va));
+                        }
                     }
                 }
                 // Only fall back to the literal spelling of `nb` when it was NOT a
@@ -269,8 +281,12 @@ std::vector<Token> subst(
                     auto pit = formal_params.find(body[j].text);
                     if (pit != formal_params.end()) {
                         auto [pidx, is_va] = pit->second;
-                        auto actual = select_arg(pidx, actual_params, is_va);
-                        result.push_back(stringize_tokens(actual));
+                        if (body[j].text == FunctionMacro::VA_ARGC) {
+                            result.push_back(stringize_tokens({va_argc_token(pidx, actual_params)}));
+                        } else {
+                            auto actual = select_arg(pidx, actual_params, is_va);
+                            result.push_back(stringize_tokens(actual));
+                        }
                         i = j;
                         continue;
                     }
@@ -312,8 +328,7 @@ std::vector<Token> subst(
 
                 if (t.text == FunctionMacro::VA_ARGC) {
                     pending_placemarker = false;
-                    int cnt = argc_from(pidx, actual_params);
-                    result.push_back(Token::create(Token::ANY, std::to_string(cnt)));
+                    result.push_back(va_argc_token(pidx, actual_params));
                     continue;
                 }
 

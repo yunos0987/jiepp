@@ -54,6 +54,13 @@ struct DirectiveToken : Token {
     static constexpr int MASK_INCLUDE   = 0b0010'0000'0000'0000;
     static constexpr int MASK_MESSAGE   = 0b0001'0000'0000'0000;
     static constexpr int MASK_STRINGIZE = 0b0000'1000'0000'0000;
+    // Directives whose handler pushes token(s) directly to the output stream
+    // (`ots`) rather than only mutating Env's state. Such a directive found
+    // while collecting a macro call's argument list cannot be executed
+    // safely there: its output would be emitted before the enclosing macro
+    // call's own expansion, out of order (see expand.cpp's macro-argument
+    // collection loop, F3).
+    static constexpr int MASK_OUTPUT    = 0b0000'0100'0000'0000;
 
 #define JIEPP_DIRECTIVE_TOKEN(name, val) static constexpr int name = val;
 #include "directive_token.def"

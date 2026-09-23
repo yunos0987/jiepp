@@ -222,6 +222,13 @@ void dispatch_directive(const Token& t,
         jiepp::preprocessor_detail::handle_max_if_nesting(raw_arg, env);
 #endif
         break;
+    case DirectiveToken::MAX_BLANK_LINES:
+#ifdef JIEPP_SANDBOX
+        ISSUE(SANDBOX_RESTRICTED_DIRECTIVE, "max_blank_lines");
+#else
+        jiepp::preprocessor_detail::handle_max_blank_lines(raw_arg, env);
+#endif
+        break;
     case DirectiveToken::PP_OUTPUT_PRAGMA_STYLE:
         jiepp::preprocessor_detail::handle_pragma_style(raw_arg, env);
         break;
@@ -426,6 +433,21 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                                 (dkind & (DirectiveToken::MASK_CTRL | DirectiveToken::MASK_CTRLEX))) {
                                 ISSUE(OPERATION_NOT_ALLOWED,
                                       "control directive inside macro argument");
+                            } else if (dkind != -1 &&
+                                       (dkind & DirectiveToken::MASK_OUTPUT)) {
+                                // F3: a directive whose handler pushes tokens directly to
+                                // `ots` cannot run here — its output would be emitted
+                                // before the enclosing macro call's own expansion. Note:
+                                // dkind == -1 (unrecognised directive name) must NOT take
+                                // this branch: in two's-complement, -1 has every bit set,
+                                // so it would spuriously match MASK_OUTPUT and raise a
+                                // second, wrong diagnostic on top of the lex-time
+                                // UNKNOWN_DIRECTIVE/INVALID_DIRECTIVE_NAME already issued
+                                // for the same malformed text (DirectiveToken::ready()).
+                                ISSUE(OPERATION_NOT_ALLOWED,
+                                      "'" + dkey + "' inside macro argument: its output "
+                                      "would be emitted before the enclosing macro call's "
+                                      "expansion");
                             } else {
                                 dispatch_directive(pt, ctrl, env, ots);
                             }

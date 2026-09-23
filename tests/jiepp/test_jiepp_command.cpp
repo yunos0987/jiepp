@@ -1681,3 +1681,127 @@ TEST_F(JieppCommandTest, DepTargetFromMTIsVerbatim) {
     EXPECT_EQ(std::string::npos, dcontent.find("my$$target"))
         << "-MT value must not be Make-escaped, got: " << dcontent;
 }
+
+// ─── F6: {#max_blank_lines N} directive ────────────────────────────────────
+
+namespace {
+// Counts occurrences of the annotated-style compaction/entry marker prefix
+// in `s`. A run compiled with no compaction beyond the file's own entry
+// marker yields 1; a compacted run adds one marker per compacted run.
+std::size_t count_annotated_markers(const std::string& s) {
+    std::size_t n = 0;
+    for (std::size_t pos = 0; (pos = s.find("(*{#:", pos)) != std::string::npos; pos += 5)
+        ++n;
+    return n;
+}
+} // namespace
+
+TEST_F(JieppCommandTest, MaxBlankLinesDirectiveLowersThreshold) {
+    // F6: {#max_blank_lines N} lowers the compaction threshold below the
+    // built-in default of 7 -- a run of blank lines too short to compact at
+    // the default is compacted once the directive takes effect.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "max_blank_lines_directive_lowers.iec";
+    {
+        std::ofstream f(src);
+        f << "{#max_blank_lines 2}\nA;" << std::string(4, '\n') << "B;\n";
+    }
+    fs::path output = tmpdir / "max_blank_lines_directive_lowers.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(2u, count_annotated_markers(content))
+        << "expected the 4-line blank run to be compacted under the "
+           "directive-lowered threshold (2); output:\n" << content;
+}
+
+TEST_F(JieppCommandTest, MaxBlankLinesDirectiveZeroDisables) {
+    // F6: {#max_blank_lines 0} disables compaction entirely, even for a run
+    // far longer than the default threshold.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "max_blank_lines_directive_zero.iec";
+    {
+        std::ofstream f(src);
+        f << "{#max_blank_lines 0}\nA;" << std::string(20, '\n') << "B;\n";
+    }
+    fs::path output = tmpdir / "max_blank_lines_directive_zero.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(1u, count_annotated_markers(content))
+        << "expected no compaction marker beyond the file's own entry "
+           "marker; output:\n" << content;
+    EXPECT_NE(std::string::npos, content.find(std::string(20, '\n')))
+        << "expected the 20-line blank run to survive verbatim; output:\n" << content;
+}
+
+TEST_F(JieppCommandTest, MaxBlankLinesCliOverridesDirective) {
+    // F6: a CLI --max-blank-lines value locks the parameter (fix_), so a
+    // later {#max_blank_lines} directive attempting to raise it back up is a
+    // silent no-op -- the CLI-supplied threshold keeps governing.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "max_blank_lines_cli_overrides.iec";
+    {
+        std::ofstream f(src);
+        f << "{#max_blank_lines 100}\nA;" << std::string(4, '\n') << "B;\n";
+    }
+    fs::path output = tmpdir / "max_blank_lines_cli_overrides.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.max_blank_lines = 2;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(2u, count_annotated_markers(content))
+        << "expected the CLI-locked threshold (2) to still govern despite "
+           "the in-source directive requesting 100; output:\n" << content;
+}
+
+TEST_F(JieppCommandTest, MaxBlankLinesLastValueWins) {
+    // F6: compact_blank_lines() runs exactly once, after the whole file has
+    // been expanded, reading env.get_max_blank_lines() at that single
+    // point -- so the LAST {#max_blank_lines} directive executed during
+    // expansion governs the ENTIRE output, including blank runs that
+    // occurred earlier in the source, before that directive was even seen.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "max_blank_lines_last_value_wins.iec";
+    {
+        std::ofstream f(src);
+        f << "A;\n{#max_blank_lines 100}\n" << std::string(3, '\n')
+          << "{#max_blank_lines 1}\nB;\n";
+    }
+    fs::path output = tmpdir / "max_blank_lines_last_value_wins.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(2u, count_annotated_markers(content))
+        << "expected the 3-line blank run (which occurred while 100 was in "
+           "effect) to be compacted under the LAST effective value (1), "
+           "confirming the whole-output post-pass semantics; output:\n" << content;
+}

@@ -278,13 +278,22 @@ void handle_max_if_nesting(const std::string& raw_arg, Env& env) {
     handle_limit_directive(raw_arg, env, &Env::set_max_if_nesting);
 }
 
+void handle_max_blank_lines(const std::string& raw_arg, Env& env) {
+    handle_limit_directive(raw_arg, env, &Env::set_max_blank_lines);
+}
+
 void handle_pragma_style(const std::string& raw_arg, Env& env) {
-    std::string style(Util::trim_view(raw_arg));
-    if (style != VAL_PRAGMA_STANDARD && style != VAL_PRAGMA_ANNOTATED) {
-        ISSUE(INVALID_PRAGMA_STYLE_OPERAND, style);
+    // Tokenize the operand (mirroring the {#max_*} limit directives) so a
+    // trailing comment is stripped rather than rejected as garbage, and
+    // require exactly one non-whitespace token equal to VAL_PRAGMA_STANDARD
+    // or VAL_PRAGMA_ANNOTATED.
+    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    if (ts.size() != 1 || ts[0].type != Token::ANY ||
+        (ts[0].text != VAL_PRAGMA_STANDARD && ts[0].text != VAL_PRAGMA_ANNOTATED)) {
+        ISSUE(INVALID_PRAGMA_STYLE_OPERAND, raw_arg);
         return;
     }
-    env.set_pragma_style(std::move(style));
+    env.set_pragma_style(ts[0].text);
 }
 
 void handle_pragma_once(const std::string& raw_arg, Env& env) {
