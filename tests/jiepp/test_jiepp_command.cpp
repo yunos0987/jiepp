@@ -662,6 +662,36 @@ TEST_F(JieppCommandTest, PDoesNotAffectDeps) {
     EXPECT_EQ(read(dep_P), read(dep_noP)) << "-P changed dependency output";
 }
 
+TEST_F(JieppCommandTest, PCollapsesBlankRunsToZero) {
+    // -P runs blank-line compaction in CollapseAll mode: every blank run
+    // (not just runs over the default 7-line threshold) collapses to zero
+    // blank lines, with no marker inserted — matching D6/[A7]. Uses the
+    // §2 worked example: "A;" then 12 indented {#define} lines (which
+    // vanish, leaving only a 13-newline blank run) then "B __LINE__;".
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "blank_lines_P_worked_example.iec";
+    {
+        std::ofstream f(src);
+        f << "A;\n";
+        for (int k = 1; k <= 12; ++k)
+            f << "    {#define M" << k << " " << k << "}\n";
+        f << "B __LINE__;\n";
+    }
+    fs::path output = tmpdir / "blank_lines_P_worked_example.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_EQ("A;\nB 14;\n", content);
+}
+
 TEST_F(JieppCommandTest, PPreservesCommentAfterIncludeNoNewline) {
     // Regression: C token immediately after a return-from-include line marker
     // must NOT be silently dropped by the skip_next_ws logic.

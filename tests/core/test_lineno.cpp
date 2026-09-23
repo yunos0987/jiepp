@@ -61,7 +61,9 @@ TEST_F(LinenoTest, DefinedOperator) {
     const auto test_case = TestCase{
         "defined-operator",
         "{#if $\n$\ndefined$\n$\n($\n$\na$\n$\n)$\n$\n}{#endif};{#info}__LINE__",
-        "\n\n\n\n\n\n\n\n\n\n;11",
+        // 10 leading blank lines exceed the default 7-line compaction
+        // threshold; N = cur_before_run(0) + nl(10) - 1 = 9.
+        "(*{#:9}*)\n;11",
         {"<unknown location>:11.0: info: PP93: ''"},
         true,
     };
@@ -85,7 +87,9 @@ TEST_F(LinenoTest, Omacro) {
     const auto test_case = TestCase{
         "object-macro",
         "{#define A $\n$\na$\n$\n+$\n$\nb$\n$\n};A;{#info}__LINE__",
-        "\n\n\n\n\n\n\n\n;a+b;9",
+        // 8 leading blank lines exceed the default 7-line compaction
+        // threshold; N = cur_before_run(0) + nl(8) - 1 = 7.
+        "(*{#:7}*)\n;a+b;9",
         {"<unknown location>:9.0: info: PP93: ''"},
         true,
     };

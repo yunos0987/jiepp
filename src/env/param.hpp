@@ -33,6 +33,11 @@ public:
     bool set_max_if_nesting(int n);
     bool fix_max_if_nesting(int n); // set and lock
 
+    // ---- Max consecutive blank lines before compaction (0 = disabled) ----
+    int  get_max_blank_lines() const;
+    bool set_max_blank_lines(int n);
+    bool fix_max_blank_lines(int n); // set and lock
+
     // ---- Pragma style ----
     std::string get_pragma_style() const { return pragma_style_; }
     void        set_pragma_style(std::string style);
@@ -65,6 +70,9 @@ private:
 
     int         max_if_nesting_          = DEFAULT_MAX_IF_NESTING;
     bool        max_if_nesting_fixed_    = false;
+
+    int         max_blank_lines_         = DEFAULT_MAX_BLANK_LINES;
+    bool        max_blank_lines_fixed_   = false;
 
     std::string pragma_style_            = VAL_PRAGMA_ANNOTATED;
     bool        pragma_style_fixed_      = false;

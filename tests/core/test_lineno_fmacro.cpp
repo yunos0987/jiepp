@@ -214,7 +214,9 @@ c
 d
 )
 ;{#info}__LINE__)",
-            "\n\n\n\n\n;\na + b*c + d\n\n\n\n\n\n\n\n\n\n;17",
+            // trailing run: 10 blank lines exceed the default 7-line
+            // compaction threshold; N = cur_before_run(6) + nl(10) - 1 = 15.
+            "\n\n\n\n\n;\na + b*c + d\n(*{#:15}*)\n;17",
             {"<unknown location>:17.0: info: PP93: ''"},
             true,
         },
@@ -251,7 +253,9 @@ d
 )
 
 ;{#info}__LINE__)",
-            "\n\n\n\n\n\n\n\n;\n\na  +  b*c  +  d\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n;31",
+            // leading run: 8 blank lines -> N = 0 + 8 - 1 = 7.
+            // trailing run: 20 blank lines -> N = cur_before_run(10) + nl(20) - 1 = 29.
+            "(*{#:7}*)\n;\n\na  +  b*c  +  d\n(*{#:29}*)\n;31",
             {"<unknown location>:31.0: info: PP93: ''"},
             true,
         },

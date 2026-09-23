@@ -1,24 +1,6 @@
 (*{#:0 'iec_61131-3/samples/platform_switch.iec'}*)
 (* platform_switch.iec - Multi-platform switching with #if/#elif *)
-
-
-
-
-  
-  
-  
-
-
-
-
-
-
-
-
-
-
-
-
+(*{#:20 'iec_61131-3/samples/platform_switch.iec'}*)
 program Main
 var
     timer1: TON;

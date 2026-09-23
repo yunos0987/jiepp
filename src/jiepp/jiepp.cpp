@@ -1,6 +1,7 @@
 #include "jiepp.hpp"
 #include "option.hpp"
 #include "../core/preprocessor.hpp"
+#include "../core/line_compaction.hpp"
 #include "../env/env.hpp"
 #include "../loader/token.hpp"
 #include "../loader/lexer.hpp"
@@ -123,6 +124,8 @@ int jiepp_command(const JieppOptions& opts)
             env.fix_max_expansion_depth(*opts.max_expansion_depth);
         if (opts.max_if_nesting)
             env.fix_max_if_nesting(*opts.max_if_nesting);
+        if (opts.max_blank_lines)
+            env.fix_max_blank_lines(*opts.max_blank_lines);
         if (opts.pp_output_pragma_style)
             env.fix_pragma_style(*opts.pp_output_pragma_style);
         if (opts.silent)
@@ -156,17 +159,6 @@ int jiepp_command(const JieppOptions& opts)
 
         std::ostringstream virtual_output;
 
-        // Returns true for preprocessor-injected line markers: (*{#:N 'file'}*) or {#:N 'file'}.
-        // User IEC pragmas with '#' are lexed as DIRECTIVE tokens, so PRAGMA tokens whose
-        // body begins with "#:" are exclusively factory-created line markers.
-        auto is_line_marker = [](const Token& t) -> bool {
-            if (t.type != Token::PRAGMA) return false;
-            const auto& s = t.text;
-            if (s.size() > 5 && s.compare(0, 5, "(*{#:") == 0) return true;  // annotated
-            if (s.size() > 3 && s.compare(0, 3, "{#:") == 0) return true;    // standard
-            return false;
-        };
-
         // Emit tokens to stream, optionally suppressing line markers and their
         // immediately-following WS token (GCC-compatible -P blank-line removal).
         // actual_output is resolved here (not captured earlier) because
@@ -176,7 +168,7 @@ int jiepp_command(const JieppOptions& opts)
             if (opts.no_line_markers) {
                 bool skip_next_ws = false;
                 for (const auto& t : tokens) {
-                    if (is_line_marker(t)) {
+                    if (jiepp::is_line_marker(t)) {
                         skip_next_ws = true;
                         continue;
                     }
@@ -225,7 +217,14 @@ int jiepp_command(const JieppOptions& opts)
 
         // The whole preprocessed output is accumulated in ots by this point;
         // only now is it safe to (re)open -o, even if -o names the same path
-        // as the input file.
+        // as the input file. Blank-line compaction runs last, as a post-pass
+        // over the fully materialised stream: CollapseAll under -P (which
+        // already strips line markers, so blank runs must collapse to zero
+        // rather than gain a marker of their own), Markers otherwise.
+        jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
+            opts.no_line_markers ? jiepp::BlankLineMode::CollapseAll : jiepp::BlankLineMode::Markers,
+            env.is_standard_pragma_style());
+
         open_output();
         emit_tokens(ots);
 

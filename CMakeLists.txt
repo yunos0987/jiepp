@@ -101,6 +101,7 @@ set(JIEPP_SOURCES
     src/core/expand.cpp
     src/core/expand_ctrl.cpp
     src/core/expand_subst.cpp
+    src/core/line_compaction.cpp
     src/loader/loader.cpp
     src/env/env.cpp
     src/env/symtab.cpp

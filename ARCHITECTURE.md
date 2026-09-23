@@ -67,7 +67,7 @@ ctest --preset <preset-name>          # test
 | `jiepp/` | `main.cpp`, `jiepp.hpp/cpp`, `option.hpp/cpp` | CLI エントリポイント。引数解析・前処理実行・入出力制御 |
 | `env/` | `env.hpp/cpp`, `issue.hpp/cpp`, `issue_codes.def` | プリプロセッサ状態 (`Env`) の管理。`Env` は 3 つの Mixin 基底クラスの多重継承で構成される: `Symtab`（マクロシンボルテーブル, `symtab.hpp/cpp`）、`FileContext`（インクルードスタック・検索パス・行番号・依存関係追跡・`once_files_`（`{#pragma once}` 用処理済みパスセット）, `file_context.hpp/cpp`）、`Param`（リミット値・プラグマスタイル・トークンキャッシュ・`dd_mode_`（`-dD` フラグ）, `param.hpp/cpp`, `param_constants.hpp`）。エラー/イシュー出力 (`Issue`) も担当 |
 | `loader/` | `lexer.hpp/cpp`, `token.hpp/cpp`, `directive_parser.hpp/cpp`, `directive_token.cpp`, `loader.hpp/cpp` | 入力テキストのトークン化・ディレクティブ解析。字句解析ヘルパー (`lexer_comment.cpp`, `lexer_pragma.cpp`, `lexer_literal.cpp`, `lexer_helpers.hpp/cpp`) および `.def` マクロ定義を含む |
-| `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp` | プリプロセッサ本体。トークン列に対してディレクティブ処理・マクロ展開を行う。`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む |
+| `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp`, `line_compaction.hpp/cpp` | プリプロセッサ本体。トークン列に対してディレクティブ処理・マクロ展開を行う。`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む。`line_compaction` は展開完了後の `ots`（出力トークン列）に対する後処理パスで、連続空行を圧縮する（`--max-blank-lines`、既定 7 行） |
 | `macro/` | `macro.hpp/cpp` | `Macro` クラス。オブジェクト形式マクロ・関数形式マクロの定義を表現する |
 | `constfold/` | `constfold.hpp/cpp`, `constfold_internal.hpp`, `constfold_scanner.cpp`, `constfold_parser.cpp` | `#if` / `#elif` 式の定数畳み込み評価。算術・比較・論理・ビット演算およびビットシフト (`<<`, `>>`) をサポート |
 
@@ -185,7 +185,8 @@ flowchart TD
     D -- "マクロ参照" --> G["Env\nシンボルテーブル参照"]
     G --> D
     D --> H["出力トークン列"]
-    H --> I["出力テキスト\n(ファイル or stdout)"]
+    H --> H2["line_compaction\n空行圧縮 (post-pass)"]
+    H2 --> I["出力テキスト\n(ファイル or stdout)"]
 ```
 
 ### 処理の流れ（概略）
@@ -198,7 +199,8 @@ flowchart TD
    - `#include` / `#sinclude` は `expand_file()` が再帰的に読み込む
    - `#if` の条件式は `constfold` が評価（`__has_include` は事前に解決される）
    - マクロ参照は `Env` のシンボルテーブルを参照して展開
-5. 出力トークン列をテキストに変換して書き出す（`output_filepath` が指定されていればファイルへ、なければ stdout へ）
+5. `expand()` が返した `ots`（出力トークン列）全体に対して `jiepp::compact_blank_lines()`（`core/line_compaction.cpp`）が後処理パスとして 1 回走り、8 行以上連続する空行を行マーカー 1 行に圧縮する（`-P` 指定時は空行を全除去）。上限は `--max-blank-lines`（既定 7）
+6. 出力トークン列をテキストに変換して書き出す（`output_filepath` が指定されていればファイルへ、なければ stdout へ）
 
 ## 主要な型・関数
 

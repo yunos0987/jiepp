@@ -257,15 +257,23 @@ PP_ADD(2, 3)
 PP_ADD(PP_ADD(1, 2), PP_ADD(2, 3))
 )";
     const std::string result = pp(input);
-    // collect non-blank, whitespace-trimmed lines
+    // collect non-blank, whitespace-trimmed lines, skipping any injected
+    // line-marker line (the ~40 consecutive {#define ...} lines above collapse
+    // to nothing but blank output lines, which blank-line compaction replaces
+    // with a single (*{#:N}*)/{#:N} marker line once the run exceeds the
+    // default 7-line threshold)
     std::vector<std::string> lines;
     std::istringstream ss(result);
     std::string line;
     while (std::getline(ss, line)) {
         auto first = line.find_first_not_of(" \t\r");
         auto last  = line.find_last_not_of(" \t\r");
-        if (first != std::string::npos)
-            lines.push_back(line.substr(first, last - first + 1));
+        if (first == std::string::npos)
+            continue;
+        std::string trimmed = line.substr(first, last - first + 1);
+        if (trimmed.starts_with("(*{#:") || trimmed.starts_with("{#:"))
+            continue;
+        lines.push_back(trimmed);
     }
     ASSERT_EQ(2u, lines.size());
     EXPECT_EQ("5", lines[0]);  // PP_ADD(2, 3) = 5

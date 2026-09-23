@@ -21,6 +21,20 @@ bool validate_parameter(int n, std::string_view name) {
     return true;
 }
 
+// Like validate_parameter, but 0 is accepted (used by parameters where 0
+// means "disabled" rather than "unset", e.g. max_blank_lines).
+bool validate_nonneg_parameter(int n, std::string_view name) {
+    if (n < 0) {
+        ISSUE(INVALID_PARAMETER_VALUE, std::string(name));
+        return false;
+    }
+    if (n > MAX_PARAMETER_VALUE) {
+        ISSUE(PARAMETER_VALUE_OVERFLOW, std::string(name));
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -101,6 +115,29 @@ bool Param::fix_max_if_nesting(int n) {
         return false;
     max_if_nesting_       = n;
     max_if_nesting_fixed_ = true;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Max consecutive blank lines before compaction
+// ---------------------------------------------------------------------------
+
+int Param::get_max_blank_lines() const { return max_blank_lines_; }
+
+bool Param::set_max_blank_lines(int n) {
+    if (max_blank_lines_fixed_)
+        return true; // no-op when locked
+    if (!validate_nonneg_parameter(n, "max_blank_lines"))
+        return false;
+    max_blank_lines_ = n;
+    return true;
+}
+
+bool Param::fix_max_blank_lines(int n) {
+    if (!validate_nonneg_parameter(n, "max_blank_lines"))
+        return false;
+    max_blank_lines_       = n;
+    max_blank_lines_fixed_ = true;
     return true;
 }
 

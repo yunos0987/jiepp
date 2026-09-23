@@ -1,26 +1,6 @@
 (*{#:0 'iec_61131-3/samples/conditional.iec'}*)
 (* conditional.iec - Conditional compilation *)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+(*{#:22 'iec_61131-3/samples/conditional.iec'}*)
 program Main
 var
     t1: TON;

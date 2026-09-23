@@ -1,23 +1,5 @@
 (*{#:0 'tests/jiepp/input/line_macro/line_macro_fmacro.iec'}*)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+(*{#:19 'tests/jiepp/input/line_macro/line_macro_fmacro.iec'}*)
 program Main
 (*{st}*)
 22;

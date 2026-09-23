@@ -1,6 +1,7 @@
 #include "preprocessor.hpp"
 #include "../loader/directive_parser.hpp"
 #include "../env/param_constants.hpp"
+#include "line_compaction.hpp"
 
 #include "../loader/lexer.hpp"
 
@@ -11,6 +12,8 @@
 void preprocess(const std::string& input_filepath, std::ostream& output, Env& env) {
     std::vector<Token> ots;
     expand(input_filepath, Loader::LoadType::INCLUDE, ots, env, input_filepath);
+    jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
+                               jiepp::BlankLineMode::Markers, env.is_standard_pragma_style());
     for (auto& t : ots)
         output << t.text;
 }
@@ -19,6 +22,8 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     auto its = iec3_tokens(input, env.get_remove_comments(), 1);
     std::vector<Token> ots;
     expand(its, ots, env);
+    jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
+                               jiepp::BlankLineMode::Markers, env.is_standard_pragma_style());
     for (auto& t : ots)
         output << t.text;
 }

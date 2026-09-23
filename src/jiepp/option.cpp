@@ -22,6 +22,18 @@ int parse_positive_int(const std::string& arg, const std::string& opt_name) {
     }
 }
 
+int parse_nonnegative_int(const std::string& arg, const std::string& opt_name) {
+    try {
+        int val = std::stoi(arg);
+        if (val < 0)
+            ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be a non-negative integer");
+        return val;
+    } catch (const std::exception&) {
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
+        return -1;
+    }
+}
+
 std::string parse_pragma_style(const std::string& arg, const std::string& opt_name) {
     if (arg != VAL_PRAGMA_STANDARD && arg != VAL_PRAGMA_ANNOTATED)
         ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be annotated or standard");
@@ -53,6 +65,7 @@ void display_help_and_exit(int exit_code = 0) {
         "  --max-include-depth N    Maximum include depth (default: 100)\n"
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
         "  --max-if-nesting N       Maximum if/elif nesting depth (default: 256)\n"
+        "  --max-blank-lines N      Max consecutive blank lines before compaction (default: 7; 0 disables)\n"
         "  --recursion-limit N      Set OS stack size (N * ~8KB frames)\n"
         "  --pp-output-pragma-style STYLE\n"
         "  -P                       Suppress line markers in output\n"
@@ -215,6 +228,12 @@ JieppOptions parse_args(int argc, char* argv[]) {
         if (arg == "--max-if-nesting" || arg == "--max_if_nesting") {
             require_value(i, argc, arg);
             opts.max_if_nesting = parse_positive_int(argv[++i], arg);
+            ++i; continue;
+        }
+
+        if (arg == "--max-blank-lines" || arg == "--max_blank_lines") {
+            require_value(i, argc, arg);
+            opts.max_blank_lines = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
