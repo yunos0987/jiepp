@@ -381,6 +381,41 @@ TEST_F(JieppCommandTest, DMAddDefineMacros) {
             std::nullopt, false, -1, true);
 }
 
+// R8: -dM output order must remain stable across an undef+redefine of the
+// same name: A is undefined and redefined to 3, B is untouched. The -dM
+// listing must show the final value of A (not the stale 1), must not still
+// list A under its old value, and A must still precede B (definition order
+// is preserved; undef+redefine does not move A to the end).
+TEST_F(JieppCommandTest, DMOrderStableAcrossUndefRedefine) {
+    fs::current_path(jiepp_root_dir());
+
+    std::string input_filepath = (I_DIR / "dM/dM_order_undef_redefine.iec").generic_string();
+    std::string output_filepath = (I_DIR / "dM/dM_order_undef_redefine.piec").generic_string();
+
+    char* argv[] = {
+        const_cast<char*>("jiepp"),
+        const_cast<char*>("-dM"),
+        const_cast<char*>(input_filepath.c_str()),
+        const_cast<char*>("-o"),
+        const_cast<char*>(output_filepath.c_str()),
+    };
+    JieppOptions opts = parse_args(5, argv);
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output_filepath, std::ios::binary);
+    std::string actual((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+
+    auto pos_a3 = actual.find("{#define A 3}");
+    auto pos_b2 = actual.find("{#define B 2}");
+    EXPECT_NE(pos_a3, std::string::npos) << "expected final value of A (3) in -dM output:\n" << actual;
+    EXPECT_NE(pos_b2, std::string::npos) << "expected B still listed in -dM output:\n" << actual;
+    EXPECT_EQ(actual.find("{#define A 1}"), std::string::npos)
+        << "stale pre-undef value of A must not appear in -dM output:\n" << actual;
+    if (pos_a3 != std::string::npos && pos_b2 != std::string::npos)
+        EXPECT_LT(pos_a3, pos_b2) << "A must still precede B after undef+redefine:\n" << actual;
+}
+
 // ---- New CLI feature tests ----
 
 TEST_F(JieppCommandTest, UndefOption) {
