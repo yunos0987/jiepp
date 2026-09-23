@@ -42,9 +42,16 @@ std::string dep_target(const JieppOptions& opts) {
 }
 
 // Escape a dependency prerequisite/target path for Makefile syntax, mirroring
-// gcc/clang: '$' doubles to "$$", '#' and whitespace get a backslash prefix.
-// The colon is deliberately left unescaped (gcc does not escape it either,
-// and escaping it would break Windows drive-letter paths such as "C:/...").
+// gcc/clang's mkdeps munge(): '$' doubles to "$$"; '#' and whitespace (space,
+// tab) get a backslash prefix followed by the *original* character itself
+// (not a symbolic C-style escape letter), so a tab becomes backslash + an
+// actual tab byte, exactly like a space becomes backslash + an actual space
+// byte. The colon is deliberately left unescaped (gcc does not escape it
+// either, and escaping it would break Windows drive-letter paths such as
+// "C:/..."). This function is only ever applied to auto-derived paths
+// (prerequisites, and the target when -MT is not given); a user-supplied
+// -MT target is passed through verbatim (see dep_target()/format_dep_target()
+// below), matching real gcc/clang where only the unimplemented -MQ escapes.
 std::string escape_make_path(const std::string& path) {
     std::string out;
     out.reserve(path.size());
@@ -53,15 +60,27 @@ std::string escape_make_path(const std::string& path) {
         case '$':  out += "$$"; break;
         case '#':  out += "\\#"; break;
         case ' ':  out += "\\ "; break;
-        case '\t': out += "\\t"; break;
+        case '\t': out += "\\\t"; break;
         default:   out += c; break;
         }
     }
     return out;
 }
 
-// Write Makefile-style dependency rules
-void write_dep_rules(const std::string& target, DepMode dep_mode, std::ostream& output, const Env& env) {
+// Format the dependency-rule target: a user-supplied -MT value is emitted
+// verbatim (gcc/clang convention -- only -MQ, which jiepp does not
+// implement, escapes the target), while an auto-derived target (from the
+// input/output filename) is Make-escaped like every prerequisite path.
+std::string format_dep_target(const JieppOptions& opts) {
+    std::string raw = dep_target(opts);
+    return opts.dep_target ? raw : escape_make_path(raw);
+}
+
+// Write Makefile-style dependency rules. `target_text` must already be in
+// its final, rule-ready form (see format_dep_target()): verbatim for a
+// user-supplied -MT value, or pre-escaped for an auto-derived target. It is
+// written as-is here, never re-escaped.
+void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostream& output, const Env& env) {
     // Collect dependencies with deduplication by resolved_path
     // Track resolved paths we've already seen (only first display_path is output)
     std::unordered_set<std::string> seen_resolved;
@@ -79,7 +98,7 @@ void write_dep_rules(const std::string& target, DepMode dep_mode, std::ostream& 
     }
 
     // Format output
-    output << escape_make_path(target) << ":";
+    output << target_text << ":";
     for (const auto& d : deps)
         output << " \\\n  " << d;
     output << "\n";
@@ -225,26 +244,46 @@ int jiepp_command(const JieppOptions& opts)
             opts.no_line_markers ? jiepp::BlankLineMode::CollapseAll : jiepp::BlankLineMode::Markers,
             env.is_standard_pragma_style());
 
-        open_output();
-        emit_tokens(ots);
+        bool dep_has_separate_file = dep && effective_dep_file.has_value() && !effective_dep_file->empty();
 
-        if (opts.dM) {
-            dump_macros(env, *output_stream);
+        // Write the separate dependency file (-MF / -MD / -MMD auto-named)
+        // before -o is opened: this write is completely independent of the
+        // main output, so if it fails, -o must not be touched at all -- a
+        // pre-existing -o from an earlier successful run stays byte-for-byte
+        // intact, and a fresh, correct -o is never opened only to be deleted
+        // again by the catch block below (see SPECIFICATION.md section 13,
+        // "dependency-file Make escaping" subsection).
+        if (dep_has_separate_file) {
+            const std::string dep_target_text = format_dep_target(opts);
+            std::ofstream dep_output;
+            dep_output.open(*effective_dep_file, std::ios::out | std::ios::binary);
+            if (!dep_output)
+                ISSUE(FILE_ERROR, *effective_dep_file);
+            write_dep_rules(dep_target_text, opts.dep_mode, dep_output, env);
         }
 
-        // -M / -MM / -MD / -MMD: write dependency rules
-        if (dep) {
-            const std::string dep_target_ = dep_target(opts);
-            if (effective_dep_file.has_value() && !effective_dep_file->empty()) {
-                // Write dependency rules to a separate file (-MF / -MD / -MMD auto-named)
-                std::ofstream dep_output;
-                dep_output.open(*effective_dep_file, std::ios::out | std::ios::binary);
-                if (!dep_output)
-                    ISSUE(FILE_ERROR, *effective_dep_file);
-                write_dep_rules(dep_target_, opts.dep_mode, dep_output, env);
-            } else {
+        // -o (or stdout) is only needed when something will actually be
+        // written to it: the main preprocessed content (!not_out), a -dM
+        // macro dump, or dependency rules that have no separate file to go
+        // to (-M/-MM without -MF). A dependency-only invocation that already
+        // has a separate dep file (e.g. "-M -MF x.d -o out.iec") has nothing
+        // left to put in -o, so -o is deliberately left unopened/unwritten
+        // (matching gcc, whose -M/-MM never touch the compiler's normal
+        // output file either).
+        bool need_dep_to_stream = dep && !dep_has_separate_file;
+        bool need_output_stream = !not_out || opts.dM || need_dep_to_stream;
+
+        if (need_output_stream) {
+            open_output();
+            emit_tokens(ots);
+
+            if (opts.dM) {
+                dump_macros(env, *output_stream);
+            }
+
+            if (need_dep_to_stream) {
                 // No dep file: write dep rules to main output stream (-M / -MM without -MF)
-                write_dep_rules(dep_target_, opts.dep_mode, *output_stream, env);
+                write_dep_rules(format_dep_target(opts), opts.dep_mode, *output_stream, env);
             }
         }
         return 0;

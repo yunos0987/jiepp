@@ -91,6 +91,14 @@ int main(int argc, char* argv[]) {
         }
         return jiepp_command(opts);
 #endif
+    } catch (const Issue::Exception&) {
+        // Issue::happen() already printed the specific, correctly-coded
+        // diagnostic before throwing (e.g. during parse_args(), which runs
+        // outside jiepp_command()'s own try/catch and so would otherwise
+        // reach the generic handler below). Just propagate the failure
+        // exit code without appending a second, uninformative "PP01:
+        // Unknown error" line on top of the diagnostic already shown.
+        return 1;
     } catch (const std::exception& e) {
 #ifdef JIEPP_SANDBOX
         (void)e;

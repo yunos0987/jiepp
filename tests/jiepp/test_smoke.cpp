@@ -1,4 +1,5 @@
 #include "test_helper.hpp"
+#include <algorithm>
 
 inline fs::path jiepp_exe_path() {
 #ifdef JIEPP_EXE_PATH
@@ -167,6 +168,28 @@ TEST_F(SmokeTest, OOption) {
     std::string content = read_file(output);
     EXPECT_NE(content.find("7"), std::string::npos)
         << "output content: " << content;
+}
+
+// ---- 9b. Option-parse error diagnostics (F4) ----
+
+TEST_F(SmokeTest, OptionErrorPrintsNoUnknownErrorLine) {
+    // F4: an Issue thrown during option parsing (before jiepp_command() even
+    // starts, e.g. --max-blank-lines with a negative value) must not
+    // additionally print main()'s generic "PP01: Unknown error" fallback
+    // line on top of the specific diagnostic Issue::happen() already
+    // printed -- exactly one line on stderr, containing the real code
+    // (PP71/INVALID_OPTION_VALUE), never PP01.
+    fs::path input = tmp_dir_ / "opt_err.iec";
+    write_file(input, "x := 1;\n");
+
+    auto r = run("--max-blank-lines -3 \"" + input.generic_string() + "\"");
+    EXPECT_NE(r.exit_code, 0);
+
+    std::size_t newline_count = std::count(r.err.begin(), r.err.end(), '\n');
+    EXPECT_EQ(1u, newline_count) << "stderr should contain exactly one line: " << r.err;
+    EXPECT_NE(r.err.find("PP71"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("PP01"), std::string::npos)
+        << "stderr must not contain a spurious PP01 fallback line: " << r.err;
 }
 
 // ---- 9. Windows stdout binary mode (B15) ----

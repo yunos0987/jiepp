@@ -10,28 +10,48 @@
 
 namespace {
 
+// Both helpers below keep the actual conversion (std::stoi) as the *only*
+// statement inside the try block. INVALID_OPTION_VALUE is a throwing
+// (ERROR-severity) code, so if the range check were inside the same try (as
+// it used to be), the resulting Issue::Exception would be re-caught by this
+// function's own catch clause and re-issued as a second, contradictory
+// diagnostic ("must be a non-negative integer" immediately followed by
+// "requires a valid integer" for input that in fact parsed fine). Moving the
+// range check outside the try means it throws straight to the caller, so
+// exactly one diagnostic is ever printed per invocation. `pos` additionally
+// guards against trailing garbage (e.g. "3abc"), which std::stoi alone
+// silently accepts by parsing only the leading numeric prefix.
+
 int parse_positive_int(const std::string& arg, const std::string& opt_name) {
+    int val;
+    std::size_t pos = 0;
     try {
-        int val = std::stoi(arg);
-        if (val <= 0)
-            ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be a positive integer");
-        return val;
+        val = std::stoi(arg, &pos);
     } catch (const std::exception&) {
         ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
         return -1;
     }
+    if (pos != arg.size())
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
+    if (val <= 0)
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be a positive integer");
+    return val;
 }
 
 int parse_nonnegative_int(const std::string& arg, const std::string& opt_name) {
+    int val;
+    std::size_t pos = 0;
     try {
-        int val = std::stoi(arg);
-        if (val < 0)
-            ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be a non-negative integer");
-        return val;
+        val = std::stoi(arg, &pos);
     } catch (const std::exception&) {
         ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
         return -1;
     }
+    if (pos != arg.size())
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
+    if (val < 0)
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be a non-negative integer");
+    return val;
 }
 
 std::string parse_pragma_style(const std::string& arg, const std::string& opt_name) {
@@ -135,7 +155,10 @@ JieppOptions parse_args(int argc, char* argv[]) {
         }
 
         if (arg.size() >= 2 && arg.compare(0, 2, "-D") == 0) {
-            opts.define_macros.push_back(arg.substr(2));
+            std::string spec = arg.substr(2);
+            if (spec.empty())
+                ISSUE(MISSING_OPTION_VALUE, "-D");
+            opts.define_macros.push_back(spec);
             ++i; continue;
         }
 

@@ -160,6 +160,102 @@ TEST_F(OptionTest, ParseArgsPragmaStyleInvalid) {
     EXPECT_EQ(Issue::Code::INVALID_OPTION_VALUE, code());
 }
 
+// ---- F5: --max-blank-lines CLI option ----
+
+TEST_F(OptionTest, ParseArgsMaxBlankLines) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("4")};
+    auto opts = parse_args(3, argv);
+    ASSERT_TRUE(opts.max_blank_lines.has_value());
+    EXPECT_EQ(*opts.max_blank_lines, 4);
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesZero) {
+    // 0 is a valid, meaningful value (disables compaction entirely), unlike
+    // the positive-only max-include-depth/max-expansion-depth/max-if-nesting.
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("0")};
+    auto opts = parse_args(3, argv);
+    ASSERT_TRUE(opts.max_blank_lines.has_value());
+    EXPECT_EQ(*opts.max_blank_lines, 0);
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesNegative) {
+    // F4: exactly one diagnostic, not the old double/contradictory pair
+    // ("must be a non-negative integer" followed by "requires a valid
+    // integer" for input that in fact parsed fine). Note: messages()/code()/
+    // message() all drain the same DiagBox buffer on read, so capture
+    // messages() exactly once and derive every assertion from that snapshot.
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("-3")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size()) << "expected exactly one diagnostic";
+    EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("must be a non-negative integer")) << msgs[0];
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesNonNumeric) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("abc")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size()) << "expected exactly one diagnostic";
+    EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("requires a valid integer")) << msgs[0];
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesTrailingGarbage) {
+    // F4: std::stoi alone would silently accept "3abc" as 3; the added
+    // pos == arg.size() check rejects trailing non-numeric garbage.
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("3abc")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size()) << "expected exactly one diagnostic";
+    EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("requires a valid integer")) << msgs[0];
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesMissingValue) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("--max-blank-lines")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesUnderscoreAlias) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max_blank_lines"), const_cast<char*>("2")};
+    auto opts = parse_args(3, argv);
+    ASSERT_TRUE(opts.max_blank_lines.has_value());
+    EXPECT_EQ(*opts.max_blank_lines, 2);
+}
+
+// ---- F8: -D/-U missing-value diagnostics ----
+
+TEST_F(OptionTest, ParseArgsDefineMissingValueIsError) {
+    // F8: a bare trailing -D (no name, no value) must fail fast with
+    // MISSING_OPTION_VALUE, symmetric with -U's existing check, instead of
+    // silently pushing an empty spec that only surfaces later (and with a
+    // misleading "malformed macro" message) via define_macro_option().
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("-D")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
+TEST_F(OptionTest, ParseArgsDefineEmptyNameStillInvalidMacroDef) {
+    // "-D=1" has a non-empty spec ("=1"), so it is not caught by the
+    // empty-spec check above; it must still reach define_macro_option() and
+    // fail there as an empty macro *name*, INVALID_MACRO_DEF -- this is a
+    // parse_args()-then-jiepp_command() split, not testable via parse_args()
+    // alone, so it is exercised directly against define_macro_option().
+    auto arg = std::string("=1");
+    EXPECT_THROW(define_macro_option(arg), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_MACRO_DEF, code());
+}
+
 // ---- New CLI options ----
 
 TEST_F(OptionTest, ParseArgsUJoined) {

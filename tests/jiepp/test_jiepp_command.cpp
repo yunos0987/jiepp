@@ -1396,11 +1396,53 @@ TEST_F(JieppCommandTest, OutputFileNotTruncatedOnFailure) {
     EXPECT_EQ(preexisting, content) << "-o target was truncated on a failing run";
 }
 
+TEST_F(JieppCommandTest, DepFileFailureLeavesMainOutputUntouched) {
+    // F2: the separate dependency file (-MF, or auto-named by -MD/-MMD) is
+    // now written before -o is opened, so a failure writing it (e.g. -MF
+    // names a file inside a nonexistent directory) must leave a pre-existing
+    // -o target completely untouched -- not deleted (the old bug: a
+    // perfectly good, just-written -o used to be removed by the catch block
+    // solely because of this unrelated, later failure) and not overwritten
+    // with fresh content either, since -o is never opened at all in this path.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "dep_fail_main.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dep_fail_main.piec";
+    const std::string preexisting = "PREEXISTING\n";
+    {
+        std::ofstream f(output, std::ios::binary);
+        f << preexisting;
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = "/nonexistent/deeply/nested/path/dep_fail_main.d";
+    opts.no_line_markers = true;
+
+    ASSERT_NE(0, jiepp_command(opts)) << "expected failure writing the dep file";
+
+    ASSERT_TRUE(fs::exists(output)) << "-o target should still exist after a dep-file failure";
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(preexisting, content) << "-o target was modified by an unrelated dep-file failure";
+}
+
 // ─── B16: -M / -MM / -MD / -MMD / -dM output gating ────────────────────────
 
 TEST_F(JieppCommandTest, MSuppressesPreprocessedOutput) {
     // B16: plain -M (dep_mode ALL without -MD/-MMD) must suppress the
-    // preprocessed output; only the dependency rule is written.
+    // preprocessed output. F2 addendum: when a separate dep file (-MF) is
+    // also given, -o has nothing left to receive (no preprocessed body, and
+    // no dep rule either -- that went to -MF), so -o must not even be
+    // created; this supersedes the old "created but empty" behavior, which
+    // used to truncate/create a 0-byte -o for no functional reason.
     fs::current_path(jiepp_root_dir());
     auto tmpdir = fs::temp_directory_path();
     fs::path src = tmpdir / "m_alone.iec";
@@ -1422,16 +1464,43 @@ TEST_F(JieppCommandTest, MSuppressesPreprocessedOutput) {
 
     ASSERT_EQ(0, jiepp_command(opts));
 
-    // -o must exist (still created) but be empty: preprocessed output suppressed.
-    ASSERT_TRUE(fs::exists(output));
-    std::ifstream pf(output, std::ios::binary);
-    std::string pout((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
-    EXPECT_TRUE(pout.empty()) << "plain -M must not write preprocessed output, got: " << pout;
+    // -o has nothing to write (preprocessed body suppressed by -M, dep rule
+    // already went to -MF) and must not be created at all.
+    EXPECT_FALSE(fs::exists(output)) << "plain -M with -MF must not create -o";
 
     ASSERT_TRUE(fs::exists(dep_out));
     std::ifstream df(dep_out, std::ios::binary);
     std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
     EXPECT_NE(std::string::npos, dcontent.find(src.generic_string())) << "dep file missing source";
+}
+
+TEST_F(JieppCommandTest, MOnlyWithOutputWritesRuleToOutput) {
+    // F2 addendum: plain -M (no -MD/-MMD) with -o and no -MF has nowhere
+    // else to put the dependency rule, so (matching gcc) the rule itself is
+    // written into -o; the preprocessed body remains suppressed.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "m_only_out.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "m_only_out.d";
+    fs::remove(output);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.dep_mode = DepMode::ALL;
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    ASSERT_TRUE(fs::exists(output));
+    std::ifstream pf(output, std::ios::binary);
+    std::string pout((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(std::string::npos, pout.find("x: INT")) << "preprocessed body must stay suppressed, got: " << pout;
+    EXPECT_NE(std::string::npos, pout.find(src.generic_string())) << "dependency rule should be written to -o, got: " << pout;
 }
 
 TEST_F(JieppCommandTest, MDKeepsPreprocessedOutput) {
@@ -1535,4 +1604,80 @@ TEST_F(JieppCommandTest, DepRulePathEscaping) {
         << "space in dependency path not escaped: " << dcontent;
     EXPECT_EQ(std::string::npos, dcontent.find("dep escape dir/esc_hdr.iec"))
         << "unescaped space present in dep rule: " << dcontent;
+}
+
+TEST_F(JieppCommandTest, DepRulePathTabIsEscaped) {
+    // F13: a dependency path containing a TAB must be escaped as backslash +
+    // an actual TAB byte, mirroring how a space is escaped as backslash + an
+    // actual space byte (gcc/clang mkdeps munge() convention) -- not the
+    // 2-character C-style "\t" sequence the old code emitted. A raw tab
+    // (0x09) is a control character that Win32 itself refuses in real
+    // filenames, so this test cannot use an actual tab-named file/directory
+    // on disk (confirmed: creating one from a POSIX shell silently remaps
+    // the byte into the Private-Use-Area surrogate range, which is not the
+    // same file from a native Win32 program's point of view). --disppath
+    // overrides only the *displayed* dependency path (see expand.cpp's
+    // add_dependency call), independent of the real file read from disk, so
+    // it exercises write_dep_rules()/escape_make_path()'s tab branch through
+    // the real production seam without needing such a file to exist.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "dep_tab_main.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dep_out = tmpdir / "dep_tab_main.d";
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.disppath = "dep\ttab\tname.iec";
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    ASSERT_TRUE(fs::exists(dep_out));
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, dcontent.find("dep\\\ttab\\\tname.iec"))
+        << "TAB in dependency path must be escaped as backslash + an actual TAB byte, got: " << dcontent;
+    EXPECT_EQ(std::string::npos, dcontent.find("\\tname"))
+        << "TAB must not be escaped as the literal 2-character \"\\t\" sequence, got: " << dcontent;
+}
+
+TEST_F(JieppCommandTest, DepTargetFromMTIsVerbatim) {
+    // F10: unlike an auto-derived target, a user-supplied -MT value must be
+    // emitted verbatim in the rule head (gcc/clang convention -- only the
+    // unimplemented -MQ would Make-escape it), even though it contains
+    // Make-special characters ('$' and a space) that would otherwise be
+    // escaped if this were the auto-derived target.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "mt_verbatim.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dep_out = tmpdir / "mt_verbatim.d";
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.dep_target = "my$target with space";
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    ASSERT_TRUE(fs::exists(dep_out));
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(0u, dcontent.find("my$target with space:"))
+        << "-MT value must be emitted verbatim as the rule head, got: " << dcontent;
+    EXPECT_EQ(std::string::npos, dcontent.find("my$$target"))
+        << "-MT value must not be Make-escaped, got: " << dcontent;
 }
