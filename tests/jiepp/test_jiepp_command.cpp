@@ -1875,3 +1875,75 @@ TEST_F(JieppCommandTest, MaxBlankLinesLastValueWins) {
            "effect) to be compacted under the LAST effective value (1), "
            "confirming the whole-output post-pass semantics; output:\n" << content;
 }
+
+// ─── -o - means stdout ─────────────────────────────────────────────────────
+
+TEST_F(JieppCommandTest, OutputDashMeansStdout) {
+    // gcc/clang convention: "-o -" writes the preprocessed output to stdout,
+    // not to a literal file named "-". Captured in-process by swapping
+    // std::cout's streambuf (jiepp_command() always writes through
+    // &std::cout when opts.output_filepath is unset or "-").
+    fs::current_path(jiepp_root_dir());
+    fs::path dash_marker = fs::current_path() / "-";
+    std::error_code rm_ec;
+    fs::remove(dash_marker, rm_ec); // defensive: clear any stray "-" up front
+
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "o_dash.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define Z 7}\nout := Z;\n";
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = "-";
+
+    std::ostringstream captured;
+    std::streambuf* saved_cout = std::cout.rdbuf(captured.rdbuf());
+    int rc = jiepp_command(opts);
+    std::cout.rdbuf(saved_cout);
+
+    ASSERT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, captured.str().find("out := 7"))
+        << "stdout: " << captured.str();
+    EXPECT_FALSE(fs::exists(dash_marker))
+        << "-o - must not create a file literally named '-'";
+}
+
+TEST_F(JieppCommandTest, OutputDashWithMDDerivesDepFileFromInput) {
+    // With -o - and -MD (no -MF), the dep file name must be derived from the
+    // input file's basename, like gcc, not from the literal "-" output arg.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "o_dash_md.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dep_out = tmpdir / "o_dash_md.d"; // auto-derived from input stem
+    fs::remove(dep_out);
+    fs::path dash_marker = fs::current_path() / "-";
+    std::error_code rm_ec;
+    fs::remove(dash_marker, rm_ec);
+    fs::path dash_dep_marker = fs::current_path() / "-.d";
+    fs::remove(dash_dep_marker, rm_ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = "-";
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    std::ostringstream captured;
+    std::streambuf* saved_cout = std::cout.rdbuf(captured.rdbuf());
+    int rc = jiepp_command(opts);
+    std::cout.rdbuf(saved_cout);
+
+    ASSERT_EQ(0, rc);
+    EXPECT_TRUE(fs::exists(dep_out))
+        << "expected dep file derived from input basename: " << dep_out.generic_string();
+    EXPECT_FALSE(fs::exists(dash_dep_marker))
+        << "-o - must not derive a dep file named '-.d'";
+    EXPECT_FALSE(fs::exists(dash_marker));
+}

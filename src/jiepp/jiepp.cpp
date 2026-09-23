@@ -22,6 +22,15 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// -o - means "write the preprocessed output to stdout" (gcc/clang
+// convention), not a literal file named "-". This helper is used everywhere
+// opts.output_filepath would otherwise be treated as a real, creatable path
+// (opening the file, deriving a dependency/target name from it, or removing
+// it on failure).
+bool output_is_stdout(const JieppOptions& opts) {
+    return opts.output_filepath.has_value() && *opts.output_filepath == "-";
+}
+
 std::string dep_target(const JieppOptions& opts) {
     if (opts.dep_target) {
         return *opts.dep_target;
@@ -32,7 +41,7 @@ std::string dep_target(const JieppOptions& opts) {
         fs::path p(opts.input_filepaths[0]);
         p.replace_extension(".output");
         return p.filename().generic_string();
-    } else if (opts.output_filepath.has_value()) {
+    } else if (opts.output_filepath.has_value() && !output_is_stdout(opts)) {
         fs::path p(*opts.output_filepath);
         p.replace_extension(".output");
         return p.filename().generic_string();
@@ -124,7 +133,11 @@ int jiepp_command(const JieppOptions& opts)
         // would truncate the destination before the input file is even read,
         // which is catastrophic when -o names the same path as the input.
         auto open_output = [&]() {
-            if (opts.output_filepath) {
+            // -o - leaves output_stream pointing at std::cout (its initial
+            // value): no file named "-" is ever created. main.cpp already
+            // puts stdout into binary mode unconditionally, so redirected
+            // stdout matches a real -o FILE byte-for-byte here too.
+            if (opts.output_filepath && !output_is_stdout(opts)) {
                 output_file.open(*opts.output_filepath, std::ios::out | std::ios::binary);
                 if (!output_file)
                     ISSUE(FILE_ERROR, *opts.output_filepath);
@@ -168,7 +181,7 @@ int jiepp_command(const JieppOptions& opts)
         // -MD/-MMD: auto-derive dep file if not explicitly set by -MF
         std::optional<std::string> effective_dep_file = opts.dep_file;
         if ((opts.MD || opts.MMD) && !effective_dep_file.has_value()) {
-            if (opts.output_filepath.has_value()) {
+            if (opts.output_filepath.has_value() && !output_is_stdout(opts)) {
                 effective_dep_file = fs::path(*opts.output_filepath).replace_extension(".d").generic_string();
             } else if (!opts.input_filepaths.empty() && opts.input_filepaths[0] != "-") {
                 effective_dep_file = fs::path(opts.input_filepaths[0]).replace_extension(".d").generic_string();

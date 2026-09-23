@@ -192,6 +192,32 @@ TEST_F(SmokeTest, OptionErrorPrintsNoUnknownErrorLine) {
         << "stderr must not contain a spurious PP01 fallback line: " << r.err;
 }
 
+// ---- 8b. -o - means stdout ----
+
+TEST_F(SmokeTest, OutputDashMeansStdout) {
+    // gcc/clang convention: "-o -" writes to stdout, not to a file literally
+    // named "-". End-to-end check via the real exe (complements the
+    // in-process JieppCommandTest.OutputDashMeansStdout).
+    fs::path input = tmp_dir_ / "o_dash.iec";
+    write_file(input, "{#define Z 7}\nout := Z;\n");
+    fs::path dash_marker = tmp_dir_ / "-";
+    std::error_code ec;
+    fs::remove(dash_marker, ec);
+
+    // Run with cwd effectively at tmp_dir_ by using an absolute input path
+    // and relative "-" for -o; std::system() runs with the test process's
+    // own cwd, so check for a stray "-" there too.
+    fs::path cwd_dash_marker = fs::current_path() / "-";
+    fs::remove(cwd_dash_marker, ec);
+
+    auto r = run("-o - \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("7"), std::string::npos)
+        << "stdout: " << r.out;
+    EXPECT_FALSE(fs::exists(dash_marker));
+    EXPECT_FALSE(fs::exists(cwd_dash_marker));
+}
+
 // ---- 9. Windows stdout binary mode (B15) ----
 
 TEST_F(SmokeTest, StdoutMatchesOutputFileBytes) {
