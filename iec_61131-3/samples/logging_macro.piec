@@ -1,5 +1,6 @@
 (*{#:0 'iec_61131-3/samples/logging_macro.iec'}*)
-(* logging_macro.iec - Variadic logging macros using __VA_ARGS__ + __LINE__ + {##} *)
+(* logging_macro.iec - Variadic logging macros using __VA_ARGS__ + @ stringize *)
+
 
 
 
