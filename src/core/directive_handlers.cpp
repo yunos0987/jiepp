@@ -159,11 +159,19 @@ void handle_setline(const std::string& raw_arg, Env& env, std::vector<Token>& ot
     std::istringstream arg_ss(arg);
     int new_lineno;
     if (arg_ss >> new_lineno) {
-        std::string raw_fp;
-        arg_ss >> raw_fp;
-        std::string new_fp = std::string(Util::trim_view(raw_fp));
+        // Read the whole remainder (not just one whitespace-delimited word) so
+        // quoted filenames containing spaces are captured intact; then trim
+        // and parse as a single path argument. A quoted path followed by
+        // trailing garbage, or an unquoted/syspath-only ('<...>') path, is
+        // rejected below instead of being silently accepted or truncated.
+        std::string rest;
+        std::getline(arg_ss, rest);
+        std::string_view raw_fp = Util::trim_view(rest);
+        std::string new_fp;
         bool syspath_only = false;
-        if (new_fp.empty() || strip_path(new_fp, new_fp, syspath_only)) {
+        bool ok = raw_fp.empty() ||
+            (strip_path(raw_fp, new_fp, syspath_only) && !syspath_only);
+        if (ok) {
             env.set_lineno(new_lineno);
 #ifdef JIEPP_SANDBOX
             // Sandbox: ignore filepath argument, keep original filepath

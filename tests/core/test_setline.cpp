@@ -163,3 +163,27 @@ TEST_F(SetlineTest, Filepath) {
     EXPECT_EQ("a$.iec:2.0: info: PP93: ''", message());
 }
 
+// ---- #line filepath (B2 fixes) ----
+
+TEST_F(SetlineTest, SetLineFilenameWithSpaces) {
+    // Fact: the whole remainder after the line number is read (not just one
+    // whitespace-delimited word), so a quoted filename may contain spaces.
+    EXPECT_EQ("(*{#:2 'my file.iec'}*)'my file.iec';",
+        pp("{#line 2 'my file.iec'}__FILE__;"));
+    EXPECT_EQ("(*{#:2 'my file.iec'}*)'my file.iec';",
+        pp("{#line 2 \"my file.iec\"}__FILE__;"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(SetlineTest, SetLineTrailingGarbageRejected) {
+    // Fact: extra words after a quoted filename are rejected, not silently ignored.
+    EXPECT_THROW(pp("{#line 2 'a.iec' junk}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_SETLINE_OPERAND, code());
+}
+
+TEST_F(SetlineTest, SetLineAngleBracketRejected) {
+    // Fact: a syspath-only '<...>' filename is not accepted by {#line}.
+    EXPECT_THROW(pp("{#line 2 <a.iec>}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_SETLINE_OPERAND, code());
+}
+
