@@ -56,11 +56,18 @@ TEST_F(VaArgsTest, Argc) {
 TEST_F(VaArgsTest, GarbageBeforeCloseParen) {
     // Tokens between ... and ) should cause an error
     EXPECT_THROW(pp("{#define F(a, ... x) a}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+    EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, code());
     EXPECT_THROW(pp("{#define F(... x) x}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+    EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, code());
     // Valid variadic: ... immediately followed by ) (with optional whitespace)
     EXPECT_EQ(";1", pp("{#define F(a, ...) __VA_ARGS__};F(x, 1)"));
     EXPECT_EQ(";1", pp("{#define F(a,  ...  ) __VA_ARGS__};F(x, 1)"));
     EXPECT_TRUE(empty());
+}
+
+TEST_F(VaArgsTest, VariadicNotLastRaisesPP33) {
+    // Fact: '...' must be the last parameter; a parameter following it is
+    // INVALID_VARIADIC_PLACEMENT (PP33), not INVALID_DEFINE_SYNTAX (PP30).
+    EXPECT_THROW(pp("{#define F(..., a) x}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, code());
 }

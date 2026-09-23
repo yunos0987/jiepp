@@ -71,7 +71,7 @@ void handle_define(const std::string& raw_arg, Env& env) {
                     ++i;
                     while (i < ts.size() && (ts[i].type & Token::MASK_WS)) ++i;
                     if (i < ts.size() && ts[i].type != Token::RP) {
-                        ISSUE(INVALID_DEFINE_SYNTAX, raw_arg);
+                        ISSUE(INVALID_VARIADIC_PLACEMENT, raw_arg);
                         return;
                     }
                     break;
@@ -82,7 +82,7 @@ void handle_define(const std::string& raw_arg, Env& env) {
                     i += 3;
                     while (i < ts.size() && (ts[i].type & Token::MASK_WS)) ++i;
                     if (i < ts.size() && ts[i].type != Token::RP) {
-                        ISSUE(INVALID_DEFINE_SYNTAX, raw_arg);
+                        ISSUE(INVALID_VARIADIC_PLACEMENT, raw_arg);
                         return;
                     }
                     break;
