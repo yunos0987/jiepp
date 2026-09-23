@@ -243,14 +243,21 @@ void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
 
 void handle_ignore(const std::string& raw_arg, Env& env) {
     (void)env;
-    auto s = Util::trim_view(raw_arg);
-    // Accept "PPnn" format (e.g., PP41)
-    if ((s.size() >= 3) && s.starts_with("PP")) {
-        try {
-            unsigned int val = static_cast<unsigned int>(std::stoul(std::string(s.substr(2))));
+    // Tokenize the operand (mirroring {#pragma_style}) so a trailing comment
+    // is stripped rather than rejected as garbage, and require exactly one
+    // non-whitespace token matching "PP" followed by exactly two digits
+    // (e.g. PP41). Well-formed but unassigned/retired codes are accepted
+    // silently by design (§10); only the format is validated here.
+    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    if (ts.size() == 1 && ts[0].type == Token::ANY) {
+        const std::string& s = ts[0].text;
+        if (s.size() == 4 && s[0] == 'P' && s[1] == 'P' &&
+            std::isdigit(static_cast<unsigned char>(s[2])) &&
+            std::isdigit(static_cast<unsigned char>(s[3]))) {
+            unsigned int val = static_cast<unsigned int>((s[2] - '0') * 10 + (s[3] - '0'));
             Issue::add_ignoring(Issue::Code(val));
             return;
-        } catch (...) {}
+        }
     }
     ISSUE(INVALID_IGNORE_OPERAND, raw_arg);
 }

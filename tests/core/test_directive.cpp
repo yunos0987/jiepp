@@ -77,6 +77,40 @@ TEST_F(DirectiveTest, IgnoreInvalidOperand) {
     EXPECT_EQ(Issue::Code::INVALID_IGNORE_OPERAND, code());
 }
 
+TEST_F(DirectiveTest, IgnoreOperandStrictFormat) {
+    // Malformed operands are rejected with PP42, even though they used to be
+    // accepted silently (or partially) by the old std::stoul-based parser.
+    EXPECT_THROW(pp("{#ignore PP-1}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_IGNORE_OPERAND, code());
+    EXPECT_THROW(pp("{#ignore PP41x}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_IGNORE_OPERAND, code());
+    EXPECT_THROW(pp("{#ignore PP999}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_IGNORE_OPERAND, code());
+    EXPECT_THROW(pp("{#ignore PP4}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_IGNORE_OPERAND, code());
+    // Only the first code is registered by the old parser; now the whole
+    // directive is rejected instead.
+    EXPECT_THROW(pp("{#ignore PP28 PP41}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_IGNORE_OPERAND, code());
+    // Lowercase "pp" is not accepted (codes are case-sensitive "PP" + 2 digits).
+    EXPECT_THROW(pp("{#ignore pp41}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_IGNORE_OPERAND, code());
+
+    // Surrounding whitespace and a trailing comment are still fine, and the
+    // code is actually registered as ignored.
+    EXPECT_NO_THROW(pp("{#ignore  PP41  }{#line x}"));
+    EXPECT_TRUE(empty());
+    EXPECT_NO_THROW(pp("{#ignore PP41 (* why *)}{#line x}"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, IgnoreRetiredCodeAccepted) {
+    // PP03 is a well-formed but retired/unassigned code (U3); {#ignore} still
+    // accepts it silently since only the "PP" + 2-digit format is validated.
+    EXPECT_EQ("x", pp("{#ignore PP03}x"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(DirectiveTest, OperationNotAllowedDefine) {
     EXPECT_THROW(pp("{#define defined}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
