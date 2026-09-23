@@ -555,9 +555,13 @@ std::vector<Token>& expand(const std::string& filepath,
                            Env& env,
                            const std::string& disppath)
 {
-    std::string fullpath = Loader::fullpath(filepath, load_type, env);
+    bool found_directory = false;
+    std::string fullpath = Loader::fullpath(filepath, load_type, env, &found_directory);
     if (fullpath.empty()) {
-        ISSUE(FILE_NOT_FOUND, filepath);
+        if (found_directory)
+            ISSUE(INCLUDE_TARGET_IS_DIRECTORY, filepath);
+        else
+            ISSUE(FILE_NOT_FOUND, filepath);
         return ots;
     }
 

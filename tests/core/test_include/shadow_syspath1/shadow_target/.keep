@@ -1,0 +1,3 @@
+Placeholder so this directory (used as a shadowing "directory instead of file"
+include target in IncludeTest.DirectoryShadowedByLaterSyspath) survives on disk
+and in version control, since git does not track empty directories.

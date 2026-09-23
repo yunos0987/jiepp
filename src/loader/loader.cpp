@@ -10,33 +10,53 @@
 
 namespace fs = std::filesystem;
 
-std::string Loader::fullpath(const std::string& filepath, LoadType load_type, Env& env) {
+namespace {
+
+// Returns true (and canonicalises into `out`) only when `candidate` exists
+// and is a regular file. When it exists but is not a regular file (e.g. a
+// directory), records that fact into `*found_directory` (if non-null,
+// without clearing an already-set flag) and reports no match, so callers
+// keep searching remaining candidates.
+bool try_resolve(const fs::path& candidate, bool* found_directory, std::string& out) {
+    std::error_code ec;
+    if (!fs::exists(candidate, ec))
+        return false;
+    if (!fs::is_regular_file(candidate, ec)) {
+        if (found_directory)
+            *found_directory = true;
+        return false;
+    }
+    out = Util::canonical_path(candidate.generic_string());
+    return true;
+}
+
+} // namespace
+
+std::string Loader::fullpath(const std::string& filepath, LoadType load_type, Env& env,
+                              bool* found_directory) {
     fs::path p(filepath);
+    std::string out;
     if (p.is_absolute()) {
-        std::error_code ec;
-        if (fs::exists(p, ec))
-            return Util::canonical_path(p.generic_string());
+        if (try_resolve(p, found_directory, out))
+            return out;
     } else {
         if (load_type == LoadType::INCLUDE) {
             const std::string& cur_file = env.current_file();
             if (!cur_file.empty()) {
                 fs::path base_dirpath = fs::path(cur_file).parent_path();
                 fs::path candidate = base_dirpath / filepath;
-                std::error_code ec;
-                if (fs::exists(candidate, ec))
-                    return Util::canonical_path(candidate.generic_string());
+                if (try_resolve(candidate, found_directory, out))
+                    return out;
             } else {
                 fs::path candidate = fs::current_path() / p;
-                std::error_code ec;
-                if (fs::exists(candidate, ec))
-                    return Util::canonical_path(candidate.generic_string());
+                if (try_resolve(candidate, found_directory, out))
+                    return out;
             }
         }
         for (const auto& sp : env.syspaths()) {
             fs::path candidate = fs::path(sp) / filepath;
-            std::error_code ec;
-            if (fs::exists(candidate, ec))
-                return Util::canonical_path(candidate.generic_string());
+            if (try_resolve(candidate, found_directory, out))
+                return out;
         }
     }
     return "";

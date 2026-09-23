@@ -25,6 +25,7 @@ JIEPP_ISSUE_CODE(FILE_ERROR,                  10, ERROR,   "An error occurred wi
 JIEPP_ISSUE_CODE(FILE_NOT_FOUND,              11, ERROR,   "No such file or directory")
 JIEPP_ISSUE_CODE(MAX_INCLUDE_DEPTH_EXCEEDED,  12, ERROR,   "Maximum include depth exceeded")
 JIEPP_ISSUE_CODE(INVALID_COMMAND,             13, ERROR,   "Invalid command")
+JIEPP_ISSUE_CODE(INCLUDE_TARGET_IS_DIRECTORY, 14, ERROR,   "Include target is a directory")
 
 // --- Lexical/Syntax (20-29) ---
 JIEPP_ISSUE_CODE(UNCLOSED_COMMENT,            20, ERROR,   "Unclosed comment")

@@ -361,6 +361,8 @@ IEC 61131-3 の桁区切り文字 `_` は、10進整数・浮動小数点・N進
 1. 現在のファイルのディレクトリ
 2. `-I` オプションまたは `{#syspath}` で追加されたパス（追加順）
 
+候補パスがディレクトリである場合はファイルとして存在しないものとして扱われ、次の候補の検索が継続されます。全候補を検索してもファイルが見つからず、いずれかの候補がディレクトリだった場合は `FILE_NOT_FOUND` (`PP11`) の代わりに `INCLUDE_TARGET_IS_DIRECTORY` (`PP14`) エラーになります。
+
 ### 7.2 `{#sinclude}` — システムパス限定
 
 ```
@@ -394,7 +396,7 @@ IEC 61131-3 の桁区切り文字 `_` は、10進整数・浮動小数点・N進
 {#endif}
 ```
 
-指定ファイルがインクルードパスに存在すれば `1`、なければ `0` に評価されます。`"file"` 形式は `{#include}` 検索順序、`<file>` 形式は `{#sinclude}` 検索順序を使用します。
+指定ファイルがインクルードパスに存在すれば `1`、なければ `0` に評価されます。`"file"` 形式は `{#include}` 検索順序、`<file>` 形式は `{#sinclude}` 検索順序を使用します。候補がディレクトリである場合もファイルとして存在しないため `0` に評価されます。
 
 ### 7.6 `{#pragma once}` — 重複インクルード防止
 
@@ -857,6 +859,7 @@ CLI オプションのエラーは `jiepp:` をファイルパスの代わりに
 | PP11 | `FILE_NOT_FOUND` | ERROR | No such file or directory | ファイルが見つからない |
 | PP12 | `MAX_INCLUDE_DEPTH_EXCEEDED` | ERROR | Maximum include depth exceeded | インクルード深度上限超過 |
 | PP13 | `INVALID_COMMAND` | ERROR | Invalid command | 無効なコマンド |
+| PP14 | `INCLUDE_TARGET_IS_DIRECTORY` | ERROR | Include target is a directory | インクルード対象がディレクトリ |
 | PP20 | `UNCLOSED_COMMENT` | ERROR | Unclosed comment | コメントが閉じられていない |
 | PP21 | `INVALID_ESCAPE_SEQUENCE` | ERROR | Invalid escape sequence | 不正なエスケープシーケンス |
 | PP22 | `INVALID_PRAGMA_SYNTAX` | ERROR | Invalid syntax for pragma | プラグマの構文エラー |

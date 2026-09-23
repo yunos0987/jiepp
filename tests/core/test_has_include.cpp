@@ -137,3 +137,16 @@ TEST_F(HasIncludeTest, KeywordRequiresLeftWordBoundary) {
     EXPECT_EQ(std::string::npos, r.find("NO"));
     EXPECT_TRUE(empty());
 }
+
+// ---- Directory target ----
+
+TEST_F(HasIncludeTest, DirectoryIsNotAFile) {
+    // A directory candidate must not be reported as an existing include
+    // target: __has_include('<a directory>') evaluates to false (0), just
+    // like an ordinary missing file.
+    fs::create_directories(tmp_dir_ / "existing_dir");
+    auto r = pp_hi("{#if __has_include('existing_dir')}YES{#else}NO{#endif}");
+    EXPECT_NE(std::string::npos, r.find("NO"));
+    EXPECT_EQ(std::string::npos, r.find("YES"));
+    EXPECT_TRUE(empty());
+}

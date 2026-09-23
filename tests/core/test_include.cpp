@@ -102,6 +102,31 @@ TEST_F(IncludeTest, InlineInclude) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(IncludeTest, IncludeDirectory) {
+    fs::current_path(jiepp_root_dir());
+    // A directory that exists as a candidate must raise the dedicated
+    // INCLUDE_TARGET_IS_DIRECTORY diagnostic (PP14), not a generic FILE_ERROR
+    // (from trying to open it as a stream) or FILE_NOT_FOUND.
+    EXPECT_THROW(pp("{#include 'tests/core/test_include'}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INCLUDE_TARGET_IS_DIRECTORY, code());
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(IncludeTest, DirectoryShadowedByLaterSyspath) {
+    // A directory candidate found in an earlier syspath must not stop the
+    // search: a regular file of the same name in a later syspath still
+    // resolves and is included.
+    fs::current_path(jiepp_root_dir());
+    std::string o;
+    EXPECT_NO_THROW({
+        o = pp("{#syspath 'tests/core/test_include/shadow_syspath1'}"
+               "{#syspath 'tests/core/test_include/shadow_syspath2'}"
+               "{#include 'shadow_target'}");
+    });
+    EXPECT_NE(std::string::npos, o.find("SHADOWED;"));
+    EXPECT_TRUE(empty());
+}
+
 #ifdef _WIN32
 TEST_F(IncludeTest, PragmaOnceDifferentCaseSamePath) {
     // Windows/NTFS is case-insensitive: two differently-cased spellings of
