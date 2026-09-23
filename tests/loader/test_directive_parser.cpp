@@ -127,6 +127,32 @@ TEST_F(DirectiveParserTest, DecodeText) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(DirectiveParserTest, DecodeTextAllEscapes) {
+    EXPECT_EQ("'",    decode_directive_text("$'"));
+    EXPECT_EQ("\"",   decode_directive_text("$\""));
+    EXPECT_EQ("\n",   decode_directive_text("$l"));
+    EXPECT_EQ("\n",   decode_directive_text("$L"));
+    EXPECT_EQ("\f",   decode_directive_text("$p"));
+    EXPECT_EQ("\f",   decode_directive_text("$P"));
+    EXPECT_EQ("\n",   decode_directive_text("$N"));
+    EXPECT_EQ("\r",   decode_directive_text("$R"));
+    EXPECT_EQ("\t",   decode_directive_text("$T"));
+    EXPECT_EQ("J",    decode_directive_text("$4A"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveParserTest, DecodeTextInvalidEscapes) {
+    // Make INVALID_ESCAPE_SEQUENCE continuable so the returned value (an
+    // empty string) can be observed in addition to the diagnostic code.
+    Issue::remove_blocking(Issue::Code::INVALID_ESCAPE_SEQUENCE);
+    const char* cases[] = { "$x", "$4", "$4G", "$" };
+    for (const auto* input : cases) {
+        EXPECT_EQ("", decode_directive_text(input)) << input;
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, code()) << input;
+    }
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(DirectiveParserTest, EncodeText) {
     EXPECT_EQ("$n",  encode_directive_text("\n"));
     EXPECT_EQ("$r",  encode_directive_text("\r"));
