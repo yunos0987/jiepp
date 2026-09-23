@@ -1,0 +1,3 @@
+{#ifndef SAMEFILE_DAT}
+{#define SAMEFILE_DAT}
+{#endif}

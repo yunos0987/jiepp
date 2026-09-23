@@ -72,6 +72,9 @@ endif()
 find_package(FLEX REQUIRED)
 find_package(BISON REQUIRED)
 
+# ---- Python3 (for the perf test harness under tools/perftest/) ----
+find_package(Python3 COMPONENTS Interpreter QUIET)
+
 BISON_TARGET(CfParser
     ${CMAKE_CURRENT_SOURCE_DIR}/src/constfold/constfold.y
     ${CMAKE_CURRENT_BINARY_DIR}/constfold_parser.cpp
@@ -165,6 +168,76 @@ if(GTest_FOUND OR TARGET GTest::gtest)
 
         include(GoogleTest)
         gtest_discover_tests(jiepp_test)
+
+        if(Python3_Interpreter_FOUND AND NOT JIEPP_SANDBOX)
+            add_test(NAME perftest_smoke
+                COMMAND ${Python3_EXECUTABLE}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tools/perftest/perftest.py" selfcheck
+                    --jiepp "$<TARGET_FILE:jiepp>"
+                    --work "${CMAKE_BINARY_DIR}/perftest/selfcheck"
+                    --build-type "$<CONFIG>"
+            )
+            set_tests_properties(perftest_smoke PROPERTIES LABELS "perf")
+        endif()
     endif()
+endif()
+
+# ---- Profiling (perf tests ported from jiecc, see tools/perftest/) ----
+set(JIEPP_PERF_REPEAT "10" CACHE STRING "Number of repeated runs per perf test case")
+set(JIEPP_PERF_MODE "all" CACHE STRING "Perf test case-size mode: all|greedy|greedy2")
+set(JIEPP_PERF_RESULTS_DIR "${CMAKE_BINARY_DIR}/perftest/results" CACHE PATH "Directory for perf test TSV results")
+set(JIEPP_PERF_CASES "" CACHE STRING "Semicolon-separated perf test case names to restrict to (default: empty = all cases)")
+
+# Turn the JIEPP_PERF_CASES list (if any) into repeated --case NAME arguments.
+set(_JIEPP_PERF_CASE_ARGS)
+foreach(_jiepp_perf_case IN LISTS JIEPP_PERF_CASES)
+    if(_jiepp_perf_case)
+        list(APPEND _JIEPP_PERF_CASE_ARGS --case "${_jiepp_perf_case}")
+    endif()
+endforeach()
+
+if(Python3_Interpreter_FOUND AND NOT JIEPP_SANDBOX)
+    add_custom_target(perf_make
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/perftest/perftest.py" make
+            --cases-src "${CMAKE_CURRENT_SOURCE_DIR}/tools/perftest/cases"
+            --out "${CMAKE_BINARY_DIR}/perftest/cases"
+            --mode "${JIEPP_PERF_MODE}"
+            ${_JIEPP_PERF_CASE_ARGS}
+        COMMENT "Generating perf test cases"
+        USES_TERMINAL
+        VERBATIM
+    )
+
+    add_custom_target(profiling
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/perftest/perftest.py" run
+            --jiepp "$<TARGET_FILE:jiepp>"
+            --cases "${CMAKE_BINARY_DIR}/perftest/cases"
+            --results "${JIEPP_PERF_RESULTS_DIR}"
+            --repeat "${JIEPP_PERF_REPEAT}"
+            --build-type "$<CONFIG>"
+            ${_JIEPP_PERF_CASE_ARGS}
+        COMMENT "Running perf tests"
+        USES_TERMINAL
+        VERBATIM
+    )
+    add_dependencies(profiling jiepp perf_make)
+
+    message(STATUS "Profiling target enabled (Python3: ${Python3_EXECUTABLE})")
+else()
+    if(JIEPP_SANDBOX)
+        set(_JIEPP_PROFILING_DISABLED_REASON "JIEPP_SANDBOX is ON")
+    else()
+        set(_JIEPP_PROFILING_DISABLED_REASON "Python 3 interpreter not found")
+    endif()
+    add_custom_target(profiling
+        COMMAND ${CMAKE_COMMAND} -E echo "profiling target disabled: ${_JIEPP_PROFILING_DISABLED_REASON}"
+        COMMAND ${CMAKE_COMMAND} -E false
+        COMMENT "profiling target disabled: ${_JIEPP_PROFILING_DISABLED_REASON}"
+        USES_TERMINAL
+        VERBATIM
+    )
+    message(STATUS "Profiling target disabled: ${_JIEPP_PROFILING_DISABLED_REASON}")
 endif()
 
