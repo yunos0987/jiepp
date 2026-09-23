@@ -647,8 +647,8 @@ CLI オプションで設定した値はソースコード内のディレクテ�
 |-------|----|
 | `__BYTE_MASK__` | `byte#16#ff` |
 | `__WORD_MASK__` | `word#16#ffff` |
-| `__DWORD_MASK__` | `dword#16#ffffffff` |
-| `__LWORD_MASK__` | `lword#16#ffffffffffffffff` |
+| `__DWORD_MASK__` | `dword#16#ffff_ffff` |
+| `__LWORD_MASK__` | `lword#16#ffff_ffff_ffff_ffff` |
 
 ### 12.6 時間・日付型範囲マクロ / Time & Date Range Macros
 
@@ -664,12 +664,18 @@ CLI オプションで設定した値はソースコード内のディレクテ�
 
 | マクロ | 値 |
 |-------|----|
-| `__INT8_TYPE` / `__UINT8_TYPE` | `sint` / `usint` |
-| `__INT16_TYPE` / `__UINT16_TYPE` | `int` / `uint` |
-| `__INT32_TYPE` / `__UINT32_TYPE` | `dint` / `udint` |
-| `__INT64_TYPE` / `__UINT64_TYPE` | `lint` / `ulint` |
-| `__BITS8_TYPE` / `__BITS16_TYPE` | `byte` / `word` |
-| `__BITS32_TYPE` / `__BITS64_TYPE` | `dword` / `lword` |
+| `__INT8_TYPE` | `sint` |
+| `__UINT8_TYPE` | `usint` |
+| `__BITS8_TYPE` | `byte` |
+| `__INT16_TYPE` | `int` |
+| `__UINT16_TYPE` | `uint` |
+| `__BITS16_TYPE` | `word` |
+| `__INT32_TYPE` | `dint` |
+| `__UINT32_TYPE` | `udint` |
+| `__BITS32_TYPE` | `dword` |
+| `__INT64_TYPE` | `lint` |
+| `__UINT64_TYPE` | `ulint` |
+| `__BITS64_TYPE` | `lword` |
 
 ### 12.8 条件式専用 / Conditional Expression Only
 
@@ -1007,7 +1013,7 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | `#define` | `{#define}` | 同等 |
 | `#undef` | `{#undef}` | 同等 |
 | `#include "file"` | `{#include 'file'}` | IEC 61131-3 では `'` が文字列デリミタ |
-| `#include <file>` | `{#sinclude 'file'}` / `{#include <file>}` | システムパス限定 |
+| `#include <file>` |  `{#include <file>}` / `{#sinclude 'file'}` | 同等 |
 | `#if` / `#elif` / `#else` / `#endif` | `{#if}` / `{#elif}` / `{#else}` / `{#endif}` | 同等 |
 | `#ifdef` / `#ifndef` | `{#ifdef}` / `{#ifndef}` | 同等 |
 | `#error` / `#warning` | `{#error}` / `{#warning}` | 同等 |
