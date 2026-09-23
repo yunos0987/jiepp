@@ -90,6 +90,19 @@ Jiepp は以下のコメント形式を認識し保持します:
 "ab" 'cd'           (* → 引用符が異なるため結合されない *)
 ```
 
+### 引数の引用符 / Argument Quoting
+
+ディレクティブの引数における引用符の扱いはディレクティブごとに異なります。
+
+| ディレクティブ | 受理する形式 | 備考 |
+|--------------|-------------|------|
+| `{#include}` / `{#sinclude}` | `'file'` / `"file"` / `<file>` | `<file>` はシステムパス限定（§7.3） |
+| `{#syspath}` | `'dir'` / `"dir"` | `<dir>` も同じ意味で受理される。出力への再展開は常に `'...'` |
+| `{#line}` とそのエイリアス | `'file'` / `"file"` | `<file>` は不可（`INVALID_SETLINE_OPERAND`、`PP41`）。`$` エスケープはデコードされる（§9） |
+| `__has_include` | `'file'` / `"file"` / `<file>` | |
+| `{#error}` / `{#warning}` / `{#info}` / `{#severe}` | 引用符処理なし | 引用符も他の文字と同様にメッセージの一部として扱われる。引用符なしでも構わない（§8） |
+| `{#string}` / `{#wstring}` | — | 出力は常に `'...'` / `"..."` |
+
 ---
 
 ## 3. マクロ定義 / Macro Definitions
@@ -255,8 +268,10 @@ IEC 61131-3 の特殊文字は自動的にエスケープされます:
 | `$` | `$$` |
 | `'` | `$27` |
 | `"` | `$22` |
-| LF | `$0a` |
-| CR | `$0d` |
+| LF（改行） | `$n` |
+| CR（復帰） | `$r` |
+| タブ | `$t` |
+| フォームフィード | `$p` |
 
 ### 4.2 文字列化ディレクティブ `{#string}` / `{##}` / Stringize Directive
 
@@ -489,6 +504,20 @@ VAR CONSTANT MAX_SIZE : INT := 100; END_VAR
 
 > **注意**: Jiepp は循環インクルードを即座に検出する仕組みを備えていません。代わりに、深度制限に到達した際に PP12 エラーで処理を停止することにより、無限ループを防止しています。実質的に、循環インクルードはこの深度制限により検出・防止されます。
 
+### 7.9 相対パスの基準 / Relative Path Base
+
+各インクルード関連機能が相対パスをどこ基準に解決するかを示します。「gcc/clang」列は、対応する gcc/clang の挙動と一致するかどうかを示します。
+
+| 対象 | 基準 | gcc/clang |
+|------|------|-----------|
+| `{#include 'file'}` / `{#include "file"}` | 最も内側の現在のファイルのディレクトリ → 見つからなければ `-I` / `{#syspath}`（追加順） | 一致 |
+| `<file>` / `{#sinclude 'file'}` | `-I` / `{#syspath}` のみ（現在のファイルのディレクトリは検索しない） | 一致 |
+| `-I dir` | プロセス起動時の CWD（カレントディレクトリ） | 一致 |
+| `-include FILE` | プロセスの CWD を優先し、見つからなければ `-I` / `{#syspath}` を検索（`{#include 'file'}` と同じ検索順） | 一致 |
+| `__has_include(...)` | 対応する `{#include}` の形式（`'file'`/`"file"` または `<file>`）と同じ検索順序（§7.5） | 一致（`'file'` 形式を受理する点は拡張） |
+| 標準入力 (`-`) | プロセスの CWD | 一致 |
+| `{#syspath 'dir'}` | ディレクティブを**処理する時点**のプロセスの CWD（宣言元ファイルのディレクトリではない） | 対応する概念なし。現在の動作。仕様は未確定（検討中） |
+
 ---
 
 ## 8. メッセージディレクティブ / Message Directives
@@ -503,6 +532,7 @@ VAR CONSTANT MAX_SIZE : INT := 100; END_VAR
 - `{#error}` と `{#severe}` は処理を中断します（例外を送出）
 - `{#warning}` と `{#info}` は処理を継続します
 - メッセージ引数はマクロ展開されます
+- 上記の例にある引用符（`'...'`）は慣例的な記述であり、実際には取り除かれません。引用符も含めたメッセージ全体がそのまま扱われます（§2「引数の引用符」参照）
 
 ---
 
@@ -989,13 +1019,14 @@ CLI オプションのエラーは `jiepp:` をファイルパスの代わりに
 | PP44 | `INVALID_PARAMETER_VALUE` | ERROR | Invalid parameter value | パラメータ値が不正（0以下等） |
 | PP45 | `UNKNOWN_DIRECTIVE` | WARNING | Unknown directive | 未知のディレクティブ |
 | PP46 | `INVALID_DIRECTIVE_NAME` | ERROR | Invalid directive name | 不正なディレクティブ名（先頭が数字等） |
+| PP47 | `INVALID_PATH` | ERROR | Invalid path | 不正なパス |
 | PP48 | `INVALID_PRAGMA_STYLE_OPERAND` | WARNING | Invalid operand for pragma style directive | `{#pp_output_pragma_style}` の不正なオペランド |
 | PP50 | `EXPR_TYPE_ERROR` | ERROR | Type error in expression | 式中の型エラー（ゼロ除算等） |
 | PP51 | `MISSING_EXPRESSION` | ERROR | Missing expression | `{#if}` に式がない |
 | PP52 | `INVALID_EXPRESSION` | ERROR | Invalid expression | 不正な式 |
 | PP60 | `MAX_EXPANSION_DEPTH_EXCEEDED` | ERROR | Maximum expansion depth exceeded | マクロ展開深度上限超過 |
-| PP62 | `MAX_IF_NESTING_EXCEEDED` | ERROR | Maximum conditional nesting depth exceeded | 条件分岐ネスト深度上限超過 |
-| PP63 | `SANDBOX_RESTRICTED_DIRECTIVE` | ERROR | Directive is restricted in sandbox mode | サンドボックスモードで禁止されたディレクティブ |
+| PP61 | `MAX_IF_NESTING_EXCEEDED` | ERROR | Maximum conditional nesting depth exceeded | 条件分岐ネスト深度上限超過 |
+| PP62 | `SANDBOX_RESTRICTED_DIRECTIVE` | ERROR | Directive is restricted in sandbox mode | サンドボックスモードで禁止されたディレクティブ |
 | PP70 | `UNKNOWN_OPTION` | ERROR | Unknown command-line option | 未知のコマンドラインオプション |
 | PP71 | `INVALID_OPTION_VALUE` | ERROR | Invalid option value | オプション値が不正（正の整数でない等） |
 | PP72 | `MISSING_OPTION_VALUE` | ERROR | Option requires a value | オプションに値が指定されていない |
@@ -1018,12 +1049,13 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 |-----------------|-------|------|
 | `#define` | `{#define}` | 同等 |
 | `#undef` | `{#undef}` | 同等 |
-| `#include "file"` | `{#include 'file'}` | IEC 61131-3 では `'` が文字列デリミタ |
+| `#include "file"` | `{#include 'file'}` | IEC 61131-3 の文字列リテラルは `'...'`（STRING）と `"..."`（WSTRING）の2種類。Jiepp のパス引数はどちらも同じ意味で受け付ける（§2「引数の引用符」参照） |
 | `#include <file>` |  `{#include <file>}` / `{#sinclude 'file'}` | 同等 |
+| `-include FILE` | `-include FILE` | 同等。指定ファイルを主入力ファイルより前に処理する。相対パスは CWD を優先し、見つからなければ `-I` / `{#syspath}` を検索（§7.9） |
 | `#if` / `#elif` / `#else` / `#endif` | `{#if}` / `{#elif}` / `{#else}` / `{#endif}` | 同等 |
 | `#ifdef` / `#ifndef` | `{#ifdef}` / `{#ifndef}` | 同等 |
 | `#error` / `#warning` | `{#error}` / `{#warning}` | 同等 |
-| `#line N "file"` | `{#line N 'file'}` | 同等 |
+| `#line N "file"` | `{#line N 'file'}` / `{#line N "file"}` | 両方のクォートを同じ意味で受理（エイリアス `set_line`/`set-line` も同等）。出力される行マーカーと `__FILE__` は常に `'...'`（IEC エスケープ適用済み）で再エンコードされる（§9） |
 | `#arg` (stringize) | `@arg` | IEC 61131-3 では `#` が別の意味を持つため |
 | `##` (token paste) | `@@` | 同上 |
 | `#pragma once` | `{#pragma once}` | 同等。正規化パス（symlink 解決・大小文字正規化）ベースで判定 |
