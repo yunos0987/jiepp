@@ -172,6 +172,33 @@ TEST_F(LinenoTest, LinenoCumulativeDriftAcrossMultipleStringLiterals) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(LinenoTest, LinenoAfterStringLiteralMergedAcrossNewline) {
+    // Adjacent string literals still merge into one token even when the
+    // whitespace between them is an actual newline (not just a space, as in
+    // LinenoAfterMergedStringLiteralUnaffected): push_string_token() pops
+    // the trailing WS -- here, the intervening newline -- before merging
+    // 'a' and 'b' into 'ab', then re-appends that same WS token after the
+    // merged token, so its line-count contribution is neither lost nor
+    // double-counted and __LINE__ on the following line still reads 4.
+    const std::string input = "A;\n'a'\n'b';\nX __LINE__;\n";
+    const std::string output = pp(input);
+    EXPECT_EQ("A;\n'ab'\n;\nX 4;\n", output);
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(LinenoTest, DiagnosticLineAfterStringLiteralIsAccurate) {
+    // F1 regression: diagnostics (not just __LINE__ substitution) must also
+    // reflect the corrected running line number after a mid-stream string
+    // literal; the redefinition of M on line 4 must be reported as line 4,
+    // not inflated by the zombie-token drift.
+    const std::string input = "A;\n'x';\n{#define M 1}\n{#define M 2}";
+    pp(input);
+    const std::vector<std::string> expected_diags = {
+        "<unknown location>:4.0: warning: PP35: Macro redefined; 'M'",
+    };
+    EXPECT_EQ(expected_diags, messages());
+}
+
 TEST_F(LinenoTest, AllLineno) {
     const auto test_case = TestCase{
         "all-token-kinds",

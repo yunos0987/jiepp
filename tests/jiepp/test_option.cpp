@@ -245,6 +245,19 @@ TEST_F(OptionTest, ParseArgsDefineMissingValueIsError) {
     EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
 }
 
+TEST_F(OptionTest, ParseArgsDefineEmptyArgvValueIsError) {
+    // "-D" followed by a separate, empty-string argv token (e.g. `-D ""`
+    // from a shell) previously slipped past the empty-spec check above,
+    // which only looked at the glued form ("-Dxxx"): the separate-argv
+    // branch pushed the empty string straight into define_macros without
+    // any check. Symmetric with the glued "-D" bare-trailing case, this
+    // must also raise MISSING_OPTION_VALUE.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("-D"), const_cast<char*>("")};
+    EXPECT_THROW(parse_args(4, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
 TEST_F(OptionTest, ParseArgsDefineEmptyNameStillInvalidMacroDef) {
     // "-D=1" has a non-empty spec ("=1"), so it is not caught by the
     // empty-spec check above; it must still reach define_macro_option() and
@@ -280,6 +293,19 @@ TEST_F(OptionTest, UndefMissingValueIsError) {
     char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
                     const_cast<char*>("-U")};
     EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
+TEST_F(OptionTest, ParseArgsUndefEmptyArgvValueIsError) {
+    // "-U" followed by a separate, empty-string argv token (e.g. `-U ""`
+    // from a shell) previously slipped past the empty-spec check that only
+    // covers the glued form ("-Uxxx"/bare trailing "-U"): the separate-argv
+    // branch pushed the empty string straight into undef_macros without any
+    // check. Symmetric with UndefMissingValueIsError, this must also raise
+    // MISSING_OPTION_VALUE.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("-U"), const_cast<char*>("")};
+    EXPECT_THROW(parse_args(4, argv), Issue::Exception);
     EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
 }
 

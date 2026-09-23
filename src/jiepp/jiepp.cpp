@@ -110,6 +110,14 @@ int jiepp_command(const JieppOptions& opts)
 {
     std::ostream* output_stream = &std::cout;
     std::ofstream output_file;
+    // Path of a separate dependency file (-MF / -MD / -MMD auto-named) that
+    // this run has fully written, if any -- remembered so the catch block
+    // below can remove it if a *later* step (typically opening -o) fails:
+    // otherwise a correctly-written .d file naming an output that was never
+    // produced (or never updated) would be left behind for a Make-based
+    // build to trust incorrectly. See the "remove only what this run wrote"
+    // rule documented at the catch site.
+    std::string dep_file_written;
     try {
         // Deferred until after the whole preprocessed output has been built
         // in memory (see the emit_tokens call below): opening -o eagerly here
@@ -260,6 +268,8 @@ int jiepp_command(const JieppOptions& opts)
             if (!dep_output)
                 ISSUE(FILE_ERROR, *effective_dep_file);
             write_dep_rules(dep_target_text, opts.dep_mode, dep_output, env);
+            dep_output.close();
+            dep_file_written = *effective_dep_file;
         }
 
         // -o (or stdout) is only needed when something will actually be
@@ -297,6 +307,20 @@ int jiepp_command(const JieppOptions& opts)
                 std::error_code ec;
                 fs::remove(*opts.output_filepath, ec);
             }
+        }
+        // Likewise, remove only what *this run* wrote: if a separate
+        // dependency file was successfully written earlier in this same run
+        // but a later step (e.g. opening -o) then failed, the .d file now
+        // either references an output that was never (re)produced, or -- if
+        // it already existed -- was just truncated with content that was
+        // never paired with a matching successful output. Either way it is
+        // this run's own write, so it is removed here; a dep file from an
+        // *earlier*, unrelated run that this run never touched is left
+        // alone, matching gcc's convention of not scrubbing stale files it
+        // did not itself just write.
+        if (!dep_file_written.empty()) {
+            std::error_code ec;
+            fs::remove(dep_file_written, ec);
         }
         return 1;
     }

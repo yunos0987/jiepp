@@ -1,14 +1,16 @@
 #pragma once
 // line_compaction — post-pass that collapses long runs of blank lines in a
-// fully materialised token stream, gcc/clang-compatible:
-//   - runs of `max_blank_lines` (default 7) or fewer blank lines are emitted
-//     byte-identical to today;
-//   - runs of more than `max_blank_lines` blank lines are replaced by a
-//     single line-marker line so downstream line numbering stays correct
-//     (Markers mode), or removed entirely with no marker (CollapseAll mode,
-//     used under -P where line markers are already suppressed);
-//   - `max_blank_lines == 0` disables compaction entirely (verbatim
-//     passthrough, i.e. pre-compaction behavior).
+// fully materialised token stream, gcc/clang-compatible. There are two modes:
+//   - Markers mode: runs of `max_blank_lines` (default 7) or fewer blank
+//     lines are emitted byte-identical to today; runs of more than
+//     `max_blank_lines` blank lines are replaced by a single line-marker
+//     line so downstream line numbering stays correct.
+//   - CollapseAll mode (used under -P, where line markers are already
+//     suppressed): every run of blank lines is removed entirely with no
+//     marker, regardless of its length — the `max_blank_lines` threshold
+//     does not gate removal in this mode.
+//   - `max_blank_lines == 0` disables compaction entirely in both modes
+//     (verbatim passthrough, i.e. pre-compaction behavior).
 //
 // A "blank line" is a physical line all of whose characters are whitespace
 // (Token::WS tokens only — NOT Token::C, which also carries MASK_WS but is a

@@ -88,6 +88,7 @@ void display_help_and_exit(int exit_code = 0) {
         "  --max-blank-lines N      Max consecutive blank lines before compaction (default: 7; 0 disables)\n"
         "  --recursion-limit N      Set OS stack size (N * ~8KB frames)\n"
         "  --pp-output-pragma-style STYLE\n"
+        "                           Pragma output style: annotated or standard (default: annotated)\n"
         "  -P                       Suppress line markers in output\n"
         "  --remove-comments / -nC  Remove comments\n"
         "  -dM                      Dump macro definitions\n"
@@ -150,7 +151,10 @@ JieppOptions parse_args(int argc, char* argv[]) {
         }
 
         if (arg == "-D" && i + 1 < argc) {
-            opts.define_macros.push_back(argv[++i]);
+            std::string spec = argv[++i];
+            if (spec.empty())
+                ISSUE(MISSING_OPTION_VALUE, "-D");
+            opts.define_macros.push_back(spec);
             ++i; continue;
         }
 
@@ -163,7 +167,10 @@ JieppOptions parse_args(int argc, char* argv[]) {
         }
 
         if (arg == "-U" && i + 1 < argc) {
-            opts.undef_macros.push_back(argv[++i]);
+            std::string name = argv[++i];
+            if (name.empty())
+                ISSUE(MISSING_OPTION_VALUE, "-U");
+            opts.undef_macros.push_back(name);
             ++i; continue;
         }
 

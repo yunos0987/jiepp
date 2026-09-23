@@ -143,7 +143,7 @@ cat input.iec | jiepp -
 | `--` | オプション終端 | — |
 | `--help` / `-h` | ヘルプ表示 | — |
 
-全オプションの詳細は [`SPECIFICATION.md` §13](SPECIFICATION.md#13-jiepp-リファレンス--jiepp-reference) を参照してください。
+全オプションの詳細は [`SPECIFICATION.md` §13](SPECIFICATION.md#13-cli-リファレンス--cli-reference) を参照してください。
 
 ## サンプル再生成 / Sample Regeneration
 

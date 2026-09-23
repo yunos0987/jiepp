@@ -117,9 +117,7 @@ void dispatch_directive(const Token& t,
                 ISSUE(ENDIF_ERROR, "endif without matching if");
                 return;
             }
-            if (ctrl.size() > 1) {
-                ctrl.pop_back();
-            }
+            ctrl.pop_back();
             break;
         default:
             break;

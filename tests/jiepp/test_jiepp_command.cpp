@@ -1434,6 +1434,41 @@ TEST_F(JieppCommandTest, DepFileFailureLeavesMainOutputUntouched) {
     EXPECT_EQ(preexisting, content) << "-o target was modified by an unrelated dep-file failure";
 }
 
+TEST_F(JieppCommandTest, OutputOpenFailureRemovesFreshDepFile) {
+    // Companion to DepFileFailureLeavesMainOutputUntouched, covering the
+    // opposite failure order: the separate dependency file (-MD, in this
+    // case) is written successfully first -- per the F2 ordering, the
+    // dep file is always written before -o is opened -- but the later
+    // opening of -o then fails (nonexistent directory). Without cleanup
+    // this would leave a well-formed .d file on disk naming an output that
+    // this run never produced, which a Make-based build could mistake for
+    // proof that the target is already up to date. This run created the
+    // dep file fresh (it did not exist beforehand), so it must be removed;
+    // a dep file left over from an earlier, unrelated run that this run
+    // never touched would not be (see the catch-site comment in jiepp.cpp).
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "output_open_fail.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dep = tmpdir / "output_open_fail.d";
+    std::error_code ec;
+    fs::remove(dep, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = "/nonexistent/deeply/nested/path/output_open_fail.piec";
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep.generic_string();
+
+    ASSERT_NE(0, jiepp_command(opts)) << "expected failure opening -o";
+
+    EXPECT_FALSE(fs::exists(dep)) << "fresh dep file written by this failed run should have been removed";
+}
+
 // ─── B16: -M / -MM / -MD / -MMD / -dM output gating ────────────────────────
 
 TEST_F(JieppCommandTest, MSuppressesPreprocessedOutput) {

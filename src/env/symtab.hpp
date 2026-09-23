@@ -54,5 +54,9 @@ private:
     // are moved here instead of being destroyed, to satisfy the lifetime
     // invariant documented above. Never read back; exists purely to extend
     // ownership to the Symtab's own lifetime (F14).
+    // This vector only ever grows -- once per undef/redefine -- for as long
+    // as this Symtab (i.e. one preprocessing run) lives; that growth is
+    // intentional and bounded by the run's own directive count, not an
+    // unbounded leak, so do not "fix" it by trying to shrink or reuse it.
     std::vector<std::unique_ptr<Macro>> retired_;
 };

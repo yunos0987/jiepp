@@ -51,6 +51,11 @@ TEST_F(SandboxDirectiveTest, MaxIfNestingBlocked) {
     EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
 }
 
+TEST_F(SandboxDirectiveTest, MaxBlankLinesBlocked) {
+    EXPECT_THROW(pp("{#max_blank_lines 2}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
+}
+
 // ---- Allowed directives still work in sandbox ----
 
 TEST_F(SandboxDirectiveTest, DefineAllowed) {
