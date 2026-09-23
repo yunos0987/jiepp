@@ -66,10 +66,11 @@ ctest --preset <preset-name>          # test
 |-------------|-------------|------|
 | `jiepp/` | `main.cpp`, `jiepp.hpp/cpp`, `option.hpp/cpp` | CLI エントリポイント。引数解析・前処理実行・入出力制御 |
 | `env/` | `env.hpp/cpp`, `issue.hpp/cpp`, `issue_codes.def` | プリプロセッサ状態 (`Env`) の管理。`Env` は 3 つの Mixin 基底クラスの多重継承で構成される: `Symtab`（マクロシンボルテーブル, `symtab.hpp/cpp`。`undef()`/再定義で置き換えられた `Macro` は破棄せず `retired_` に退避し、実行中に得た `Macro*` を常に有効に保つ。この退避は 1 回の実行の寿命に限られ、リークではない）、`FileContext`（インクルードスタック・検索パス・行番号・依存関係追跡・`once_files_`（`{#pragma once}` 用処理済みパスセット）, `file_context.hpp/cpp`）、`Param`（リミット値・プラグマスタイル・トークンキャッシュ・`dd_mode_`（`-dD` フラグ）, `param.hpp/cpp`, `param_constants.hpp`）。エラー/イシュー出力 (`Issue`) も担当 |
-| `loader/` | `lexer.hpp/cpp`, `token.hpp/cpp`, `directive_parser.hpp/cpp`, `directive_token.cpp`, `loader.hpp/cpp` | 入力テキストのトークン化・ディレクティブ解析。字句解析ヘルパー (`lexer_comment.cpp`, `lexer_pragma.cpp`, `lexer_literal.cpp`, `lexer_helpers.hpp/cpp`) および `.def` マクロ定義を含む。`token.hpp` の `DirectiveToken` は各ディレクティブをビットマスクで分類し、`MASK_OUTPUT` は自身のハンドラが `ots`（出力トークン列）へ直接書き込むディレクティブ（`{#include}` 等）を示す。マクロ引数収集中に見つかった `MASK_OUTPUT` ディレクティブは、囲むマクロ呼び出しの展開より先に出力が発生してしまうため拒否される |
+| `loader/` | `lexer.hpp/cpp`, `token.hpp/cpp`, `directive_parser.hpp/cpp`, `directive_token.cpp`, `loader.hpp/cpp` | 入力テキストのトークン化・ディレクティブ解析。字句解析ヘルパー (`lexer_comment.cpp`, `lexer_pragma.cpp`, `lexer_literal.cpp`, `lexer_helpers.hpp/cpp`) および `.def` マクロ定義を含む。`token.hpp` の `DirectiveToken` は各ディレクティブをビットマスクで分類し、`MASK_OUTPUT` は自身のハンドラが `ots`（出力トークン列）へ直接書き込むディレクティブ（`{#include}` 等）を示す。マクロ引数収集中に見つかった `MASK_OUTPUT` ディレクティブは、囲むマクロ呼び出しの展開より先に出力が発生してしまうため拒否される。`{` と `#` の間に空白・改行・コメントがあるとディレクティブではなく通常のプラグマとして扱われ、空白/改行の場合は `PP28`（`WHITESPACE_BEFORE_DIRECTIVE`）警告が出る（`lexer_pragma.cpp`） |
 | `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp`, `line_compaction.hpp/cpp` | プリプロセッサ本体。トークン列に対してディレクティブ処理・マクロ展開を行う。`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む。`line_compaction` は展開完了後の `ots`（出力トークン列）に対する後処理パスで、連続空行を圧縮する（`--max-blank-lines`、既定 7 行） |
 | `macro/` | `macro.hpp/cpp` | `Macro` クラス。オブジェクト形式マクロ・関数形式マクロの定義を表現する |
 | `constfold/` | `constfold.hpp/cpp`, `constfold_internal.hpp`, `constfold_scanner.cpp`, `constfold_parser.cpp` | `#if` / `#elif` 式の定数畳み込み評価。算術・比較・論理・ビット演算およびビットシフト (`<<`, `>>`) をサポート |
+| `tools/perftest/` | `perftest.py`, `cases/<name>/<name>.py` | `src/` の外側にある性能測定ハーネス。CMake の `profiling` ターゲットから `jiepp` バイナリを直接起動して計測する（詳細は CONTRIBUTING.md「性能測定 / Profiling」参照） |
 
 `Loader::fullpath()` はインクルードパス解決の結果を `Util::canonical_path()`（symlink 解決・OS 正規化）で正規化して返す。この正規化済みパスは、`{#pragma once}` の処理済みファイル集合・`Loader::tokens()` のトークンキャッシュのキー・`-M`/`-MM` 依存関係の重複排除のいずれにも共通して使われる同一性キーである。
 
@@ -256,7 +257,9 @@ cmake --build --preset linux-portable-release
 | `constfold/` | 定数式評価のテスト |
 | `env/` | 環境設定・エラー処理・ロバスト性制限のテスト |
 | `jiepp/` | CLI 入出力・エンドツーエンドテスト |
-| `support/` | テストユーティリティ・共通ヘルパー |
+| `util/` | `Util` 名前空間（トリム・パス正規化・IEC 文字列エンコード等）のテスト |
+
+共有ヘルパー（`run_e2e()` 等の e2e アサーション補助）は `tests/` 直下の `test_helper.hpp` にあり、専用サブディレクトリは持たない。
 
 - `tests/env/test_robustness.cpp` — 常時有効なロバスト性制限のテスト
 - `tests/core/test_sandbox.cpp` — サンドボックス固有テスト（`#ifdef JIEPP_SANDBOX` で囲まれ、通常ビルドではスキップ）

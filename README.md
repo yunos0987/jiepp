@@ -96,6 +96,14 @@ ctest --preset windows-clang-ninja-debug            # test
 
 Release プリセットでは clang の ThinLTO (`-O3 -flto=thin`) が有効になります。
 
+### 性能測定 / Profiling
+
+Release ビルドに `profiling` ターゲットを用意しています。詳細は [CONTRIBUTING.md の性能測定](CONTRIBUTING.md#性能測定--profiling) を参照してください。
+
+```powershell
+cmake --build --preset windows-clang-ninja-release --target profiling
+```
+
 ### VSCode での開発 / Development in VSCode
 
 VSCode CMake Tools 拡張を使用している場合、`CMakePresets.json` で定義されたプリセットが自動検出されます。ステータスバーから `windows-clang-ninja-debug` を選択して、configure・build・test をワンクリックで実行できます。
@@ -147,27 +155,13 @@ cat input.iec | jiepp -
 
 ## サンプル再生成 / Sample Regeneration
 
-`iec_61131-3/samples/` ディレクトリのサンプル `.piec` ファイルは、対応する `.iec` ファイルを jiepp で前処理した結果です。ソースを編集した場合は、以下の手順で再生成します:
-
-**リポジトリルートから実行:**
-
-```powershell
-.\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/example.iec -o iec_61131-3/samples/example.piec
-```
-
-`{#syspath 'lib'}` または `{#sinclude}` を使用するサンプルは、インクルードパスを明示的に追加します:
-
-```powershell
-.\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/include.iec -o iec_61131-3/samples/include.piec -I iec_61131-3/samples/lib
-```
-
-サンプルにおいて拡張子 `.piec` は「前処理済み IEC」を示し、`lib/` パスと `-I` フラグはマクロ・システムパスの検索に必要です。
+`iec_61131-3/samples/` ディレクトリのサンプル `.piec` ファイルは、対応する `.iec` ファイルを jiepp で前処理した結果です。ソースを編集した場合は再生成が必要です。手順は [CONTRIBUTING.md のサンプルの更新](CONTRIBUTING.md#サンプルの更新--updating-samples) を参照してください。
 
 ```powershell
 ctest --preset windows-clang-ninja-debug
 ```
 
-`tests/` ディレクトリには loader・macro・core・constfold・env・cli・support 系のテストが含まれます。
+`tests/` ディレクトリには loader・macro・core・constfold・env・jiepp・util 系のテストが含まれます。
 
 ## Linux / WSL でのビルド
 
