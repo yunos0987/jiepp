@@ -68,7 +68,7 @@ Token read_pragma_body(const std::string& text,
 
         // Actual newline
         if (is_nl_char(c)) {
-            if (!is_directive && (body.empty() || !is_ws_char(body.back()))) {
+            if (body.empty() || !is_ws_char(body.back())) {
                 body += ' ';
             }
             consume_one_nl(text, pos);

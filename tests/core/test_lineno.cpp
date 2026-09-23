@@ -40,7 +40,14 @@ c+a + b
             "<unknown location>:7.0: info: PP93: ''",
             "<unknown location>:11.0: info: PP93: ''",
         },
-        true,
+        // U4: a raw newline inside a directive is now whitespace, so it is
+        // no longer equivalent to a '$'-newline (which still joins with
+        // nothing): plain-newline substitution here would insert spaces
+        // between 'c', '+' and the parameter 'x' that the '$' form does
+        // not produce ("c+a + b" vs "c + a + b"). This case genuinely
+        // relies on the no-space '$' join, so plain-newline equivalence no
+        // longer holds and is intentionally not verified.
+        false,
     };
     SCOPED_TRACE(test_case.name);
     const std::string output = pp(test_case.input);
@@ -91,7 +98,11 @@ TEST_F(LinenoTest, Omacro) {
         // threshold; N = cur_before_run(0) + nl(8) - 1 = 7.
         "(*{#:7}*)\n;a+b;9",
         {"<unknown location>:9.0: info: PP93: ''"},
-        true,
+        // U4: raw newlines fold to whitespace, so a plain-newline rewrite
+        // of the '$\n$\n' joins here would produce "a + b" instead of the
+        // no-space "a+b" that '$' still produces; equivalence no longer
+        // holds (see the comment on LinenoTest.Directive above).
+        false,
     };
 
     const std::string output = pp(test_case.input);

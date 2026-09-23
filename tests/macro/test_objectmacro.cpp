@@ -18,7 +18,7 @@ TEST_F(ObjectMacroTest, Simple) {
     EXPECT_EQ("\n;2", pp("{#define N $\n2};N"));
     EXPECT_EQ("\n;N", pp("{#define N$\n2};N"));
     EXPECT_EQ("\n;2", pp("{#define N \n2};N"));
-    EXPECT_EQ("\n;N", pp("{#define N\n2};N"));
+    EXPECT_EQ("\n;2", pp("{#define N\n2};N"));
     EXPECT_EQ(";2;;3", pp("{#define N 2};N;{#define N 3};N"));
     EXPECT_EQ(Issue::Code::MACRO_REDEFINED, code());
 }

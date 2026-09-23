@@ -247,3 +247,113 @@ TEST_F(DirectiveTest, Undef) {
     EXPECT_EQ(";2;;N", pp("{#define N 2};N;{#undef   N   };N"));
     EXPECT_TRUE(empty());
 }
+
+// ---- U4: a raw newline inside a directive body is whitespace ----
+//
+// Previously a raw newline was appended as a space only inside an
+// *ordinary* pragma; inside a directive it was silently dropped, so e.g.
+// "{#define X a\nb}" concatenated into "ab" instead of joining with a
+// space. It now follows the same rule as an ordinary pragma: append one
+// space unless the body already ends in whitespace. A '$' immediately
+// before the newline still joins with nothing (unaffected, see
+// DollarNewlineStillJoins below).
+
+TEST_F(DirectiveTest, NewlineInDirectiveActsAsWhitespace) {
+    // LF, CRLF and CR all count as one whitespace-producing newline. Each
+    // leading "\n" is the swallowed directive-internal newline echoed as a
+    // blank line before the directive's own output (same mechanism as the
+    // pre-existing '$'-continuation tests in ObjectMacroTest.Simple).
+    EXPECT_EQ("\n[a b]", pp("{#define X a\nb}[X]"));
+    EXPECT_EQ("\n[a b]", pp("{#define X a\r\nb}[X]"));
+    EXPECT_EQ("\n[a b]", pp("{#define X a\rb}[X]"));
+    // A newline right after the macro name still separates name from body.
+    EXPECT_EQ("\n[1]", pp("{#define X\n1}[X]"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, NewlineAfterWhitespaceAddsNoExtraSpace) {
+    // A newline immediately following existing whitespace contributes no
+    // space of its own; the two spaces in the result both come from the
+    // literal spaces already present around the newline.
+    EXPECT_EQ("\n[a  b]", pp("{#define X a \n b}[X]"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, DollarNewlineStillJoins) {
+    // '$' immediately before a newline still joins with nothing (like a C
+    // backslash-newline continuation); U4 only changes the *raw* newline
+    // case, so this is unaffected.
+    EXPECT_EQ("\n[ab]", pp("{#define X a$\nb}[X]"));
+    EXPECT_EQ("\n[ab]", pp("{#define X a$\r\nb}[X]"));
+    EXPECT_EQ("\n[ab]", pp("{#define X a$\rb}[X]"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, NewlineInFunctionMacroParams) {
+    // A raw newline may split a function-like macro's parameter list.
+    EXPECT_EQ("\n[1+2]", pp("{#define F(a,\nb) a+b}[F(1,2)]"));
+    // A newline between the macro name and its '(' turns the '(' into
+    // ordinary replacement text, so F becomes an OBJECT macro (C parity).
+    EXPECT_EQ("\n[(a) a](a)", pp("{#define F\n(a) a}[F](a)"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, NewlineInIfExpression) {
+    EXPECT_EQ("\ny", pp("{#if true and\ntrue}y{#endif}"));
+    EXPECT_EQ("\ny", pp("{#if true\nand true}y{#endif}"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, NewlineInStringAndMessageDirectives) {
+    // {#string} emits its own content before the swallowed newline is
+    // echoed, so the "\n" trails here instead of leading.
+    EXPECT_EQ("'a b'\n", pp("{#string a\nb}"));
+    EXPECT_TRUE(empty());
+
+    EXPECT_EQ("\n", pp("{#warning a\nb}"));
+    EXPECT_EQ(Issue::Code::WARNING_MESSAGE, code());
+
+    EXPECT_THROW(pp("{#error a\nb}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::ERROR_MESSAGE, code());
+}
+
+TEST_F(DirectiveTest, NewlineSplitsDirectiveName) {
+    // A newline breaks up what would otherwise be one directive-name
+    // token, so '#def\nine' is looked up (and rejected) as unknown
+    // directive 'def', just like the plain unknown-directive case above.
+    EXPECT_NO_THROW(pp("{#def\nine X 1}"));
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
+}
+
+TEST_F(DirectiveTest, NewlineInDirectiveLineCountUnchanged) {
+    // The newline consumed while folding it to whitespace is still counted
+    // for line numbering, and is echoed as a blank line in the output --
+    // the same extra_nl mechanism already exercised by the pre-existing
+    // '$'-continuation tests in ObjectMacroTest.Simple.
+    EXPECT_EQ("\n2", pp("{#define X a\nb}__LINE__"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, NewlineInDirectiveDdModeReemitsSpace) {
+    // -dD re-emits the {#define} line using the normalized body (the raw
+    // newline already folded to a single space), not the original text.
+    Env env = setup();
+    env.set_dd_mode(true);
+    const std::string output = pp("{#define X a\nb}", env);
+    EXPECT_NE(std::string::npos, output.find("{#define X a b}")) << "output:\n" << output;
+}
+
+TEST_F(DirectiveTest, NewlineInDirectiveRedefinitionNoWarning) {
+    // Redefining X with a raw-newline body that normalizes to the same
+    // text as its previous definition must not raise MACRO_REDEFINED.
+    EXPECT_EQ(";a b;\n;a b", pp("{#define X a b};X;{#define X a\nb};X"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, NewlineInCommentFormDirectives) {
+    // The annotated '/*{' and line-comment '//{' directive forms fold a
+    // raw newline the same way as the brace form.
+    EXPECT_EQ("\n[a b]", pp("/*{#define X a\nb}*/[X]"));
+    EXPECT_EQ("\n\n[a b]", pp("//{#define X a\nb}\n[X]"));
+    EXPECT_TRUE(empty());
+}

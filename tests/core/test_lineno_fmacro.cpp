@@ -168,18 +168,22 @@ TEST_F(LinenoTest, Fmacro) {
             true,
         },
         {
+            // U4: a raw newline is now whitespace, so replacing '$\n' with
+            // a plain newline here would produce "* c" instead of the
+            // no-space "*c" that '$' still produces; plain-newline
+            // equivalence no longer holds.
             "dollar-newline-in-body-middle",
             "{#define F(x, y) x *$\ny};F(a + b, c + d);{#info}__LINE__",
             "\n;a + b *c + d;2",
             {"<unknown location>:2.0: info: PP93: ''"},
-            true,
+            false,
         },
         {
             "double-dollar-newline-in-body-middle",
             "{#define F(x, y) x *$\n$\ny};F(a + b, c + d);{#info}__LINE__",
             "\n\n;a + b *c + d;3",
             {"<unknown location>:3.0: info: PP93: ''"},
-            true,
+            false,
         },
         {
             "dollar-newline-at-body-start-duplicate",
@@ -216,9 +220,12 @@ d
 ;{#info}__LINE__)",
             // trailing run: 10 blank lines exceed the default 7-line
             // compaction threshold; N = cur_before_run(6) + nl(10) - 1 = 15.
+            // U4: the embedded '*$\ny$' segment above would gain a space
+            // ("* c") under plain-newline substitution; equivalence no
+            // longer holds (see dollar-newline-in-body-middle above).
             "\n\n\n\n\n;\na + b*c + d\n(*{#:15}*)\n;17",
             {"<unknown location>:17.0: info: PP93: ''"},
-            true,
+            false,
         },
         {
             "mixed-doubles-dollars-and-real-newlines",
@@ -255,9 +262,11 @@ d
 ;{#info}__LINE__)",
             // leading run: 8 blank lines -> N = 0 + 8 - 1 = 7.
             // trailing run: 20 blank lines -> N = cur_before_run(10) + nl(20) - 1 = 29.
+            // U4: same '*$\n$\ny$$' middle segment as above; equivalence no
+            // longer holds.
             "(*{#:7}*)\n;\n\na  +  b*c  +  d\n(*{#:29}*)\n;31",
             {"<unknown location>:31.0: info: PP93: ''"},
-            true,
+            false,
         },
     };
 
