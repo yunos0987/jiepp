@@ -15,8 +15,6 @@ public:
     void        pop_file();
     std::string current_file() const;
     int         num_of_files() const;
-    bool        contains_file(const std::string& filepath) const; // for cycle detection
-    std::string base_file() const;
     int         include_level() const;
 
     // ---- Syspaths ----

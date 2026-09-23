@@ -117,14 +117,6 @@ Token::HideSetPtr hs_empty() {
     return empty;
 }
 
-Token::HideSetPtr hs_with(const Token::HideSetPtr& base, const std::string& name) {
-    if (base && base->count(name))
-        return base;
-    auto s = std::make_shared<Token::HideSet>(base ? *base : Token::HideSet{});
-    s->insert(name);
-    return s;
-}
-
 Token::HideSetPtr hs_add_all(const Token::HideSetPtr& base, const Token::HideSet& names) {
     if (names.empty())
         return base ? base : hs_empty();

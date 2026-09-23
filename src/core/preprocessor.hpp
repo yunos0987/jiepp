@@ -20,8 +20,6 @@ std::vector<Token>& expand(const std::string& filepath,
                            const std::string& disppath);
 
 void preprocess(std::istream& input, std::ostream& output, Env& env);
-void preprocess(std::istream& input, const std::vector<std::string>& include_filepaths, std::ostream& output, Env& env);
-void preprocess(const std::string& input_filepath, const std::vector<std::string>& include_filepaths, std::ostream& output, Env& env);
 
 std::string preprocess_text(const std::string& input, Env& env);
 

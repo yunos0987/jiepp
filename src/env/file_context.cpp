@@ -33,20 +33,6 @@ int FileContext::num_of_files() const {
     return static_cast<int>(file_stack_.size());
 }
 
-bool FileContext::contains_file(const std::string& filepath) const {
-    const std::string p(Util::absolute_path(filepath));
-    for (const auto& f : file_stack_)
-        if (f == p)
-            return true;
-    return false;
-}
-
-std::string FileContext::base_file() const {
-    if (file_stack_.size() >= 2)
-        return file_stack_[1];
-    return "";
-}
-
 int FileContext::include_level() const {
     int n = static_cast<int>(file_stack_.size());
     return n > 0 ? n - 1 : 0;

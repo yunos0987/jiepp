@@ -85,6 +85,5 @@ std::vector<Token> ts_flatten(std::vector<Token> ts);
 
 // Hide-set helper functions (defined in token.cpp)
 Token::HideSetPtr hs_empty();
-Token::HideSetPtr hs_with(const Token::HideSetPtr& base, const std::string& name);
 Token::HideSetPtr hs_add_all(const Token::HideSetPtr& base, const Token::HideSet& names);
 Token::HideSetPtr hs_intersect(const Token::HideSetPtr& a, const Token::HideSetPtr& b);
