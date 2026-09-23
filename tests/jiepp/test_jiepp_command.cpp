@@ -238,6 +238,68 @@ TEST_F(JieppCommandTest, BoostPreprocessorIntegration) {
 #endif
 }
 
+// ─── B1: samples regeneration guard ────────────────────────────────────────
+
+TEST_F(JieppCommandTest, SamplesRegenerateIdentically) {
+    // Every checked-in iec_61131-3/samples/*.iec (except files starting
+    // with '_', which are includable fragments, not standalone samples)
+    // must regenerate byte-identical to its committed .piec with no -I --
+    // U1 makes {#syspath} relative to the containing file, so samples no
+    // longer need -I to find their own lib/ directory (see
+    // tools/pp_iec61131-3_samples.ps1). Output is written to a scratch
+    // directory outside the repo; nothing under iec_61131-3/samples is ever
+    // touched by this test.
+    fs::current_path(jiepp_root_dir());
+    fs::path samples_dir = jiepp_root_dir() / "iec_61131-3" / "samples";
+    fs::path out_dir = fs::temp_directory_path() / "jiepp_samples_test";
+    std::error_code ec;
+    fs::remove_all(out_dir, ec);
+    fs::create_directories(out_dir);
+
+    int checked = 0;
+    for (const auto& entry : fs::directory_iterator(samples_dir)) {
+        if (!entry.is_regular_file())
+            continue;
+        const fs::path& p = entry.path();
+        if (p.extension() != ".iec")
+            continue;
+        std::string stem = p.stem().generic_string();
+        if (stem.starts_with("_"))
+            continue;
+
+        fs::path out = out_dir / (stem + ".piec");
+        fs::path log = out_dir / (stem + ".log");
+        std::ofstream log_file(log, std::ios::binary);
+        Issue::initialize(log_file);
+
+        // Match how CONTRIBUTING.md / tools/pp_iec61131-3_samples.ps1 invoke
+        // jiepp: the input path is relative to the repo root (CWD), which
+        // also keeps the (*{#:0 '...'}*) line markers in the regenerated
+        // output identical to the committed golden's relative-path form.
+        JieppOptions opts;
+        opts.input_filepaths = {fs::relative(p, jiepp_root_dir()).generic_string()};
+        opts.output_filepath = out.generic_string();
+
+        int rc = jiepp_command(opts);
+        log_file.close();
+        ASSERT_EQ(0, rc) << "sample failed to regenerate without -I: " << p.generic_string();
+
+        fs::path golden = p;
+        golden.replace_extension(".piec");
+        std::ifstream gf(golden, std::ios::binary);
+        ASSERT_TRUE(static_cast<bool>(gf)) << "missing golden: " << golden.generic_string();
+        std::string expect((std::istreambuf_iterator<char>(gf)), std::istreambuf_iterator<char>());
+        std::ifstream af(out, std::ios::binary);
+        std::string actual((std::istreambuf_iterator<char>(af)), std::istreambuf_iterator<char>());
+        EXPECT_EQ(expect, actual) << "sample regenerated differently than its committed .piec: "
+                                   << p.generic_string();
+        ++checked;
+    }
+    EXPECT_GT(checked, 0) << "no iec_61131-3/samples/*.iec files were found to check";
+
+    fs::remove_all(out_dir, ec);
+}
+
 TEST_F(JieppCommandTest, IncludeWithSyspathDirectiveXTag) {
     run_e2e("include_with_syspath_directive/include_with_syspath_directive_x_tag", {I_DIR.generic_string()});
 }
