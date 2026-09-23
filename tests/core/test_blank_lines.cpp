@@ -287,6 +287,37 @@ TEST_F(BlankLinesTest, DDModeDefinesNotCompacted) {
     EXPECT_TRUE(empty());
 }
 
+// ---- F1: string literal immediately before a compacted blank run ---------
+
+TEST_F(BlankLinesTest, MarkerNumberAfterStringLiteral) {
+    // Regression for the push_string_token() zombie-WS-token bug (F1):
+    // a string literal is not itself a newline-bearing token, but a stray
+    // zombie WS/newline token left behind by the pre-fix code would still
+    // be summed into a later run's nl and cur bookkeeping, corrupting the
+    // compaction marker's line number.
+    //
+    // Derivation of N (compact_blank_lines' cur/nl bookkeeping, traced
+    // token-by-token): the file-entry marker's own trailing newline
+    // advances cur to 1 after "A;" is emitted (cur_before_run for the
+    // "A;\n" run = 0, nl = 1, verbatim, cur -> 1); "'x';"'s own newline
+    // merges with the run that follows it (no content token separates
+    // them), so cur_before_run for the big run = 2 (after "A;\n" (1) and
+    // "'x';"'s own semicolon, cur unchanged by ';' itself); nl = 9 (the
+    // "'x';" line's own terminator + 8 blank lines, all consecutive
+    // newline characters lexed as a single token); N = cur_before_run(2)
+    // + nl(9) - 1 = 10.
+    std::string input = "A;\n'x';\n" + std::string(8, '\n') + "__LINE__;\n";
+    const std::string output = pp_toplevel(input);
+    EXPECT_EQ(
+        "(*{#:0 'blank_lines_test.iec'}*)\n"
+        "A;\n"
+        "'x';\n"
+        "(*{#:10 'blank_lines_test.iec'}*)\n"
+        "11;\n",
+        output);
+    EXPECT_TRUE(empty());
+}
+
 // ---- C3: a comment inside a long blank region splits the run -------------
 
 TEST_F(BlankLinesTest, CommentInsideBlankRegionSplitsRun) {

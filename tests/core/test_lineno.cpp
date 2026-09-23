@@ -129,6 +129,49 @@ TEST_F(LinenoTest, DollarNewlineInStringLiteral) {
     EXPECT_EQ(expected_diags, actual_diags);
 }
 
+TEST_F(LinenoTest, LinenoAfterStringLiteral) {
+    // F1 regression: push_string_token() used to leave a zombie WS/newline
+    // token behind when the string literal was not the first token in the
+    // stream, double-counting the newline that precedes it and inflating
+    // every subsequent __LINE__. "A;\n'x';\n" is 2 physical lines, so
+    // __LINE__ on line 3 must read 3 (pre-fix it read 4).
+    const std::string input = "A;\n'x';\nX __LINE__;\n";
+    const std::string output = pp(input);
+    EXPECT_EQ("A;\n'x';\nX 3;\n", output);
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(LinenoTest, LinenoAfterStringLiteralWithBlankLine) {
+    // Drift scales with the duplicated token's own num_of_lines, not a
+    // flat +1: a blank line before the string literal means the newline
+    // token being duplicated carries num_of_lines = 2, so the pre-fix
+    // drift was +2 (line 6 reported instead of 4).
+    const std::string input = "A;\n\n'a';\nX __LINE__;\n";
+    const std::string output = pp(input);
+    EXPECT_EQ("A;\n\n'a';\nX 4;\n", output);
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(LinenoTest, LinenoAfterMergedStringLiteralUnaffected) {
+    // Adjacent string-literal merging ('a' 'b') was already safe pre-fix
+    // (the merge branch's own resize(scan - 1) happened to also discard
+    // the zombie slot); confirm it remains correct after the fix.
+    const std::string input = "A;\n'a' 'b';\nX __LINE__;\n";
+    const std::string output = pp(input);
+    EXPECT_EQ("A;\n'ab' ;\nX 3;\n", output);
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(LinenoTest, LinenoCumulativeDriftAcrossMultipleStringLiterals) {
+    // Cumulative-drift repro from the review report: each string literal
+    // preceded by a real newline (and not itself merging into a prior
+    // string) used to add +1 of drift; three literals must not compound.
+    const std::string input = "L1 __LINE__;\n'a';\nL3 __LINE__;\n'b';\nL5 __LINE__;\n";
+    const std::string output = pp(input);
+    EXPECT_EQ("L1 1;\n'a';\nL3 3;\n'b';\nL5 5;\n", output);
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(LinenoTest, AllLineno) {
     const auto test_case = TestCase{
         "all-token-kinds",

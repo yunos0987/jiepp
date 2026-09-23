@@ -204,6 +204,7 @@ void push_string_token(std::vector<Token>& result, int type, std::string str,
         trailing_ws.push_back(std::move(result[scan - 1]));
         --scan;
     }
+    result.resize(scan);
 
     if (scan > 0 && result[scan - 1].type == type) {
         Token merged = std::move(result[scan - 1]);

@@ -131,6 +131,40 @@ TEST_F(LexerLiteralTest, StringSequence2) {
     EXPECT_TRUE(empty());
 }
 
+// ---- zombie WS/newline token regression (F1) ----
+
+TEST_F(LexerLiteralTest, StringLiteralNotFirstTokenLeavesNoZombie) {
+    // push_string_token() pops the trailing WS/newline run off `result`
+    // into a local buffer and re-appends it; before the fix, the popped
+    // slots were never actually removed from `result` (no resize/erase),
+    // so a moved-from-but-still-WS-typed "zombie" token (empty text, but
+    // a real, nonzero num_of_lines carried over from Token's defaulted
+    // move) survived in the vector ahead of the freshly re-appended copy.
+    // This only manifests when the string literal is NOT the first token
+    // in the stream (i.e. there is a real trailing-WS run to pop), which
+    // is why the pre-existing DollarNewlineContinuationCountsLines test
+    // (string literal as the sole/first input token) never caught it.
+    const auto toks = ts("A;\n'x';");
+    int ws_tokens_before_string = 0;
+    int total_num_of_lines = 0;
+    bool seen_string = false;
+    for (const auto& t : toks) {
+        if (!seen_string && t.type == Token::WS)
+            ++ws_tokens_before_string;
+        if (t.type == Token::STRING)
+            seen_string = true;
+        total_num_of_lines += t.num_of_lines;
+    }
+    EXPECT_TRUE(seen_string);
+    // Exactly one newline token (from "A;\n") precedes the string literal;
+    // a zombie duplicate would make this 2.
+    EXPECT_EQ(1, ws_tokens_before_string);
+    // The stream contains exactly one physical newline; a zombie would
+    // double-count it.
+    EXPECT_EQ(1, total_num_of_lines);
+    EXPECT_TRUE(empty());
+}
+
 // ---- extended sequence cases ----
 
 TEST_F(LexerLiteralTest, StringSequence1Extended) {
