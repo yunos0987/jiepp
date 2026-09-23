@@ -988,7 +988,6 @@ CLI オプションのエラーは `jiepp:` をファイルパスの代わりに
 |--------|----------|--------|-----------|------|
 | PP01 | `FATAL` | SEVERE | A fatal error occurred. | 内部致命的エラー |
 | PP02 | `OPERATION_NOT_ALLOWED` | SEVERE | Operation not allowed | 禁止された操作（`defined` の再定義等） |
-| PP03 | `RECURSION_LIMIT_EXCEEDED` | SEVERE | Failed to set recursion limit | OS スタックサイズ設定の失敗 |
 | PP04 | `PARAMETER_VALUE_OVERFLOW` | SEVERE | Parameter value exceeds maximum (2^24) | パラメータ値が上限（2^24）を超過 |
 | PP10 | `FILE_ERROR` | ERROR | An error occurred with the file | ファイル操作エラー |
 | PP11 | `FILE_NOT_FOUND` | ERROR | No such file or directory | ファイルが見つからない |
@@ -1038,6 +1037,8 @@ CLI オプションのエラーは `jiepp:` をファイルパスの代わりに
 | PP91 | `ERROR_MESSAGE` | ERROR | #error | `{#error}` ディレクティブによるエラー |
 | PP92 | `WARNING_MESSAGE` | WARNING | #warning | `{#warning}` ディレクティブによる警告 |
 | PP93 | `INFO_MESSAGE` | INFO | #info | `{#info}` ディレクティブによる情報 |
+
+PP03 は欠番（廃止済み、再利用しない）。
 
 ---
 

@@ -46,6 +46,12 @@ TEST_F(IssueTest, Codename) {
     EXPECT_EQ("FATAL", Issue::codename(Issue::Code::FATAL));
 }
 
+TEST_F(IssueTest, RetiredCode3Unassigned) {
+    // PP03 was retired (U3); the enum value is no longer assigned to any
+    // code, so codename() falls through to the empty default.
+    EXPECT_EQ("", Issue::codename(Issue::Code(3)));
+}
+
 TEST_F(IssueTest, Initialize) {
     std::ostringstream local_stream;
     Issue::initialize(local_stream);

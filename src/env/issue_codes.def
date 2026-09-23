@@ -17,7 +17,7 @@ JIEPP_ISSUE_CODE(SUCCESS,                      0, INFO,    "Operation completed 
 // --- System/Fatal (01-09) ---
 JIEPP_ISSUE_CODE(FATAL,                        1, SEVERE,  "A fatal error occurred.")
 JIEPP_ISSUE_CODE(OPERATION_NOT_ALLOWED,        2, SEVERE,  "Operation not allowed")
-JIEPP_ISSUE_CODE(RECURSION_LIMIT_EXCEEDED,     3, SEVERE,  "Failed to set recursion limit")
+// 03: retired (was RECURSION_LIMIT_EXCEEDED, never raised). Do not reuse this number.
 JIEPP_ISSUE_CODE(PARAMETER_VALUE_OVERFLOW,     4, SEVERE,  "Parameter value exceeds maximum (2^24)")
 
 // --- File/IO (10-19) ---
