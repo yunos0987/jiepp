@@ -22,6 +22,20 @@ using namespace jiepp::expand_detail;
 
 namespace {
 
+// True if body starts with a run of one-or-more whitespace characters
+// (the lexer already collapses embedded newlines to a single space in
+// non-directive pragma bodies) immediately followed by '#'. Such a body
+// came from a '{'/'(*{'/'/*{'/'//{' opener followed by whitespace or a
+// newline and then '#': the lexer treated it as an ordinary pragma rather
+// than a directive (see lexer_pragma.cpp), and PP28 flags it here.
+bool has_whitespace_before_hash(const std::string& body) {
+    std::size_t i = 0;
+    while (i < body.size() &&
+           (body[i] == ' ' || body[i] == '\t' || body[i] == '\f' || body[i] == '\v'))
+        ++i;
+    return (i > 0) && (i < body.size()) && (body[i] == '#');
+}
+
 void err_set_lineno(int ln) {
     std::string fp = Issue::filepath();
     Issue::pop();
@@ -254,6 +268,10 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
     } else {
         ots.push_back(t);
         return;
+    }
+
+    if (has_whitespace_before_hash(body)) {
+        ISSUE(WHITESPACE_BEFORE_DIRECTIVE);
     }
 
     std::string expanded_body = preprocess_text(body, env);

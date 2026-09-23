@@ -36,7 +36,7 @@ Jiepp is a preprocessor for IEC 61131-3. It provides C-preprocessor-equivalent m
 {#directive_name arguments}
 ```
 
-- `{` と `#` の間にスペースは **許可されません**
+- `{` と `#` の間にスペース・タブ・改行（またはそれらの混在）を挟むと、ディレクティブとしては扱われず、通常の IEC プラグマとして扱われます（挟んだ空白はそのまま出力に保持されます）。この場合 `WHITESPACE_BEFORE_DIRECTIVE` (`PP28`) 警告が発行されます。コメント（例: `{(*c*)#define ...}`）を挟んだ場合も同様に通常のプラグマとして扱われますが、この場合は警告が発行されません。`(*{`, `/*{`, `//{` の各開始形式でも同じ規則が適用されます
 - 引数は閉じ `}` まで続きます
 - 複数行に跨ることが可能です（閉じ `}` が次の行にあってもよい）
 
@@ -968,6 +968,7 @@ CLI オプションのエラーは `jiepp:` をファイルパスの代わりに
 | PP25 | `ELIF_ERROR` | ERROR | Unexpected elif directive | `{#elif}` の位置エラー |
 | PP26 | `ELSE_ERROR` | ERROR | Unexpected else directive | `{#else}` の位置エラー |
 | PP27 | `ENDIF_ERROR` | ERROR | Unexpected endif directive | `{#endif}` の位置エラー |
+| PP28 | `WHITESPACE_BEFORE_DIRECTIVE` | WARNING | Whitespace between '{' and '#'; treated as an ordinary pragma | `{` と `#` の間に空白があり、通常のプラグマとして扱われた（§2。コメントを挟んだ場合はこの警告は出ない） |
 | PP30 | `INVALID_DEFINE_SYNTAX` | ERROR | Invalid define syntax | `{#define}` の構文エラー |
 | PP31 | `INVALID_STRINGIZING` | ERROR | Invalid stringizing (@) | 不正な文字列化演算子 |
 | PP32 | `INVALID_TOKEN_PASTING` | ERROR | Invalid token pasting (@@) | 不正なトークン連結演算子 |

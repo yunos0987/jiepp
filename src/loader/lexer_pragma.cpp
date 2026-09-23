@@ -12,10 +12,25 @@ Token read_pragma_body(const std::string& text,
 {
     const std::size_t start_pos = pos;
     size_t len = text.size();
-    while (pos < len && is_ws_char(text[pos]))
-        ++pos;
 
-    bool is_directive = (pos < len) && (text[pos] == '#');
+    // Look ahead across any run of whitespace/newlines. If it is immediately
+    // followed by '#', this is a directive-shaped body with intervening
+    // whitespace/newlines: treat it as an ordinary pragma (PP28, raised later
+    // at expansion) and rewind so the run is preserved verbatim in the body.
+    // Otherwise fall back to the legacy behaviour of only skipping plain
+    // whitespace (not newlines) before deciding.
+    std::size_t look = pos;
+    while (look < len && (is_ws_char(text[look]) || is_nl_char(text[look])))
+        ++look;
+
+    bool is_directive;
+    if (look > pos && look < len && text[look] == '#') {
+        is_directive = false; // ordinary pragma; pos stays at start_pos
+    } else {
+        while (pos < len && is_ws_char(text[pos]))
+            ++pos;
+        is_directive = (pos < len) && (text[pos] == '#');
+    }
 
     std::string body;
     bool closed = false;

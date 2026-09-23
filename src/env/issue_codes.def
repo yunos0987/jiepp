@@ -36,6 +36,7 @@ JIEPP_ISSUE_CODE(UNTERMINATED_CONDITIONAL,    24, ERROR,   "Unterminated conditi
 JIEPP_ISSUE_CODE(ELIF_ERROR,                  25, ERROR,   "Unexpected elif directive")
 JIEPP_ISSUE_CODE(ELSE_ERROR,                  26, ERROR,   "Unexpected else directive")
 JIEPP_ISSUE_CODE(ENDIF_ERROR,                 27, ERROR,   "Unexpected endif directive")
+JIEPP_ISSUE_CODE(WHITESPACE_BEFORE_DIRECTIVE, 28, WARNING, "Whitespace between '{' and '#'; treated as an ordinary pragma")
 
 // --- Macro (30-39) ---
 JIEPP_ISSUE_CODE(INVALID_DEFINE_SYNTAX,       30, ERROR,   "Invalid define syntax")

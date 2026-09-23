@@ -13,7 +13,7 @@ namespace {
 
 bool is_directive_ws(unsigned char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r'
-        || c == '\f' || c == '\v' || c == 0xa0;
+        || c == '\f' || c == '\v';
 }
 
 bool is_hex_digit(unsigned char c) {

@@ -9,7 +9,7 @@ namespace jiepp::detail {
 
 // Character classification
 inline bool is_ws_char(char c) {
-    return (c == ' ') || (c == '\t') || (c == '\f') || (c == '\v') || (static_cast<unsigned char>(c) == 0xa0);
+    return (c == ' ') || (c == '\t') || (c == '\f') || (c == '\v');
 }
 
 inline bool is_nl_char(char c) { return (c == '\n') || (c == '\r'); }
