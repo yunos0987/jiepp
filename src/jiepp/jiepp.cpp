@@ -262,15 +262,43 @@ int jiepp_command(const JieppOptions& opts)
         for (const auto& sp : opts.syspaths)
             env.add_syspath(sp);
 
-        // -MD/-MMD: auto-derive dep file if not explicitly set by -MF
+        // G: -MD/-MMD auto-derive dep file if not explicitly set by -MF,
+        // matching the gcc *driver*'s own rule (gcc manual: "If [-o] is
+        // given, uses its argument but with a suffix of .d, otherwise it
+        // takes the name of the input file, removes any directory
+        // components and suffix, and applies a .d suffix"), verified
+        // empirically against GNU cpp 5.3.0 (see unit G's report):
         std::optional<std::string> effective_dep_file = opts.dep_file;
         if ((opts.MD || opts.MMD) && !effective_dep_file.has_value()) {
-            if (opts.output_filepath.has_value() && !output_is_stdout(opts)) {
+            if (opts.output_filepath.has_value()) {
+                // "uses its argument [literally], but with a suffix of
+                // .d" -- including the "-o -" quirk: gcc does NOT
+                // special-case "-" here the way it does for the main
+                // output, so -o - creates a file literally named "-.d" in
+                // the current directory (confirmed with GNU cpp 5.3.0).
+                // jiepp matches this rather than carving out its own
+                // exception, since a stray "-.d" is exactly what a user
+                // asking for -MD without -MF and -o - should expect from
+                // gcc's own documented rule.
                 effective_dep_file = fs::path(*opts.output_filepath).replace_extension(".d").generic_string();
             } else if (!opts.input_filepaths.empty() && opts.input_filepaths[0] != "-") {
-                effective_dep_file = fs::path(opts.input_filepaths[0]).replace_extension(".d").generic_string();
+                // "takes the name of the input file, removes any
+                // directory components and suffix, and applies a .d
+                // suffix" -- written to the current directory, *not* the
+                // input file's own directory (confirmed with GNU cpp
+                // 5.3.0: "cpp -MD subdir/in.c" from a different CWD writes
+                // "in.d" there, not "subdir/in.d"). fs::path::stem() already
+                // strips both the directory and the last extension.
+                effective_dep_file = fs::path(opts.input_filepaths[0]).stem().string() + ".d";
             } else {
-                // stdin with no -o and no -MF: cannot write a separate dep file
+                // stdin with no -o and no -MF: cannot write a separate dep
+                // file. NOTE (unit G): GNU cpp 5.3.0 does *not* error here
+                // -- it applies the same rule as any other input, treating
+                // "-" as the "file name" to strip (no directory, no
+                // suffix), and so silently writes "-.d" to the current
+                // directory instead. jiepp intentionally keeps its own
+                // long-standing PP13 diagnostic rather than replicating
+                // that quirk; see unit G's report for the rationale.
                 ISSUE(INVALID_COMMAND, "-MD/-MMD requires -MF or -o when reading from stdin");
             }
         }

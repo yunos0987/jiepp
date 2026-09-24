@@ -1973,23 +1973,132 @@ TEST_F(JieppCommandTest, OutputDashMeansStdout) {
         << "-o - must not create a file literally named '-'";
 }
 
-TEST_F(JieppCommandTest, OutputDashWithMDDerivesDepFileFromInput) {
-    // With -o - and -MD (no -MF), the dep file name must be derived from the
-    // input file's basename, like gcc, not from the literal "-" output arg.
+TEST_F(JieppCommandTest, MDFromStdinWithoutMFOrOutputStillRejected) {
+    // G: jiepp intentionally keeps rejecting -MD/-MMD from stdin with
+    // neither -MF nor -o (PP13) -- verified that GNU cpp 5.3.0 does NOT
+    // error in this exact case: it applies its own "strip directory and
+    // suffix from the input name" rule to the literal placeholder "-" and
+    // silently writes a file named "-.d" to the current directory instead.
+    // The coordinator's instruction was to keep this diagnostic unless gcc
+    // clearly differs, and report the difference rather than chase it; see
+    // unit G's report for the full rationale (an unconditional, unnamed
+    // "-.d" appearing in the user's CWD on every stdin+-MD invocation seems
+    // more likely to surprise than to help).
     fs::current_path(jiepp_root_dir());
-    auto tmpdir = fs::temp_directory_path();
-    fs::path src = tmpdir / "o_dash_md.iec";
+    JieppOptions opts;
+    opts.input_filepaths = {"-"};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ(Issue::Code::INVALID_COMMAND, code());
+}
+
+TEST_F(JieppCommandTest, MDWithoutOutputDerivesDepFileInCwdNotInputDirectory) {
+    // G: without -o, gcc's own -MD rule strips the input's directory
+    // component (not just its suffix) and resolves the result against the
+    // *current* directory, not the input file's own directory -- verified
+    // against GNU cpp 5.3.0 (see unit G's report): "cpp -MD subdir/in.c"
+    // run from a different CWD writes "in.d" there, not "subdir/in.d". Run
+    // with CWD pointed at a scratch directory (restored afterward) so
+    // nothing lands in the repo.
+    fs::path prev_cwd = fs::current_path();
+    fs::path scratch_dir = fs::temp_directory_path() / "jiepp_md_subdir_test";
+    std::error_code ec;
+    fs::remove_all(scratch_dir, ec);
+    fs::create_directories(scratch_dir / "subdir");
+    fs::current_path(scratch_dir);
+
+    fs::path src = scratch_dir / "subdir" / "in.iec";
     {
         std::ofstream f(src);
         f << "VAR x: INT; END_VAR\n";
     }
-    fs::path dep_out = tmpdir / "o_dash_md.d"; // auto-derived from input stem
-    fs::remove(dep_out);
-    fs::path dash_marker = fs::current_path() / "-";
-    std::error_code rm_ec;
-    fs::remove(dash_marker, rm_ec);
-    fs::path dash_dep_marker = fs::current_path() / "-.d";
-    fs::remove(dash_dep_marker, rm_ec);
+    fs::path dep_in_cwd = scratch_dir / "in.d";
+    fs::path dep_in_subdir = scratch_dir / "subdir" / "in.d"; // must NOT be used
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    std::ostringstream captured;
+    std::streambuf* saved_cout = std::cout.rdbuf(captured.rdbuf());
+    int rc = jiepp_command(opts);
+    std::cout.rdbuf(saved_cout);
+
+    fs::current_path(prev_cwd);
+
+    ASSERT_EQ(0, rc);
+    EXPECT_TRUE(fs::exists(dep_in_cwd))
+        << "expected the auto-derived dep file in the current directory: " << dep_in_cwd.generic_string();
+    EXPECT_FALSE(fs::exists(dep_in_subdir))
+        << "the dep file must not be written next to the input file";
+
+    fs::remove_all(scratch_dir, ec);
+}
+
+TEST_F(JieppCommandTest, MDWithOutputNoSuffixAppendsDotD) {
+    // G: -o with no suffix at all (e.g. "-o out") still gets ".d" appended
+    // wholesale rather than, say, being rejected or left as "out" -- matches
+    // GNU cpp 5.3.0's plain "argument, with a suffix of .d" rule (verified
+    // empirically; see unit G's report).
+    fs::path prev_cwd = fs::current_path();
+    fs::path scratch_dir = fs::temp_directory_path() / "jiepp_md_nosuffix_test";
+    std::error_code ec;
+    fs::remove_all(scratch_dir, ec);
+    fs::create_directories(scratch_dir);
+    fs::current_path(scratch_dir);
+
+    fs::path src = scratch_dir / "in.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path out_path = scratch_dir / "out"; // no suffix
+    fs::path dep_out = scratch_dir / "out.d";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    int rc = jiepp_command(opts);
+    fs::current_path(prev_cwd);
+
+    ASSERT_EQ(0, rc);
+    EXPECT_TRUE(fs::exists(out_path));
+    EXPECT_TRUE(fs::exists(dep_out)) << "expected 'out.d': " << dep_out.generic_string();
+
+    fs::remove_all(scratch_dir, ec);
+}
+
+TEST_F(JieppCommandTest, OutputDashWithMDDerivesDepFileFromLiteralDashArgument) {
+    // G: -o - combined with -MD (no -MF) does NOT fall back to deriving the
+    // dep name from the input, unlike a bare "no -o at all" -- gcc's own
+    // rule ("if -o is given, use its argument [literally], with a suffix of
+    // .d") does not special-case "-" here the way it does for the main
+    // output. Empirically verified against GNU cpp 5.3.0 (see unit G's
+    // report): "cpp -MD in.c -o -" creates a file literally named "-.d" in
+    // the current directory. Run with CWD pointed at a scratch directory
+    // (restored afterward), not the repo root, since that stray "-.d" is
+    // exactly the kind of file this test must not leave behind.
+    fs::path prev_cwd = fs::current_path();
+    fs::path scratch_dir = fs::temp_directory_path() / "jiepp_dash_md_test";
+    std::error_code ec;
+    fs::remove_all(scratch_dir, ec);
+    fs::create_directories(scratch_dir);
+    fs::current_path(scratch_dir);
+
+    fs::path src = scratch_dir / "o_dash_md.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dash_marker = scratch_dir / "-";
+    fs::path dash_dep_marker = scratch_dir / "-.d";
+    fs::path input_derived_dep_marker = scratch_dir / "o_dash_md.d"; // must NOT be used
 
     JieppOptions opts;
     opts.input_filepaths = {src.generic_string()};
@@ -2002,12 +2111,17 @@ TEST_F(JieppCommandTest, OutputDashWithMDDerivesDepFileFromInput) {
     int rc = jiepp_command(opts);
     std::cout.rdbuf(saved_cout);
 
+    fs::current_path(prev_cwd);
+
     ASSERT_EQ(0, rc);
-    EXPECT_TRUE(fs::exists(dep_out))
-        << "expected dep file derived from input basename: " << dep_out.generic_string();
-    EXPECT_FALSE(fs::exists(dash_dep_marker))
-        << "-o - must not derive a dep file named '-.d'";
-    EXPECT_FALSE(fs::exists(dash_marker));
+    EXPECT_TRUE(fs::exists(dash_dep_marker))
+        << "-o - -MD (no -MF) should create '-.d' in the current directory, matching GNU cpp 5.3.0";
+    EXPECT_FALSE(fs::exists(input_derived_dep_marker))
+        << "-o - must not fall back to deriving the dep name from the input";
+    EXPECT_FALSE(fs::exists(dash_marker))
+        << "-o - must still never create a file literally named '-' for the main output";
+
+    fs::remove_all(scratch_dir, ec);
 }
 
 // ─── Unit E: continue-after-error mode (U2) ───────────────────────────────
@@ -2236,13 +2350,27 @@ TEST_F(JieppCommandTest, AbortedMidExpandWithOutputFileWritesNothing) {
 // gets the same partial-output treatment as E4/E4a (gcc has already
 // flushed its own output before either of those can fail).
 TEST_F(JieppCommandTest, DepFileOpenFailureAfterBuildPrintsFullOutputToStdout) {
-    fs::current_path(jiepp_root_dir());
-    fs::path src = write_temp_iec("e4b_dep_stdout", "BEFORE;\nAFTER;\n");
-    // Auto-derived dep file name is the input's stem with ".d": make that
-    // path unopenable by occupying it with a directory of the same name.
-    fs::path dep_out = fs::temp_directory_path() / "e4b_dep_stdout.d";
+    // G: without -o, the auto-derived dep path is the input's stem (no
+    // directory) with ".d", resolved against the *current directory* --
+    // not the input file's own directory (verified against GNU cpp 5.3.0;
+    // see unit G's report) -- so this test runs with CWD pointed at a
+    // scratch directory (restored afterward) rather than assuming the dep
+    // file lands next to the input under temp_directory_path().
+    fs::path prev_cwd = fs::current_path();
+    fs::path scratch_dir = fs::temp_directory_path() / "jiepp_e4b_dep_stdout_test";
     std::error_code ec;
-    fs::remove_all(dep_out, ec);
+    fs::remove_all(scratch_dir, ec);
+    fs::create_directories(scratch_dir);
+    fs::current_path(scratch_dir);
+
+    fs::path src = scratch_dir / "e4b_dep_stdout.iec";
+    {
+        std::ofstream f(src);
+        f << "BEFORE;\nAFTER;\n";
+    }
+    // Occupy the auto-derived dep path (CWD/"e4b_dep_stdout.d") with a
+    // directory of the same name so opening it as a file fails (PP10).
+    fs::path dep_out = scratch_dir / "e4b_dep_stdout.d";
     fs::create_directory(dep_out, ec);
     ASSERT_TRUE(fs::is_directory(dep_out));
 
@@ -2254,12 +2382,14 @@ TEST_F(JieppCommandTest, DepFileOpenFailureAfterBuildPrintsFullOutputToStdout) {
     int rc = 0;
     std::string out = run_capturing_stdout(opts, rc);
 
+    fs::current_path(prev_cwd);
+
     EXPECT_EQ(1, rc);
     EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
     EXPECT_NE(std::string::npos, out.find("AFTER"))  << out;
     EXPECT_TRUE(fs::is_directory(dep_out)) << "the blocking directory must be left alone, not removed";
 
-    fs::remove_all(dep_out, ec);
+    fs::remove_all(scratch_dir, ec);
 }
 
 TEST_F(JieppCommandTest, DepFileOpenFailureAfterBuildWithOutputFileWritesNothing) {
