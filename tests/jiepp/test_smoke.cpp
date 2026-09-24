@@ -126,6 +126,38 @@ TEST_F(SmokeTest, StdinPipe) {
         << "stdout: " << r.out;
 }
 
+// ---- 5b. stdin display name is "<stdin>", never the literal "-" ----
+//
+// H: gcc/clang both report "<stdin>" for __FILE__/line markers when the
+// input is stdin, whether that is spelled as an explicit "-" argument or as
+// no input argument at all (confirmed with GNU cpp 5.3.0 and clang). Cover
+// both spellings so a regression that special-cases only one of them is
+// still caught.
+
+TEST_F(SmokeTest, StdinDisplayNameIsStdinNotDash) {
+    fs::path input = tmp_dir_ / "stdin_dispname.iec";
+    write_file(input, "name := __FILE__;\n");
+
+    auto r = run("- -P", input.generic_string());
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("'<stdin>'"), std::string::npos)
+        << "stdout: " << r.out;
+    EXPECT_EQ(r.out.find("'-'"), std::string::npos)
+        << "stdout: " << r.out;
+}
+
+TEST_F(SmokeTest, StdinDisplayNameIsStdinNotDashWithNoInputArg) {
+    fs::path input = tmp_dir_ / "stdin_dispname_noarg.iec";
+    write_file(input, "name := __FILE__;\n");
+
+    auto r = run("-P", input.generic_string());
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("'<stdin>'"), std::string::npos)
+        << "stdout: " << r.out;
+    EXPECT_EQ(r.out.find("'-'"), std::string::npos)
+        << "stdout: " << r.out;
+}
+
 // ---- 6. -D option ----
 
 TEST_F(SmokeTest, DOption) {

@@ -325,13 +325,24 @@ int jiepp_command(const JieppOptions& opts)
                     expand(include_filepath, Loader::LoadType::INCLUDE, ots, env, include_disppath);
                 }
 
+                // H: gcc/clang both display "<stdin>" for the sole input
+                // being "-" (no input argument at all is the same case, see
+                // the branch below) -- confirmed with GNU cpp 5.3.0 and
+                // clang: `echo x | cpp -`/`echo x | clang -E -x c -` both
+                // report __FILE__ and line markers as "<stdin>", never the
+                // literal "-". Without this check, dispath fell through to
+                // fs::path("-").generic_string() == "-", which then leaked
+                // into __FILE__, __BASE_FILE__, __FILE_NAME__ (all backed by
+                // the same Issue location-stack entry pushed below) and
+                // every line marker/diagnostic location for a stdin input.
+                // --disppath still overrides this, same as for a real file.
                 std::string dispath;
                 if (opts.disppath.has_value())
                     dispath = fs::path(*opts.disppath).generic_string();
-                else if (!opts.input_filepaths.empty())
-                    dispath = fs::path(opts.input_filepaths[0]).generic_string();
-                else
+                else if (opts.input_filepaths.empty() || ((opts.input_filepaths.size() == 1) && (opts.input_filepaths[0] == "-")))
                     dispath = "<stdin>";
+                else
+                    dispath = fs::path(opts.input_filepaths[0]).generic_string();
 
                 if (opts.input_filepaths.empty() || ((opts.input_filepaths.size() == 1) && (opts.input_filepaths[0] == "-"))) {
                     env.push_file("<stdin>");
