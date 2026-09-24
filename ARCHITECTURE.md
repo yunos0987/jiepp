@@ -1,171 +1,143 @@
-﻿# Architecture / アーキテクチャ
+# Architecture / アーキテクチャ
 
 ## English Summary
 
-Jiepp is a cross-platform IEC 61131-3 preprocessor written in C++23. It transforms IEC source files by handling directives such as `#define`, `#include`, `#if`/`#elif`/`#else`/`#endif`, function-like macros with variadic arguments, constant folding, and `#pragma`-style output. The architecture is layered into six tiers: **Loader** (lexer + directive parser), **Macro** (symbol expansion + built-in macros), **Core** (directive handling + include resolution + conditional compilation), **ConstFold** (compile-time expression evaluation via Flex/Bison), **Env** (environment split into Symtab/FileContext/Param mixins), and **CLI** (command-line interface + option parsing). The project builds on both Windows (Clang + Ninja) and Linux/WSL (Clang + Make) via CMake presets, with vcpkg managing dependencies (GoogleTest).
+Jiepp is a cross-platform (Windows / Linux+WSL) IEC 61131-3 preprocessor written in C++23, built via CMake presets with vcpkg-managed dependencies (GoogleTest). It handles `#define`, `#include`, `#if`/`#elif`/`#else`/`#endif`, function-like macros with variadic arguments, constant folding, and `#pragma`-style output, across seven tiers — **Loader**, **Macro**, **Core**, **ConstFold**, **Env**, **Util**, **CLI** — detailed below in Japanese. Build and run commands live in [`README.md`](README.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md); this document covers internal structure only.
 
 ---
 
-本ドキュメントは Jiepp の内部構造を開発者向けに説明します。
+本書は Jiepp の内部構造を開発者向けに説明する。ビルド・実行コマンドは [`README.md`](README.md) と [`CONTRIBUTING.md`](CONTRIBUTING.md) を参照（重複記載しない）。
 
 ## プラットフォームとビルド
 
-Jiepp は **Windows** および **Linux / WSL** のマルチプラットフォームに対応しています。CMake プリセットによりプラットフォームごとのコンパイラ・ビルドシステムの違いを吸収します。
+Jiepp は **Windows** と **Linux / WSL** に対応し、CMake プリセットがコンパイラ・ビルドシステムの差を吸収する。
 
 | プラットフォーム | コンパイラ | ビルドシステム | 主なプリセット |
-|----------------|-----------|--------------|---------------|
+|---|---|---|---|
 | Windows | Clang (`clang++`) | Ninja | `windows-clang-ninja-debug`, `windows-clang-ninja-release` |
 | Linux / WSL | Clang (`clang++`) | Make | `linux-makefiles-debug`, `linux-makefiles-release` |
-| Linux (サーバー配布) | Clang (`clang++`) | Make | `linux-portable-release` (完全静的リンク) |
+| Linux（サーバー配布） | Clang (`clang++`) | Make | `linux-portable-release`（完全静的リンク） |
 
-### ビルド方法
+configure/build/test コマンドは [`README.md`](README.md#ビルドとテスト--build--test) と [`CONTRIBUTING.md`](CONTRIBUTING.md#build--test) を参照。サンドボックスビルド (`-DJIEPP_SANDBOX=ON`) は「[サンドボックスモード](#サンドボックスモード-jiepp_sandbox)」を参照。
 
-**Windows (PowerShell):**
+### 依存管理・言語標準・コンパイラ要件
 
-```powershell
-git submodule update --init --recursive
-.\vcpkg\bootstrap-vcpkg.bat -disableMetrics
-cmake --workflow --preset windows-clang-ninja-debug      # Debug (configure + build + test)
-cmake --workflow --preset windows-clang-ninja-release     # Release (ThinLTO)
-```
-
-**Linux / WSL:**
-
-```bash
-git submodule update --init --recursive
-./vcpkg/bootstrap-vcpkg.sh -disableMetrics
-cmake --workflow --preset linux-makefiles-debug           # Debug (configure + build + test)
-cmake --workflow --preset linux-makefiles-release          # Release (ThinLTO)
-cmake --workflow --preset linux-portable-release           # Release (完全静的リンク・サーバー配布向け)
-```
-
-`--workflow` は configure・build・test を一括実行します。個別に実行する場合:
-
-```bash
-cmake --preset <preset-name>          # configure
-cmake --build --preset <preset-name>  # build
-ctest --preset <preset-name>          # test
-```
-
-### 依存管理
-
-外部依存は [vcpkg](https://github.com/microsoft/vcpkg) で管理しています。vcpkg は git サブモジュールとしてリポジトリに登録されており、`vcpkg.json` マニフェストで依存パッケージ（Google Test）を宣言します。`CMakePresets.json` の `CMAKE_TOOLCHAIN_FILE` が vcpkg ツールチェーンを自動設定します。
-
-### 言語標準・コンパイラ要件
+外部依存は [vcpkg](https://github.com/microsoft/vcpkg) で管理する。vcpkg は git サブモジュールで、`vcpkg.json` が依存パッケージ（Google Test）を宣言する。`CMakePresets.json` の `CMAKE_TOOLCHAIN_FILE` が vcpkg ツールチェーンを自動設定する。
 
 - **C++23** (`-std=c++23`)
-- Clang 17 以上（Windows / Linux 共通）。公式プリセットは Clang を使用。Linux では GCC 13 以上でもビルド可能だが、プリセット外の手動設定が必要
-- Release ビルドでは ThinLTO (`-O3 -flto=thin`) が有効
+- Clang 17 以上（Windows / Linux 共通、公式プリセット）。Linux では GCC 13 以上でも可だが、プリセット外の手動設定が必要
+- Release ビルドは ThinLTO (`-O3 -flto=thin`) 有効
 - `linux-portable-release` は `-static` で libc/libstdc++/libgcc を静的リンク
 
 ## モジュール構成
 
-`src/` 配下は機能ごとにディレクトリに分かれています。
+実装は **Loader / Macro / Core / ConstFold / Env / Util / CLI** の 7 層。`src/` はこの単位でディレクトリが分かれる。
 
 | ディレクトリ | 主なファイル | 役割 |
-|-------------|-------------|------|
-| `jiepp/` | `main.cpp`, `jiepp.hpp/cpp`, `option.hpp/cpp` | CLI エントリポイント。引数解析・前処理実行・入出力制御 |
-| `env/` | `env.hpp/cpp`, `issue.hpp/cpp`, `issue_codes.def` | プリプロセッサ状態 (`Env`) の管理。`Env` は 3 つの Mixin 基底クラスの多重継承で構成される: `Symtab`（マクロシンボルテーブル, `symtab.hpp/cpp`。`undef()`/再定義で置き換えられた `Macro` は破棄せず `retired_` に退避し、実行中に得た `Macro*` を常に有効に保つ。この退避は 1 回の実行の寿命に限られ、リークではない）、`FileContext`（インクルードスタック・検索パス・行番号・依存関係追跡・`once_files_`（`{#pragma once}` 用処理済みパスセット）, `file_context.hpp/cpp`）、`Param`（リミット値・プラグマスタイル・トークンキャッシュ・`dd_mode_`（`-dD` フラグ）, `param.hpp/cpp`, `param_constants.hpp`）。エラー/イシュー出力 (`Issue`) も担当 |
-| `loader/` | `lexer.hpp/cpp`, `token.hpp/cpp`, `directive_parser.hpp/cpp`, `directive_token.cpp`, `loader.hpp/cpp` | 入力テキストのトークン化・ディレクティブ解析。字句解析ヘルパー (`lexer_comment.cpp`, `lexer_pragma.cpp`, `lexer_literal.cpp`, `lexer_helpers.hpp/cpp`) および `.def` マクロ定義を含む。`token.hpp` の `DirectiveToken` は各ディレクティブをビットマスクで分類し、`MASK_OUTPUT` は自身のハンドラが `ots`（出力トークン列）へ直接書き込むディレクティブ（`{#include}` 等）を示す。マクロ引数収集中に見つかった `MASK_OUTPUT` ディレクティブは、囲むマクロ呼び出しの展開より先に出力が発生してしまうため拒否される。`{` と `#` の間に空白・改行・コメントがあるとディレクティブではなく通常のプラグマとして扱われ、空白/改行の場合は `PP28`（`WHITESPACE_BEFORE_DIRECTIVE`）警告が出る（`lexer_pragma.cpp`） |
-| `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp`, `line_compaction.hpp/cpp` | プリプロセッサ本体。トークン列に対してディレクティブ処理・マクロ展開を行う。`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む。`line_compaction` は展開完了後の `ots`（出力トークン列）に対する後処理パスで、連続空行を圧縮する（`--max-blank-lines`、既定 7 行） |
-| `macro/` | `macro.hpp/cpp` | `Macro` クラス。オブジェクト形式マクロ・関数形式マクロの定義を表現する |
-| `constfold/` | `constfold.hpp/cpp`, `constfold_internal.hpp`, `constfold_scanner.cpp`, `constfold_parser.cpp` | `#if` / `#elif` 式の定数畳み込み評価。算術・比較・論理・ビット演算およびビットシフト (`<<`, `>>`) をサポート |
-| `tools/perftest/` | `perftest.py`, `cases/<name>/<name>.py` | `src/` の外側にある性能測定ハーネス。CMake の `profiling` ターゲットから `jiepp` バイナリを直接起動して計測する（詳細は CONTRIBUTING.md「性能測定 / Profiling」参照） |
+|---|---|---|
+| `jiepp/` | `main.cpp`, `jiepp.hpp/cpp`, `option.hpp/cpp` | CLI: 引数解析・前処理実行・入出力制御 |
+| `env/` | `env.hpp/cpp`, `issue.hpp/cpp`, `issue_message.hpp/cpp`, `issue_codes.def` | `Env` 状態管理と診断出力 |
+| `loader/` | `lexer.hpp/cpp`, `token.hpp/cpp`, `directive_parser.hpp/cpp`, `directive_token.cpp`, `loader.hpp/cpp` | トークン化・ディレクティブ解析 |
+| `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp`, `line_compaction.hpp/cpp` | ディレクティブ処理・マクロ展開本体（`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む） |
+| `macro/` | `macro.hpp/cpp`, `macro_builtin.cpp` | `Macro` クラスと組み込みオブジェクトマクロ |
+| `constfold/` | `constfold.hpp/cpp`, `constfold_internal.hpp`, `constfold.l`, `constfold.y` | `#if` / `#elif` 式の定数畳み込み |
+| `util/` | `path.hpp/cpp`, `text.hpp/cpp`, `iec_61131-3.hpp/cpp` | `Util` 名前空間の低レベルヘルパー: パス正規化 (`absolute_path()`, `canonical_path()`)、トリム (`ltrim_view()`/`rtrim_view()`/`trim_view()`)、IEC 文字列エンコード (`encode_iec_string()`) |
+| `tools/perftest/` | `perftest.py`, `cases/<name>/<name>.py` | 性能測定ハーネス（`src/` 外）。CMake `profiling` ターゲットが `jiepp` を直接起動して計測（詳細は CONTRIBUTING.md「性能測定 / Profiling」） |
 
-`Loader::fullpath()` はインクルードパス解決の結果を `Util::canonical_path()`（symlink 解決・OS 正規化）で正規化して返す。この正規化済みパスは、`{#pragma once}` の処理済みファイル集合・`Loader::tokens()` のトークンキャッシュのキー・`-M`/`-MM` 依存関係の重複排除のいずれにも共通して使われる同一性キーである。
+`Loader::fullpath()` はインクルードパス解決結果を `Util::canonical_path()`（symlink 解決・OS 正規化）で正規化する。この正規化済みパスは `{#pragma once}` の処理済みファイル集合・`Loader::tokens()` のトークンキャッシュキー・`-M`/`-MM` 依存関係の重複排除に共通で使う同一性キー。
 
-### CLI 構成
+### env/ の内部構成
 
-```
-jiepp/
-  main.cpp          — main() のみ。parse_args() を呼び jiepp_command() に委譲
-  jiepp.hpp/cpp     — jiepp_command(): JieppOptions に基づく前処理の実行
-  option.hpp/cpp    — JieppOptions 構造体 + DepMode enum + parse_args() + define_macro_option()
-```
+`Env`（`env/env.hpp`）はプリプロセッサ全体の状態を保持し、3 つの Mixin 基底クラスの多重継承で構成される。
 
-`jiepp_command` のシグネチャ:
-```cpp
-int jiepp_command(const JieppOptions& opts);
-```
+- `Symtab`（`symtab.hpp/cpp`）— マクロシンボルテーブル。`undef()`/再定義で置き換えられた `Macro` は `retired_` に退避し破棄しない（取得済み `Macro*` を有効に保つため。1 回の実行内の退避でリークではない）
+- `FileContext`（`file_context.hpp/cpp`）— インクルードスタック・検索パス・行番号・依存関係追跡・`once_files_`（`{#pragma once}` の処理済みパスセット）
+- `Param`（`param.hpp/cpp`, `param_constants.hpp`）— リミット値・プラグマスタイル・トークンキャッシュ・`dd_mode_`（`-dD` フラグ）
 
-`JieppOptions` は CLI オプションを集約した構造体:
-```cpp
-struct JieppOptions {
-    std::vector<std::string> input_filepaths;
-    std::optional<std::string> output_filepath;
-    std::vector<std::string> define_macros;    // -D
-    std::vector<std::string> undef_macros;     // -U
-    std::vector<std::string> include_files;    // -include
-    std::vector<std::string> syspaths;         // -I
-    std::optional<int> max_include_depth;
-    std::optional<int> max_expansion_depth;
-    std::optional<int> max_if_nesting;
-    std::optional<std::string> pp_output_pragma_style;
-    std::optional<int> recursion_limit;
-    bool remove_comments = false;              // -nC
-    bool dM = false;                           // -dM
-    bool dD = false;                           // -dD
-    bool no_line_markers = false;              // -P
-    bool MD = false;                           // -MD (auto dep file + preprocess)
-    bool MMD = false;                          // -MMD (auto dep file + preprocess, no syspaths)
-    bool silent = false;                       // --silent
-    bool suppress_warnings = false;            // -w
-    bool werror = false;                       // -Werror
-    DepMode dep_mode = DepMode::NONE;          // -M / -MM
-    std::optional<std::string> dep_file;       // -MF
-    std::optional<std::string> dep_target;     // -MT
-};
-```
+診断出力（`Issue`, `IssueMessage`）も `env/` が担当（詳細は「[エラー処理 (Issue)](#エラー処理-issue)」）。
 
-### constfold ディレクトリ構成
+### loader/ の内部構成
 
-```
-constfold/
-  constfold.hpp             — 公開 API: eval_const_expr()
-  constfold.cpp             — eval_const_expr 実装。生成された parser/scanner の定義をヘッダ経由で利用
-  constfold_internal.hpp    — 型定義（TKind, CfTok, ValueKind, BitKind, CfValue, bit_mask）
-  constfold.l               — Flex ソース → ビルド時に constfold_scanner.cpp を生成
-  constfold.y               — Bison ソース → ビルド時に constfold_parser.cpp を生成
-```
+字句解析ヘルパー: `lexer_comment.cpp`, `lexer_pragma.cpp`, `lexer_literal.cpp`, `lexer_helpers.hpp/cpp`。`.def` マクロ定義も含む。
 
-生成された constfold_scanner.cpp と constfold_parser.cpp は CMakeLists.txt の FLEX_TARGET / BISON_TARGET により生成され、`JIEPP_SOURCES` に追加される別の翻訳単位として処理されます。constfold.cpp は生成された parser ヘッダをインクルードして、パーサー機能を利用します。
+- `token.hpp` の `DirectiveToken` はディレクティブをビットマスクで分類する。`MASK_OUTPUT` は自身のハンドラが `ots`（出力トークン列）へ直接書き込むディレクティブ（`{#include}` 等）を示し、マクロ引数収集中に見つかると囲むマクロ展開より先に出力してしまうため拒否される
+- 未知のディレクティブ名（`DirectiveToken::name_to_kind()` が解決できないキー）は `directive_token.cpp` の `classify_unknown_directive()` が PP45 (`UNKNOWN_DIRECTIVE`, WARNING) / PP46 (`INVALID_DIRECTIVE_NAME`, ERROR) に振り分けるが、実際に診断を出すのは `core/expand.cpp` の `dispatch_directive()` 1 箇所のみ（有効なコード範囲内のときだけ）
+- `{` と `#` の間に空白・改行・コメントがあると通常のプラグマとして扱われる。空白/改行なら `PP28`（`WHITESPACE_BEFORE_DIRECTIVE`）警告（`lexer_pragma.cpp`）
+- `Token`（`token.hpp`）はトークン 1 個を表す構造体（`text`, `kind` 等のフィールド）
 
-演算子の優先順位は [`SPECIFICATION.md` §6.2](SPECIFICATION.md#62-演算子の優先順位--operator-precedence) を参照。
+### core/ の内部構成
+
+`preprocessor.hpp/cpp` が主要 API を提供する。
+
+- `setup()` — 組み込みマクロ・型範囲/マスクマクロ・バージョンマクロを登録した `Env` を作る。CLI (`jiepp_command()`) の呼び出しエントリポイント
+- `expand()`（ファイルパス版オーバーロード） — `Loader::fullpath()`/`Loader::tokens()` で対象ファイルを解決・読み込み、トークン版 `expand()` に委譲（利用元は「データフロー」参照）
+- `expand()`（トークン列版オーバーロード） — Prosser のアルゴリズムに基づく展開の主ループ。トークン列を受けマクロ展開・ディレクティブ処理して出力トークン列を返す
+- `preprocess()` — ストリーム/ファイルパス向け簡易 API。CLI は使わず、主に `tests/test_helper.hpp` が利用
+- `preprocess_text()` — 文字列を `preprocess()` に通してマクロ展開後の文字列を返す。ディレクティブのオペランド再展開に使う（詳細は「データフロー」）
+- `dump_macros()` — `env` のユーザー定義マクロを `{#define ...}` 形式で書き出す。`-dM` の実体
+
+### macro/ の内部構成
+
+`Macro` クラス（`macro.hpp/cpp`）はオブジェクト形式・関数形式マクロの定義を表現する（パラメータ一覧・本体トークン列を保持）。`macro_builtin.cpp` は `__LINE__`/`__FILE__`/`__COUNTER__`/`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__` 等、値が動的に決まる組み込みオブジェクトマクロを実装する。`TimeStampMacro`/`BaseFileMacro`/`FileNameMacro` はファイルシステムにアクセスするため `JIEPP_SANDBOX` ビルドでは空文字列を返すスタブに切り替わる。
+
+### jiepp/ の内部構成
+
+- `main.cpp` — `parse_args()` を呼び `jiepp_command()` を実行するエントリポイント
+- `jiepp.hpp/cpp` — `int jiepp_command(const JieppOptions& opts)`: `JieppOptions` に基づく前処理の実行
+- `option.hpp/cpp` — `JieppOptions` 構造体 + `DepMode` enum + `parse_args()` + `define_macro_option()`
+
+`main.cpp` は `main()` 本体に加え次を担う。
+
+- `--recursion-limit` のスタック確保: Windows は `CreateThread()` にサイズを渡しワーカースレッドで `jiepp_command()` を実行、POSIX は `setrlimit(RLIMIT_STACK, ...)` 後に直接呼ぶ
+- Windows の標準出力バイナリモード化 (`_setmode(_fileno(stdout), _O_BINARY)`)。CRT 既定のテキストモード（`\n`→`\r\n`）を無効化し、リダイレクト出力を `-o FILE`（バイナリで開く）と一致させる
+- 最上位の例外処理: `Issue::Exception` は診断済みのため黙って終了コード 1、他の `std::exception`/`catch (...)` は `jiepp: error: PP01: ...` を出して終了コード 1。ワーカースレッド関数 `jiepp_thread_func` も同じ 3 段の catch を持つ（スレッド境界を越えて C++ 例外を伝播できないため）
+
+`JieppOptions`（`src/jiepp/option.hpp`）は CLI オプションを集約した構造体。主なフィールド（詳細はヘッダ参照）:
+
+- 入出力: `input_filepaths`, `output_filepath`, `disppath`（表示用パス。既定値・stdin 時の挙動は [SPECIFICATION.md §13](SPECIFICATION.md#13-cli-リファレンス--cli-reference)）
+- マクロ: `define_macros`(`-D`), `undef_macros`(`-U`), `include_filepaths`(`-include`), `syspaths`(`-I`)
+- 上限値: `max_include_depth`, `max_expansion_depth`, `max_if_nesting`, `max_blank_lines`, `recursion_limit`
+- 依存関係: `dep_mode`(`-M`/`-MM`), `dep_file`(`-MF`), `dep_target`(`-MT`), `MD`/`MMD`(`-MD`/`-MMD`)
+- 出力形式: `pp_output_pragma_style`, `no_line_markers`(`-P`), `dM`(`-dM`), `dD`(`-dD`), `remove_comments`(`-nC`)
+- 診断: `silent`, `suppress_warnings`(`-w`), `werror`(`-Werror`)
+
+### constfold/ の内部構成
+
+- `constfold.hpp` — 公開 API: `eval_const_expr()`（`#if` 式文字列を評価して int64_t 値を返す）
+- `constfold.cpp` — `eval_const_expr` 実装。生成された parser/scanner の定義をヘッダ経由で利用
+- `constfold_internal.hpp` — 型定義（`ValueKind`, `BitKind`, `CfValue`, `bit_mask`）
+- `constfold.l` — Flex ソース → ビルド時に `constfold_scanner.cpp` を生成
+- `constfold.y` — Bison ソース → ビルド時に `constfold_parser.cpp` を生成
+
+対応する演算子・優先順位は [`SPECIFICATION.md` §6.2](SPECIFICATION.md#62-演算子の優先順位--operator-precedence)、型規則は [§6.3](SPECIFICATION.md#63-型の規則--type-rules) を参照。生成された `constfold_scanner.cpp`/`constfold_parser.cpp` はリポジトリに存在せず、CMakeLists.txt の `FLEX_TARGET`/`BISON_TARGET` がビルド時に生成し `JIEPP_SOURCES` に別の翻訳単位として追加する。
 
 `__has_include` は `expand_ctrl.cpp` の `resolve_has_include()` でマクロ展開前に raw 文字列レベルで 1/0 に解決される。`"path"` 形式は INCLUDE 検索、`<path>` 形式は SINCLUDE 検索を使用。
 
-### Issue Code X-macro
+## エラー処理 (Issue)
 
-`src/env/issue_codes.def` に全エラーコードを定義。5フィールド X-macro パターン:
+`Issue`（`src/env/issue.hpp/cpp`）が診断出力と例外送出を一元管理する。
+
+- 診断は `Issue::happen(code, context)` で発生させる。`ISSUE(CODE, ...)` は `Issue::happen(Issue::Code::CODE, ...)` の短縮形で、呼び出し位置の `std::source_location` を自動で渡す（Debug ビルドは末尾に `@file:line` を付ける。`issue_message.cpp` の `#ifndef NDEBUG` 分岐）。`[[noreturn]]` な `Issue::fatal()`／`FATAL()` は `happen(Code::FATAL, ...)` の後 `throw std::logic_error("unreachable")` する
+- 例外送出の有無は `continue_mode_` フラグで 2 通り。既定（`false`、`preprocess()`/`expand()` 等が依存）は `SEVERE` と `blockings_`（既定で全 `ERROR`/`SEVERE`）内の `ERROR`、`-Werror` 格上げの `WARNING` で常に `Issue::Exception` を送出する。継続モード（`true`。`Issue::ContinueMode` RAII ガード、`jiepp_command()` のみ使用）は中断コード（`SEVERE` + `continue_abort_codes_`。`jiepp_command()` は PP10〜14, 60, 61 を渡す）だけが例外を送出し、他は `error_count_` を加算して続行する。件数・`--silent`/`{#ignore}`・終了コードと出し分けは [SPECIFICATION.md §16](SPECIFICATION.md#16-エラーコード一覧--issue-code-reference) を参照
+- `Issue::CliMode` という別の RAII ガードは、ソースファイルがまだスタックに積まれていない CLI 段階（`main()`／`parse_args()`／`jiepp_command()` 冒頭）の診断を `Issue::CLI_LOCATION`（`"jiepp"`）で「`jiepp: error: PPxx: message`」形式（`line.column` なし）に出す。文字列入力 API の `"<unknown location>:N.0"` 形式とは別物で両者は独立して共存する
+
+エラーコード定義（Issue Code X-macro）: `src/env/issue_codes.def` に全エラーコードを 4 フィールドの X-macro で定義する。
 
 ```cpp
 // JIEPP_ISSUE_CODE(name, id, severity, message)
 JIEPP_ISSUE_CODE(FILE_NOT_FOUND, 11, ERROR, "No such file or directory")
 ```
 
-`Issue::Code` enum と `Issue::Severity` enum を生成。ID は `PP` + 2桁ゼロパディングで表示（例: `PP11`）。
-番号帯でカテゴリをグループ化:
-
-| 範囲 | カテゴリ |
-|------|---------|
-| 01–09 | System/Fatal |
-| 10–19 | File/IO |
-| 20–29 | Lexical/Syntax |
-| 30–39 | Macro |
-| 40–49 | Directive/Operand |
-| 50–59 | Expression |
-| 60–69 | Runtime/Limit |
-| 70–79 | CLI/Option |
-| 80–89 | （予約） |
-| 90–99 | Message passthrough |
+`Issue::Code`/`Issue::Severity` enum を生成する。ID は `PP` + 2桁ゼロパディング（例: `PP11`）。番号帯によるカテゴリ分け・コード一覧は [SPECIFICATION.md §16](SPECIFICATION.md#16-エラーコード一覧--issue-code-reference) を参照。
 
 ## 組み込みマクロの責務分離
 
-GCC/cpp モデルに準拠し、組み込みマクロの定義責務をプリプロセッサとコンパイラで分離する。
+GCC/cpp 同様、組み込みマクロの定義責務をプリプロセッサとコンパイラで分離する。
 
 | 責務 | マクロ例 | 定義元 | GCC での対応 |
-|------|---------|--------|-------------|
-| プリプロセッサ識別 | `_JIEPP`, `_JIEPP_VER` 等 | jiepp 自身 (`builtin_macros.def`) | `__GNUC__` — cpp 自身が定義 |
+|---|---|---|---|
+| プリプロセッサ識別 | `_JIEPP` | jiepp 自身 (`builtin_macros.def`) | `__GNUC__` — cpp 自身が定義 |
+| プリプロセッサのバージョン | `_JIEPP_VER`, `_JIEPP_FULL_VER`, `_JIEPP_VERSION` | jiepp 自身（`core/preprocessor.cpp` の `setup()` が CMake のプロジェクトバージョンから生成） | — |
 | ターゲット型情報 | `__SINT_MIN__`, `__UINT_MAX__` 等 | jiepp 自身 (`builtin_macros.def`) | `__SIZEOF_INT__` 等 — cpp が定義 |
 | コンパイラ識別 | `_JIECC`, `_JIECC_VER` 等 | jiecc が `-D` で渡す | gcc が cpp を呼ぶ際に渡すフラグ |
 | ベンダー固有 | `_OMRON` 等 | 呼び出し元が `-D` で渡す | ユーザー定義 (`-D`) |
@@ -174,83 +146,31 @@ GCC/cpp モデルに準拠し、組み込みマクロの定義責務をプリプ
 
 ## データフロー
 
-```mermaid
-flowchart TD
-    A["入力テキスト\n(ファイル or stdin)"] --> B["lexer\niec3_pp_tokens()"]
-    B --> C["Token 列"]
-    C --> D["core::expand()\nディレクティブ処理 / マクロ展開"]
-    D -- "#include / #sinclude" --> E["expand_file()\nファイル読み込み → 再帰"]
-    E --> B
-    D -- "#if / #elif 式評価" --> F["constfold\n定数畳み込み"]
-    F --> D
-    D -- "マクロ参照" --> G["Env\nシンボルテーブル参照"]
-    G --> D
-    D --> H["出力トークン列"]
-    H --> H2["line_compaction\n空行圧縮 (post-pass)"]
-    H2 --> I["出力テキスト\n(ファイル or stdout)"]
-```
+入力（ファイル or stdin）→ `lexer` → `core::expand()`（ディレクティブ処理・マクロ展開）→ `line_compaction`（空行圧縮）→ 出力（ファイル or stdout）。処理の流れ:
 
-### 処理の流れ（概略）
-
-1. `jiepp/main.cpp` が `parse_args()` で引数を解析して `jiepp_command()` を呼ぶ
-2. `jiepp_command()` が `Env` を構築し、`expand()` を直接呼ぶ（ファイルパスを取るオーバーロードでトップレベル入力ファイルを展開するか、標準入力の場合はトークン列を取るオーバーロードを呼ぶ）。`core/preprocessor.hpp` にはストリーム入出力向けの簡易 API `preprocess()` も存在するが、CLI (`jiepp_command()`) はこれを使わず `expand()` を直接呼んでいる（`preprocess()` は主に `tests/test_helper.hpp` から利用される）
-3. 入力は `lexer` でトークン化され `Token` 列になる
-4. `core/expand.cpp` がトークン列を走査し:
-   - ディレクティブ（`#define`, `#if` など）は `directive_parser` → `directive_handlers` が処理
-   - `#include` / `#sinclude` は `expand_file()` が再帰的に読み込む
-   - `#if` の条件式は `constfold` が評価（`__has_include` は事前に解決される）
-   - マクロ参照は `Env` のシンボルテーブルを参照して展開
-5. `expand()` が返した `ots`（出力トークン列）全体に対して `jiepp::compact_blank_lines()`（`core/line_compaction.cpp`）が後処理パスとして 1 回走り、8 行以上連続する空行を行マーカー 1 行に圧縮する（`-P` 指定時は空行を全除去）。上限は `--max-blank-lines`（既定 7）
-6. 出力トークン列をテキストに変換して書き出す（`output_filepath` が指定されていればファイルへ、なければ stdout へ）
-
-## 主要な型・関数
-
-| シンボル | 場所 | 概要 |
-|---------|------|------|
-| `Env` | `env/env.hpp` | プリプロセッサ全体の状態。マクロ辞書・インクルードスタック・パラメータを一元管理 |
-| `Token` | `loader/token.hpp` | トークン 1 個を表す構造体 (`text`, `kind` など) |
-| `Macro` | `macro/macro.hpp` | マクロ 1 件の定義（パラメータ一覧・本体トークン列） |
-| `expand()`（ファイルパス版オーバーロード） | `core/preprocessor.hpp` | `Loader::fullpath()`/`Loader::tokens()` で対象ファイルを解決・読み込み、トークン版 `expand()` に委譲する。`#include` / `#sinclude` および CLI のトップレベル入力ファイル展開はこちらを呼ぶ |
-| `expand()`（トークン列版オーバーロード） | `core/preprocessor.hpp` | Prosser のアルゴリズムに基づく展開の主ループ。トークン列を受け取りマクロ展開・ディレクティブ処理を行って出力トークン列を返す |
-| `preprocess()` | `core/preprocessor.hpp` | ストリーム/ファイルパスを受け取ってプリプロセス出力を書き出す簡易 API。CLI (`jiepp_command()`) は使用せず、主に `tests/test_helper.hpp` から利用される |
-| `eval_const_expr()` | `constfold/constfold.hpp` | `#if` 式文字列を評価して int64_t 値を返す |
-| `Issue` | `env/issue.hpp` | エラー/イシュー発生時の出力・例外送出ユーティリティ。`-w` (警告抑制) / `-Werror` (警告→エラー昇格) サポート。`output()` は非スロー版出力メソッド |
-| `jiepp_command()` | `jiepp/jiepp.hpp` | 前処理の実行エントリポイント |
-| `parse_args()` | `jiepp/option.hpp` | CLI 引数解析 |
+1. `jiepp/main.cpp` が `parse_args()` で引数を解析して `jiepp_command()` を呼ぶ（スタック確保・標準出力のバイナリモード化は「jiepp/」節参照）
+2. `jiepp_command()` が `Env` を構築し、`Issue::ContinueMode` ガードの下で `-include` の展開とトップレベル入力の `expand()`（ファイルパス版。標準入力ならトークン列版）を呼ぶ
+3. `core/expand.cpp` がトークン列を走査する。ディレクティブは `directive_parser` → `directive_handlers` が、`#include`/`#sinclude` は `handle_include()`（`directive_handlers.cpp`。再帰的に `expand()` を呼ぶ）が、`#if` 条件式は `constfold` が（`__has_include` は事前解決）処理する。ディレクティブのオペランド（`#include` のパス、`#if` の条件式文字列、`{#error}`/`{#warning}` のメッセージ文字列）は `preprocess_text()` が 1 往復再展開する（内部で `expand()` を呼ぶ。使用元: `directive_handlers.cpp`/`expand.cpp`/`expand_ctrl.cpp`）。マクロ参照は `Env` のシンボルテーブルで展開する
+4. `-include`/トップレベル入力の展開が中断コード（`SEVERE` または PP10〜14, 60, 61）で止まった場合、および中断せず終えても `Issue::error_count_ >= 1` の場合の、標準出力・`-o`・依存ファイルの出し分けと終了コードは [SPECIFICATION.md §16](SPECIFICATION.md#16-エラーコード一覧--issue-code-reference) を参照（`jiepp_command()`/`src/jiepp/jiepp.cpp` が実施。中断時はそれまでの `ots` に空行圧縮をかけたうえで判定する）
+5. 中断も未処理エラーもなければ `jiepp::compact_blank_lines()`（`core/line_compaction.cpp`）が `ots` 全体に後処理として 1 回走り、8 行以上連続する空行を行マーカー 1 行に圧縮する（`-P` 指定時は空行を全除去。上限は `--max-blank-lines`、既定 7）
+6. 出力トークン列をテキスト化して書き出す（`output_filepath` 指定時はファイルへ、なければ stdout へ）。依存ファイル（`-MF`/`-MD`/`-MMD` 自動命名）は `-o` を開く前に書く
 
 ## サンドボックスモード (`JIEPP_SANDBOX`)
 
-Web サーバー上で信頼できない入力を処理する場合に使用するコンパイル時セキュリティモード。
-無効化されるディレクティブ・情報漏洩防止策・ランタイム制限の詳細は [`SPECIFICATION.md` §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode) を参照。
+Web サーバーで信頼できない入力を処理する際のコンパイル時セキュリティモード。無効化ディレクティブ・情報漏洩防止・ランタイム制限は [`SPECIFICATION.md` §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode)、ビルドコマンドは [`README.md`](README.md#サンドボックスモード--sandbox-mode) を参照。
 
-### ビルド方法
-
-任意のプリセットに `-DJIEPP_SANDBOX=ON` を追加します:
-
-```powershell
-# Windows (開発・テスト用)
-cmake --preset windows-clang-ninja-debug -DJIEPP_SANDBOX=ON
-cmake --build --preset windows-clang-ninja-debug
-```
-
-```bash
-# Linux (サーバー配布用: 完全静的リンク + サンドボックス)
-cmake --preset linux-portable-release -DJIEPP_SANDBOX=ON
-cmake --build --preset linux-portable-release
-```
-
-### 設計方針
+設計方針:
 
 - **コンパイル時フラグ**: `#ifdef JIEPP_SANDBOX` で分岐。ランタイムオーバーヘッドなし
-- **Process-per-request 必須**: flex/bison がグローバル状態を使用するため、リクエストごとにプロセスを起動する必要がある
-- **入出力サイズ制限は呼び出し元で管理**: jiepp 本体ではなく PHP CGI (`jiecc.php`) 等が制限する
+- ファイルシステムにアクセスする組み込みマクロ（`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__`。実装は `TimeStampMacro`/`BaseFileMacro`/`FileNameMacro`、`macro/macro_builtin.cpp`）は空文字列を返すスタブに切り替わる
+- 運用要件（process-per-request 必須の理由・入出力サイズ制限の管理元）は [SPECIFICATION.md §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode) の「運用要件」参照
 
 ### テスト構成
 
 `tests/` 配下は `src/` と同じモジュール構成:
 
 | ディレクトリ | 内容 |
-|-------------|------|
+|---|---|
 | `loader/` | 字句解析・トークン化・ディレクティブ解析のテスト |
 | `macro/` | マクロ定義・展開のテスト |
 | `core/` | プリプロセッサ統合テスト・サンドボックステスト |
@@ -259,7 +179,7 @@ cmake --build --preset linux-portable-release
 | `jiepp/` | CLI 入出力・エンドツーエンドテスト |
 | `util/` | `Util` 名前空間（トリム・パス正規化・IEC 文字列エンコード等）のテスト |
 
-共有ヘルパー（`run_e2e()` 等の e2e アサーション補助）は `tests/` 直下の `test_helper.hpp` にあり、専用サブディレクトリは持たない。
+共有ヘルパー（`run_e2e()` 等の e2e アサーション補助）は `tests/test_helper.hpp`（専用サブディレクトリなし）。
 
 - `tests/env/test_robustness.cpp` — 常時有効なロバスト性制限のテスト
 - `tests/core/test_sandbox.cpp` — サンドボックス固有テスト（`#ifdef JIEPP_SANDBOX` で囲まれ、通常ビルドではスキップ）
