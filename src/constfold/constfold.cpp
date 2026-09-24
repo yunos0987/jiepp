@@ -32,6 +32,12 @@ int64_t eval_const_expr(const std::string& expr) {
         cf::CfParser parser(result);
         rc = parser.parse();
         cf_delete_buffer(buf);
+    } catch (const CfTypeError&) {
+        // A4: EXPR_TYPE_ERROR (PP50) was reported (or suppressed via
+        // {#ignore}) inside the grammar action; either way, recover here
+        // instead of letting the internal signal escape uncaught.
+        cf_delete_buffer(buf);
+        return 0;
     } catch (...) {
         cf_delete_buffer(buf);
         throw;

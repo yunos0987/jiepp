@@ -50,7 +50,31 @@ static CfValue cast_int_literal_to_dword(const CfValue& v) {
 
 [[noreturn]] static void type_error() {
     ISSUE(EXPR_TYPE_ERROR);
-    throw std::logic_error("unreachable");
+    // Reached when EXPR_TYPE_ERROR (PP50) is suppressed via {#ignore}, in
+    // which case Issue::happen() above returns instead of throwing.
+    // CfTypeError (not Issue::Exception) lets eval_const_expr() recognize
+    // this specific case and recover instead of an unrelated exception type
+    // escaping uncaught.
+    throw CfTypeError();
+}
+
+// A3: perform +, -, *, and unary negation via uint64_t so that wraparound on
+// signed overflow (e.g. INT64_MIN - 1) is well-defined two's-complement
+// arithmetic instead of undefined behavior.
+static int64_t wrap_add(int64_t a, int64_t b) {
+    return static_cast<int64_t>(static_cast<std::uint64_t>(a) + static_cast<std::uint64_t>(b));
+}
+
+static int64_t wrap_sub(int64_t a, int64_t b) {
+    return static_cast<int64_t>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(b));
+}
+
+static int64_t wrap_mul(int64_t a, int64_t b) {
+    return static_cast<int64_t>(static_cast<std::uint64_t>(a) * static_cast<std::uint64_t>(b));
+}
+
+static int64_t wrap_neg(int64_t a) {
+    return static_cast<int64_t>(static_cast<std::uint64_t>(0) - static_cast<std::uint64_t>(a));
 }
 
 static CfValue cast_to_bool(const CfValue& v) {
@@ -231,12 +255,12 @@ add_expr:
     bor_expr                          { $$ = $1; }
   | add_expr CF_PLUS  bor_expr        {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int)
-            $$ = CfValue::int_value($1.ival + $3.ival);
+            $$ = CfValue::int_value(wrap_add($1.ival, $3.ival));
         else type_error();
     }
   | add_expr CF_MINUS bor_expr        {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int)
-            $$ = CfValue::int_value($1.ival - $3.ival);
+            $$ = CfValue::int_value(wrap_sub($1.ival, $3.ival));
         else type_error();
     }
   ;
@@ -301,18 +325,26 @@ mul_expr:
     unary_expr                        { $$ = $1; }
   | mul_expr CF_STAR  unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int)
-            $$ = CfValue::int_value($1.ival * $3.ival);
+            $$ = CfValue::int_value(wrap_mul($1.ival, $3.ival));
         else type_error();
     }
   | mul_expr CF_SLASH unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
             if ($3.ival == 0) { ISSUE(INVALID_EXPRESSION, "division by zero"); $$ = CfValue::int_value(0); }
+            // A3: INT64_MIN / -1 overflows the quotient, which traps in
+            // hardware (SIGFPE-style crash) even though two's-complement
+            // wraparound defines the result as INT64_MIN itself.
+            else if ($3.ival == -1) $$ = CfValue::int_value(wrap_neg($1.ival));
             else $$ = CfValue::int_value($1.ival / $3.ival);
         } else type_error();
     }
   | mul_expr CF_MOD   unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
             if ($3.ival == 0) { ISSUE(INVALID_EXPRESSION, "modulo by zero"); $$ = CfValue::int_value(0); }
+            // A3: same overflow trap as division by -1; the remainder is
+            // mathematically 0 but the hardware idiv instruction used for
+            // '%' still traps before producing it.
+            else if ($3.ival == -1) $$ = CfValue::int_value(0);
             else $$ = CfValue::int_value($1.ival % $3.ival);
         } else type_error();
     }
@@ -325,7 +357,7 @@ unary_expr:
         else type_error();
     }
   | CF_MINUS unary_expr               {
-        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(-$2.ival);
+        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(wrap_neg($2.ival));
         else if ($2.kind == ValueKind::Float) $$ = CfValue::float_value(-$2.fval);
         else type_error();
     }
@@ -368,9 +400,9 @@ cast_value:
   | CF_INT                            { $$ = $1; }
   | CF_FLOAT                          { $$ = $1; }
   | CF_MINUS cast_value               {
-        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(-$2.ival);
+        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(wrap_neg($2.ival));
         else if ($2.kind == ValueKind::Float) $$ = CfValue::float_value(-$2.fval);
-        else $$ = CfValue::int_value(-cast_scalar_to_int($2));
+        else $$ = CfValue::int_value(wrap_neg(cast_scalar_to_int($2)));
     }
   | CF_PLUS  cast_value               { $$ = $2; }
   ;

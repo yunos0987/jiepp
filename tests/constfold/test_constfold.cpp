@@ -115,6 +115,49 @@ TEST_F(ConstfoldTest, BaseNValidCases) {
     EXPECT_TRUE(empty());
 }
 
+// ---- A1: '_' may only separate two digits in a based literal ----
+
+TEST_F(ConstfoldTest, BaseNInternalUnderscoreValid) {
+    EXPECT_NE(0LL, eval_const_expr("16#ff_ff = 65535"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, BaseNTrailingUnderscoreInvalid) {
+    // "16#ff_" only matches "16#ff" as a based literal; the leftover "_" is
+    // re-lexed as an identifier, so the parser reports a syntax error
+    // (INVALID_EXPRESSION / PP52) rather than accepting the trailing '_'.
+    EXPECT_THROW(eval_const_expr("16#ff_"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, BaseNDoubleUnderscoreInvalid) {
+    // "2#1__0" only matches "2#1" as a based literal (a lone '_' cannot
+    // start the "(_?[0-9A-Za-z])*" group); the leftover "__0" is re-lexed as
+    // an identifier, producing the same syntax error as above.
+    EXPECT_THROW(eval_const_expr("2#1__0"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+    EXPECT_TRUE(empty());
+}
+
+// ---- A2: based literals accumulate in uint64_t; report overflow past 2^64-1 ----
+
+TEST_F(ConstfoldTest, BaseNMaxUint64Valid) {
+    // 2^64-1 (all-Fs, base 16) is exactly representable; it round-trips
+    // through int64_t as -1 (two's-complement bit pattern).
+    EXPECT_NE(0LL, eval_const_expr("16#ffff_ffff_ffff_ffff = -1"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, BaseNOverflowPastUint64Max) {
+    // 16^16 == 2^64 exceeds the 2^64-1 limit and must be reported instead of
+    // silently wrapping (the previous int64_t accumulation had no overflow
+    // check at all).
+    EXPECT_THROW(eval_const_expr("16#1_0000_0000_0000_0000"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+    EXPECT_TRUE(empty());
+}
+
 // ---- Division and modulo by zero ----
 
 TEST_F(ConstfoldTest, DivisionByZero) {

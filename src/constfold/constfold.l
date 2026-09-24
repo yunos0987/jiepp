@@ -6,6 +6,7 @@
 #include "env/issue.hpp"
 extern CfValue cflval;  // defined in constfold_parser.cpp (bison %code section)
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <stdexcept>
@@ -28,7 +29,11 @@ ALPHA   [A-Za-z_]
 "\\or\\"    { return cf::CfParser::token::CF_LOR; }
 "\\xor\\"   { return cf::CfParser::token::CF_LXOR; }
 
-[0-9]+#[+-]?[0-9A-Za-z][0-9A-Za-z_]* {
+[0-9]+#[+-]?[0-9A-Za-z](_?[0-9A-Za-z])* {
+    // A1: '_' may only separate two digits, so a trailing '_' (e.g.
+    // "16#ff_") or a doubled '_' (e.g. "2#1__0") is not part of this match;
+    // the leftover characters are re-lexed (typically as CF_IDENT), which
+    // the parser then reports as a syntax error (PP52).
     const char* p = yytext;
     int base = 0;
     while (*p != '#') { base = base * 10 + (*p - '0'); ++p; }
@@ -41,7 +46,10 @@ ALPHA   [A-Za-z_]
     bool neg = false;
     if (*p == '-') { neg = true; ++p; }
     else if (*p == '+') { ++p; }
-    int64_t ival = 0;
+    // A2: accumulate in uint64_t and report overflow past 2^64-1 instead of
+    // silently wrapping the digits via undefined-behavior signed overflow.
+    std::uint64_t uval = 0;
+    const std::uint64_t ubase = static_cast<std::uint64_t>(base);
     for (; *p; ++p) {
         char ch = *p;
         if (ch == '_') continue;
@@ -52,9 +60,16 @@ ALPHA   [A-Za-z_]
             cflval = CfValue::int_value(0);
             return cf::CfParser::token::CF_INT;
         }
-        ival = ival * base + d;
+        const std::uint64_t ud = static_cast<std::uint64_t>(d);
+        if (uval > (UINT64_MAX - ud) / ubase) {
+            ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
+            cflval = CfValue::int_value(0);
+            return cf::CfParser::token::CF_INT;
+        }
+        uval = uval * ubase + ud;
     }
-    if (neg) ival = -ival;
+    int64_t ival = neg ? static_cast<int64_t>(static_cast<std::uint64_t>(0) - uval)
+                        : static_cast<int64_t>(uval);
     cflval = CfValue::int_value(ival);
     return cf::CfParser::token::CF_INT;
 }
