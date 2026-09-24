@@ -16,7 +16,7 @@ TEST_F(PragmaStyleTest, Annotated) {
     const std::string expected =
         "\n"
         "\n"
-        "(*{#:2}*)\n"
+        "(*{#:1}*)\n"
         "program (*{id Main}*) end\n";
     EXPECT_EQ(expected, pp(input));
     EXPECT_TRUE(empty());
@@ -32,7 +32,7 @@ TEST_F(PragmaStyleTest, Standard) {
     const std::string expected =
         "\n"
         "\n"
-        "{#:2}\n"
+        "{#:1}\n"
         "program {id Main} end\n";
     EXPECT_EQ(expected, pp(input));
     EXPECT_TRUE(empty());
@@ -49,7 +49,7 @@ TEST_F(PragmaStyleTest, UnknownValue) {
     const std::string expected =
         "\n"
         "\n"
-        "(*{#:2}*)\n"
+        "(*{#:1}*)\n"
         "program (*{id Main}*) end\n";
     EXPECT_EQ(expected, pp(input));
     EXPECT_EQ(Issue::Code::INVALID_PRAGMA_STYLE_OPERAND, code());
@@ -65,7 +65,7 @@ TEST_F(PragmaStyleTest, UnknownValueUnderscoreAlias) {
     const std::string expected =
         "\n"
         "\n"
-        "(*{#:2}*)\n"
+        "(*{#:1}*)\n"
         "program (*{id Main}*) end\n";
     EXPECT_EQ(expected, pp(input));
     EXPECT_EQ(Issue::Code::INVALID_PRAGMA_STYLE_OPERAND, code());
@@ -83,7 +83,7 @@ TEST_F(PragmaStyleTest, TrailingCommentAccepted) {
     const std::string expected =
         "\n"
         "\n"
-        "{#:2}\n"
+        "{#:1}\n"
         "program {id Main} end\n";
     EXPECT_EQ(expected, pp(input));
     EXPECT_TRUE(empty());
@@ -101,7 +101,7 @@ TEST_F(PragmaStyleTest, TrailingGarbageRejected) {
     const std::string expected =
         "\n"
         "\n"
-        "(*{#:2}*)\n"
+        "(*{#:1}*)\n"
         "program (*{id Main}*) end\n";
     EXPECT_EQ(expected, pp(input));
     EXPECT_EQ(Issue::Code::INVALID_PRAGMA_STYLE_OPERAND, code());
@@ -118,7 +118,7 @@ TEST_F(PragmaStyleTest, EmptyOperandRejected) {
     const std::string expected =
         "\n"
         "\n"
-        "(*{#:2}*)\n"
+        "(*{#:1}*)\n"
         "program (*{id Main}*) end\n";
     EXPECT_EQ(expected, pp(input));
     EXPECT_EQ(Issue::Code::INVALID_PRAGMA_STYLE_OPERAND, code());
@@ -140,13 +140,13 @@ TEST_F(PragmaStyleTest, Switch) {
     const std::string expected =
         "\n"
         "\n"
-        "(*{#:2}*)\n"
+        "(*{#:1}*)\n"
         "program (*{id Main1}*) end\n"
         "\n"
-        "{#:3}\n"
+        "{#:2}\n"
         "program {id Main2} end\n"
         "\n"
-        "(*{#:5}*)\n"
+        "(*{#:4}*)\n"
         "program (*{id Main3}*) end\n";
     EXPECT_EQ(expected, pp(input));
     EXPECT_TRUE(empty());

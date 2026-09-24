@@ -9,10 +9,11 @@
 #include "../util/iec_61131-3.hpp"
 
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <optional>
-#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -30,6 +31,28 @@ bool strip_path(const std::string_view raw_path, std::string& path, bool& syspat
         }
     }
     return false;
+}
+
+// C3: strict, unsigned-decimal-only line-number operand parse. Unlike
+// std::istream >> int (the previous implementation), this does not accept
+// leading whitespace beyond a plain trim, a leading '+'/'-' sign, or a
+// value that overflows int32_t. On success, returns the parsed value and
+// the (unparsed, not yet trimmed) remainder of `s` right after the digit
+// run -- e.g. an optional quoted filepath -- for the caller to validate.
+std::optional<std::pair<std::int32_t, std::string_view>> parse_lineno_operand(std::string_view s) {
+    s = Util::ltrim_view(s);
+    std::size_t i = 0;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9')
+        ++i;
+    if (i == 0)
+        return std::nullopt; // no leading digit: empty, signed ("+5"/"-5"), or non-numeric
+    std::uint64_t v = 0;
+    for (std::size_t j = 0; j < i; ++j) {
+        v = v * 10 + static_cast<std::uint64_t>(s[j] - '0');
+        if (v > static_cast<std::uint64_t>(INT32_MAX))
+            return std::nullopt; // overflows the widest of the two valid ranges (C3)
+    }
+    return std::make_pair(static_cast<std::int32_t>(v), s.substr(i));
 }
 
 // Resolve a {#syspath} operand relative to the directory of the file
@@ -167,48 +190,67 @@ void handle_stringize(const std::string& raw_arg,
     }
 }
 
-void handle_setline(const std::string& raw_arg, Env& env, std::vector<Token>& ots) {
+void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, std::vector<Token>& ots) {
+    // C4: a nameless, operand-less directive ({#}, {#:}, and their
+    // whitespace-only variants) is gcc's "empty directive" -- a no-op, not
+    // an error. A *named* form with an empty operand ({#line}, {#set_line})
+    // still reaches the PP41 report below, via parse_lineno_operand()
+    // rejecting an operand with no leading digit.
+    if (is_marker_form && raw_arg.empty())
+        return;
+
     std::string arg = preprocess_text(raw_arg, env);
-    std::istringstream arg_ss(arg);
-    int new_lineno;
-    if (arg_ss >> new_lineno) {
-        // Read the whole remainder (not just one whitespace-delimited word) so
-        // quoted filenames containing spaces are captured intact; then trim
-        // and parse as a single path argument. A quoted path followed by
-        // trailing garbage, or an unquoted/syspath-only ('<...>') path, is
-        // rejected below instead of being silently accepted or truncated.
-        std::string rest;
-        std::getline(arg_ss, rest);
-        std::string_view raw_fp = Util::trim_view(rest);
-        std::string new_fp;
-        bool syspath_only = false;
-        bool ok = raw_fp.empty() ||
-            (strip_path(raw_fp, new_fp, syspath_only) && !syspath_only);
-        if (ok) {
-            env.set_lineno(new_lineno);
+    if (auto parsed = parse_lineno_operand(arg)) {
+        auto [new_lineno, rest] = *parsed;
+        // C3: {#line}/{#set_line}/{#set-line} accept 1..2147483647 (0 is
+        // PP41, matching U1(a)); the marker form accepts 0..2147483646 --
+        // one less, so that a named directive's emitted marker (new_lineno
+        // - 1, below) is itself always a valid marker value.
+        const std::int32_t min_lineno = is_marker_form ? 0 : 1;
+        const std::int32_t max_lineno = is_marker_form ? 2147483646 : 2147483647;
+        if (new_lineno >= min_lineno && new_lineno <= max_lineno) {
+            // Read the whole remainder (not just one whitespace-delimited word) so
+            // quoted filenames containing spaces are captured intact; then trim
+            // and parse as a single path argument. A quoted path followed by
+            // trailing garbage, or an unquoted/syspath-only ('<...>') path, is
+            // rejected below instead of being silently accepted or truncated.
+            std::string_view raw_fp = Util::trim_view(rest);
+            std::string new_fp;
+            bool syspath_only = false;
+            bool ok = raw_fp.empty() ||
+                (strip_path(raw_fp, new_fp, syspath_only) && !syspath_only);
+            if (ok) {
+                // C1/U1(a): a named form sets the line number of the *next*
+                // physical line (gcc semantics) to new_lineno, by advancing
+                // the running counter to one less than new_lineno -- the
+                // nameless marker form's own "counter = new_lineno, next
+                // line = new_lineno + 1" semantics, which stays unchanged.
+                const int effective_lineno = is_marker_form ? new_lineno : new_lineno - 1;
+                env.set_lineno(effective_lineno);
 #ifdef JIEPP_SANDBOX
-            // Sandbox: ignore filepath argument, keep original filepath
-            {
-                std::string old_fp = Issue::filepath();
-                Issue::pop();
-                Issue::push({new_lineno, old_fp});
-                ots.push_back(Token::line_pragma(new_lineno, std::nullopt, env.is_standard_pragma_style()));
-                return;
-            }
+                // Sandbox: ignore filepath argument, keep original filepath
+                {
+                    std::string old_fp = Issue::filepath();
+                    Issue::pop();
+                    Issue::push({effective_lineno, old_fp});
+                    ots.push_back(Token::line_pragma(effective_lineno, std::nullopt, env.is_standard_pragma_style()));
+                    return;
+                }
 #else
-            if (new_fp.empty()) {
-                std::string old_fp = Issue::filepath();
-                Issue::pop();
-                Issue::push({new_lineno, old_fp});
-                ots.push_back(Token::line_pragma(new_lineno, std::nullopt, env.is_standard_pragma_style()));
-                return;
-            } else {
-                Issue::pop();
-                Issue::push({new_lineno, std::string(new_fp)});
-                ots.push_back(Token::line_pragma(new_lineno, new_fp, env.is_standard_pragma_style()));
-                return;
-            }
+                if (new_fp.empty()) {
+                    std::string old_fp = Issue::filepath();
+                    Issue::pop();
+                    Issue::push({effective_lineno, old_fp});
+                    ots.push_back(Token::line_pragma(effective_lineno, std::nullopt, env.is_standard_pragma_style()));
+                    return;
+                } else {
+                    Issue::pop();
+                    Issue::push({effective_lineno, std::string(new_fp)});
+                    ots.push_back(Token::line_pragma(effective_lineno, new_fp, env.is_standard_pragma_style()));
+                    return;
+                }
 #endif
+            }
         }
     }
     ISSUE(INVALID_SETLINE_OPERAND, raw_arg);

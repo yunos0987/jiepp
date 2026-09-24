@@ -17,7 +17,11 @@ void handle_stringize(const std::string& raw_arg,
                       Env& env,
                       std::vector<Token>& ots,
                       bool wide);
-void handle_setline(const std::string& raw_arg, Env& env, std::vector<Token>& ots);
+// is_marker_form: true for the nameless marker directive ({#:N}, key == ""),
+// false for the named gcc-style directive ({#line N} / {#set_line N} /
+// {#set-line N}). See handle_setline()'s definition (directive_handlers.cpp)
+// for how this changes the effective line number (unit C, U1(a)).
+void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, std::vector<Token>& ots);
 void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ots);
 void handle_include(const std::string& raw_arg,
                     Env& env,

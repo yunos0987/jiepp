@@ -11,9 +11,9 @@ TEST_F(ObjectMacroTest, Simple) {
     EXPECT_EQ(";;2;2", pp("{#define N 2};{#define M N};N;M"));
     // string literal not expanded
     EXPECT_EQ(";2;'N'", pp("{#define N 2};N;'N'"));
-    // line directive
-    EXPECT_EQ(";(*{#:5}*)", pp("{#define N 5};{#line N}"));
-    EXPECT_EQ(";(*{#:5}*)", pp("{#define F(a) a};{#line F(5)}"));
+    // line directive (C1: named form -> marker N-1)
+    EXPECT_EQ(";(*{#:4}*)", pp("{#define N 5};{#line N}"));
+    EXPECT_EQ(";(*{#:4}*)", pp("{#define F(a) a};{#line F(5)}"));
     // dollar-sign line continuation
     EXPECT_EQ("\n;2", pp("{#define N $\n2};N"));
     EXPECT_EQ("\n;N", pp("{#define N$\n2};N"));
