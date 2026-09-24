@@ -29,6 +29,15 @@ void report_uncaught_exception([[maybe_unused]] const std::exception& e) {
 #endif
 }
 
+// Unit-D-review hardening: a `catch (...)` fallback for a thrown object that
+// is not even a std::exception (so no .what() exists to report), on top of
+// the std::exception overload above. Belt-and-suspenders alongside it: no
+// such throw site is known to exist today, but a truly last-resort handler
+// should not assume one never will.
+void report_uncaught_exception() {
+    std::cerr << Issue::CLI_LOCATION << ": error: PP01: Unknown error\n";
+}
+
 #ifdef _WIN32
 
 struct JieppThreadArgs {
@@ -50,6 +59,9 @@ DWORD WINAPI jiepp_thread_func(LPVOID arg) {
         a->result = 1;
     } catch (const std::exception& e) {
         report_uncaught_exception(e);
+        a->result = 1;
+    } catch (...) {
+        report_uncaught_exception();
         a->result = 1;
     }
     return 0;
@@ -132,6 +144,9 @@ int main(int argc, char* argv[]) {
         return 1;
     } catch (const std::exception& e) {
         report_uncaught_exception(e);
+        return 1;
+    } catch (...) {
+        report_uncaught_exception();
         return 1;
     }
 }

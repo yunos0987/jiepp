@@ -104,6 +104,12 @@ public:
     static bool suppress_warnings_;
     static bool werror_;
     static bool cli_mode_;
+    // ---- E0: continue-after-error mode (set only by jiepp_command, via
+    // ContinueMode below; the library's own default -- every ERROR/SEVERE
+    // throws -- is unaffected when this is false) ----
+    static bool continue_mode_;
+    static int error_count_;
+    static std::set<Code> continue_abort_codes_;
     static IssueMessage& message_;
 
     // ---- Exception ----
@@ -152,6 +158,30 @@ public:
         ~CliMode();
     private:
         bool original_;
+    };
+
+    // E0: RAII guard enabling continue-after-error mode for the duration of
+    // its scope, with `abort_codes` as the set of codes that still stop
+    // processing (SEVERE codes are always added, mirroring Blocking). While
+    // active, happen() throws only for codes in this set; every other
+    // ERROR-severity code (including a -Werror-promoted WARNING, judged by
+    // its own original code, not by the fact that it was promoted) is
+    // instead counted via error_count_ and swallowed so the caller can keep
+    // going. continue_mode_ == false (the default, unaffected by this guard
+    // ever having run before) reproduces today's library behavior exactly:
+    // every ERROR/SEVERE throws, and a -Werror-promoted WARNING always
+    // throws too (see happen()) -- this is what keeps the existing
+    // EXPECT_THROW tests and WerrorPromotion passing unchanged.
+    // error_count_ itself is deliberately NOT touched by this guard: it is
+    // reset only by initialize(), so a caller can read it after the guarded
+    // scope has already ended (jiepp_command does exactly this to decide
+    // between the E3 destination table and the ordinary success path).
+    struct ContinueMode {
+        ContinueMode(std::set<Code> abort_codes);
+        ~ContinueMode();
+    private:
+        bool original_continue_;
+        std::set<Code> original_abort_;
     };
 };
 

@@ -260,3 +260,115 @@ TEST_F(IssueTest, WerrorDoesNotAffectErrors) {
     EXPECT_THROW(ISSUE(FILE_NOT_FOUND), Issue::Exception);
     EXPECT_EQ("test.iec:1.0: error: PP11: No such file or directory", message());
 }
+
+// ---- E0/E7: continue-after-error mode ----
+//
+// continue_mode_ defaults to false, and every test above ran with it off --
+// they are unaffected by anything below, which is the point: the library's
+// own default (every ERROR/SEVERE throws, -Werror-promoted or not) must
+// stay exactly as-is unless a ContinueMode guard is explicitly in scope.
+
+TEST_F(IssueTest, ContinueModeCountsNonAbortErrorInsteadOfThrowing) {
+    Issue::push({1, "test.iec"});
+    EXPECT_EQ(0, Issue::error_count_);
+    {
+        // EXPR_TYPE_ERROR is ERROR-severity but not SEVERE and not in the
+        // (empty) abort set: counted instead of thrown.
+        Issue::ContinueMode guard({});
+        EXPECT_NO_THROW(ISSUE(EXPR_TYPE_ERROR));
+    }
+    EXPECT_EQ(1, Issue::error_count_);
+    Issue::pop();
+}
+
+TEST_F(IssueTest, ContinueModeAbortSetCodeStillThrows) {
+    Issue::push({1, "test.iec"});
+    {
+        Issue::ContinueMode guard({Issue::Code::FILE_NOT_FOUND});
+        EXPECT_THROW(ISSUE(FILE_NOT_FOUND), Issue::Exception);
+    }
+    // The aborting code itself is not counted: only swallowed codes are.
+    EXPECT_EQ(0, Issue::error_count_);
+    Issue::pop();
+}
+
+TEST_F(IssueTest, ContinueModeSevereAlwaysThrowsEvenIfNotInAbortSet) {
+    Issue::push({1, "test.iec"});
+    {
+        // Empty abort set: FATAL (SEVERE) still throws. ContinueMode forces
+        // every SEVERE code into continue_abort_codes_ regardless of what
+        // is passed in, mirroring Blocking's own severe-forcing.
+        Issue::ContinueMode guard({});
+        EXPECT_THROW(Issue::fatal(), Issue::Exception);
+    }
+    EXPECT_EQ(0, Issue::error_count_);
+    Issue::pop();
+}
+
+TEST_F(IssueTest, ContinueModeWerrorPromotedWarningCountedNotThrown) {
+    // E0: a -Werror-promoted WARNING is judged by its own original code,
+    // not by the fact that it was promoted -- WARNING_MESSAGE is not in the
+    // abort set, so (unlike WerrorPromotion above, with continue_mode_
+    // off) it is counted here rather than thrown.
+    Issue::push({1, "test.iec"});
+    Issue::werror_ = true;
+    {
+        Issue::ContinueMode guard({});
+        EXPECT_NO_THROW(ISSUE(WARNING_MESSAGE));
+    }
+    EXPECT_EQ(1, Issue::error_count_);
+    Issue::pop();
+}
+
+TEST_F(IssueTest, ContinueModeIgnoredNotCounted) {
+    // E2: a {#ignore}'d diagnostic is neither displayed nor counted.
+    Issue::push({1, "test.iec"});
+    Issue::add_ignoring(Issue::Code::EXPR_TYPE_ERROR);
+    {
+        Issue::ContinueMode guard({});
+        EXPECT_NO_THROW(ISSUE(EXPR_TYPE_ERROR));
+    }
+    EXPECT_EQ(0, Issue::error_count_);
+    Issue::pop();
+}
+
+TEST_F(IssueTest, ContinueModeSilentStillCounts) {
+    // E2: --silent suppresses the printed diagnostic but not the count.
+    Issue::push({1, "test.iec"});
+    Issue::silent_ = true;
+    {
+        Issue::ContinueMode guard({});
+        EXPECT_NO_THROW(ISSUE(EXPR_TYPE_ERROR));
+    }
+    EXPECT_EQ(1, Issue::error_count_);
+    EXPECT_TRUE(empty());
+    Issue::pop();
+}
+
+TEST_F(IssueTest, ContinueModeGuardRestoresOnScopeExit) {
+    Issue::push({1, "test.iec"});
+    EXPECT_FALSE(Issue::continue_mode_);
+    {
+        Issue::ContinueMode guard({});
+        EXPECT_TRUE(Issue::continue_mode_);
+        EXPECT_NO_THROW(ISSUE(EXPR_TYPE_ERROR)); // counted, not thrown
+    }
+    // Guard exited: continue_mode_ is back off, and the very same code now
+    // throws again, unaffected by having run under a guard earlier.
+    EXPECT_FALSE(Issue::continue_mode_);
+    EXPECT_THROW(ISSUE(EXPR_TYPE_ERROR), Issue::Exception);
+    Issue::pop();
+}
+
+TEST_F(IssueTest, InitializeResetsContinueModeState) {
+    Issue::push({1, "test.iec"});
+    {
+        Issue::ContinueMode guard({});
+        EXPECT_NO_THROW(ISSUE(EXPR_TYPE_ERROR));
+    }
+    EXPECT_EQ(1, Issue::error_count_);
+    std::ostringstream local_stream;
+    Issue::initialize(local_stream);
+    EXPECT_EQ(0, Issue::error_count_);
+    EXPECT_FALSE(Issue::continue_mode_);
+}

@@ -113,6 +113,28 @@ void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostr
     output << "\n";
 }
 
+// E0/E1: codes that still stop processing outright in continue mode --
+// SEVERE (forced in by ContinueMode regardless) plus the File/IO and
+// Runtime/Limit codes plan.md unit E calls out by number: PP10-14
+// (FILE_ERROR, FILE_NOT_FOUND, MAX_INCLUDE_DEPTH_EXCEEDED, INVALID_COMMAND,
+// INCLUDE_TARGET_IS_DIRECTORY) and PP60-61 (MAX_EXPANSION_DEPTH_EXCEEDED,
+// MAX_IF_NESTING_EXCEEDED). Every other ERROR code (expression/macro/
+// directive/lexical errors, and a -Werror-promoted WARNING) is counted via
+// Issue::error_count_ instead of aborting. Deliberately excludes PP62
+// (SANDBOX_RESTRICTED_DIRECTIVE): plan.md unit E's abort set is exactly
+// SEVERE + {10,11,12,13,14,60,61}.
+std::set<Issue::Code> jiepp_continue_abort_codes() {
+    return {
+        Issue::Code::FILE_ERROR,
+        Issue::Code::FILE_NOT_FOUND,
+        Issue::Code::MAX_INCLUDE_DEPTH_EXCEEDED,
+        Issue::Code::INVALID_COMMAND,
+        Issue::Code::INCLUDE_TARGET_IS_DIRECTORY,
+        Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED,
+        Issue::Code::MAX_IF_NESTING_EXCEEDED,
+    };
+}
+
 } // namespace
 
 int jiepp_command(const JieppOptions& opts)
@@ -134,7 +156,62 @@ int jiepp_command(const JieppOptions& opts)
     // build to trust incorrectly. See the "remove only what this run wrote"
     // rule documented at the catch site.
     std::string dep_file_written;
+
+    // E4a: hoisted above the outer try (along with `ots` and `emit_tokens`
+    // below) so a partial-output path reached via a nested catch --
+    // "aborted mid-expand" (E4a) or "-o/dep-file open failed after the
+    // output was already built" (E4b) -- can still see and print whatever
+    // of `ots` was produced. Both depend only on `opts`, not on anything
+    // computed inside the try (in particular, not on `env`), so they can be
+    // decided this early.
+    bool not_out = opts.dM || (opts.dep_mode != DepMode::NONE && !opts.MD && !opts.MMD);
+    // Destination-table (E3) sense of "stdout": true for *both* "-o omitted"
+    // and the explicit "-o -" gcc/clang convention (output_is_stdout() above
+    // only recognizes the latter; -o/-MF open failures below need the
+    // narrower, literal sense instead, so that function is left as-is).
+    bool pp_output_to_stdout = !opts.output_filepath.has_value() || output_is_stdout(opts);
+    bool no_line_markers = opts.no_line_markers;
+
+    std::ostringstream virtual_output;
+    // Emit tokens to stream, optionally suppressing line markers and their
+    // immediately-following WS token (GCC-compatible -P blank-line removal).
+    auto emit_tokens = [&](const std::vector<Token>& tokens) {
+        std::ostream* actual_output = not_out ? &virtual_output : output_stream;
+        if (no_line_markers) {
+            bool skip_next_ws = false;
+            for (const auto& t : tokens) {
+                if (jiepp::is_line_marker(t)) {
+                    skip_next_ws = true;
+                    continue;
+                }
+                if (skip_next_ws) {
+                    skip_next_ws = false;
+                    if (t.type == Token::WS) continue;  // drop blank line only, not comments
+                }
+                *actual_output << t.text;
+            }
+        } else {
+            for (const auto& t : tokens)
+                *actual_output << t.text;
+        }
+    };
+
+    std::vector<Token> ots;
+
     try {
+        // U2/E4a: reject a fundamentally malformed invocation before doing
+        // any other work (predefining macros, expanding -include files,
+        // ...) -- matches gcc/clang validating argument shape before
+        // touching any input. Also sidesteps an ambiguity in E4's
+        // "CLI-argument-stage abort (PP13) prints nothing" rule: if this
+        // check instead ran after -include expansion (as in the pre-E4a
+        // code), -include files could already have produced partial output
+        // by the time it fired, muddying "CLI-stage abort" with "aborted
+        // mid-preprocessing" (E4/E4a, which *does* print partial output to
+        // stdout).
+        if (opts.input_filepaths.size() > 1)
+            ISSUE(INVALID_COMMAND, "multiple input files not supported");
+
         // Deferred until after the whole preprocessed output has been built
         // in memory (see the emit_tokens call below): opening -o eagerly here
         // would truncate the destination before the input file is even read,
@@ -199,128 +276,191 @@ int jiepp_command(const JieppOptions& opts)
         }
 
         bool dep = opts.dep_mode != DepMode::NONE;
-        // -M/-MM (dependency-only modes) suppress the preprocessed output;
-        // -MD/-MMD (and -dM, unrelated to dep mode) keep it. Resolved lazily
-        // by emit_tokens below since output_stream is not yet finalized here.
-        bool not_out = opts.dM || (dep && !opts.MD && !opts.MMD);
 
-        std::ostringstream virtual_output;
-
-        // Emit tokens to stream, optionally suppressing line markers and their
-        // immediately-following WS token (GCC-compatible -P blank-line removal).
-        // actual_output is resolved here (not captured earlier) because
-        // output_stream may still change when open_output() runs later.
-        auto emit_tokens = [&](const std::vector<Token>& tokens) {
-            std::ostream* actual_output = not_out ? &virtual_output : output_stream;
-            if (opts.no_line_markers) {
-                bool skip_next_ws = false;
-                for (const auto& t : tokens) {
-                    if (jiepp::is_line_marker(t)) {
-                        skip_next_ws = true;
-                        continue;
-                    }
-                    if (skip_next_ws) {
-                        skip_next_ws = false;
-                        if (t.type == Token::WS) continue;  // drop blank line only, not comments
-                    }
-                    *actual_output << t.text;
+        // E1/U2: continue past non-abort ERRORs (see jiepp_continue_abort_codes()
+        // above for exactly which codes still stop it outright) for exactly
+        // the -include/top-level-expansion phase below, not the whole
+        // function: everything before this point (the multiple-input-files
+        // check above, -D/-U, env fixups, the stdin+-MD/-MMD-without--MF
+        // check just above) is CLI-shaped misuse that should keep aborting
+        // unconditionally, the way it always has; everything after it (E4b's
+        // -o/dep-file open) raises only PP10, already in the abort set
+        // regardless of continue_mode_, so where this guard's scope ends
+        // does not change behavior there either.
+        bool aborted = false;
+        {
+            Issue::ContinueMode continue_guard(jiepp_continue_abort_codes());
+            try {
+                // -include: force-include files before main input
+                for (const auto& include_filepath : opts.include_filepaths) {
+                    auto include_disppath = fs::path(include_filepath).generic_string();
+                    expand(include_filepath, Loader::LoadType::INCLUDE, ots, env, include_disppath);
                 }
-            } else {
-                for (const auto& t : tokens)
-                    *actual_output << t.text;
+
+                std::string dispath;
+                if (opts.disppath.has_value())
+                    dispath = fs::path(*opts.disppath).generic_string();
+                else if (!opts.input_filepaths.empty())
+                    dispath = fs::path(opts.input_filepaths[0]).generic_string();
+                else
+                    dispath = "<stdin>";
+
+                if (opts.input_filepaths.empty() || ((opts.input_filepaths.size() == 1) && (opts.input_filepaths[0] == "-"))) {
+                    env.push_file("<stdin>");
+                    Issue::push({1, dispath});
+                    ots.push_back(Token::line_pragma(0, dispath, env.is_standard_pragma_style()));
+                    ots.push_back(Token::newline());
+                    auto its = iec3_tokens(std::cin, env.get_remove_comments(), 1);
+                    expand(its, ots, env);
+                    Issue::pop();
+                    env.pop_file();
+                } else {
+                    // Exactly one input file here: more than one was already
+                    // rejected (PP13) before this point.
+                    expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env, dispath);
+                }
+            } catch (const Issue::Exception&) {
+                // E4a: a code in jiepp_continue_abort_codes() (or SEVERE)
+                // stopped processing partway through. Handled below, once
+                // continue_guard's scope (and so continue_mode_) has ended.
+                aborted = true;
             }
-        };
-
-        std::vector<Token> ots;
-
-        // -include: force-include files before main input
-        for (const auto& include_filepath : opts.include_filepaths) {
-            auto include_disppath = fs::path(include_filepath).generic_string();
-            expand(include_filepath, Loader::LoadType::INCLUDE, ots, env, include_disppath);
         }
 
-        std::string dispath;
-        if (opts.disppath.has_value())
-            dispath = fs::path(*opts.disppath).generic_string();
-        else if (!opts.input_filepaths.empty())
-            dispath = fs::path(opts.input_filepaths[0]).generic_string();
-        else
-            dispath = "<stdin>";
-
-        if (opts.input_filepaths.empty() || ((opts.input_filepaths.size() == 1) && (opts.input_filepaths[0] == "-"))) {
-            env.push_file("<stdin>");
-            Issue::push({1, dispath});
-            ots.push_back(Token::line_pragma(0, dispath, env.is_standard_pragma_style()));
-            ots.push_back(Token::newline());
-            auto its = iec3_tokens(std::cin, env.get_remove_comments(), 1);
-            expand(its, ots, env);
-            Issue::pop();
-            env.pop_file();
-        } else if (opts.input_filepaths.size() == 1) {
-            expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env, dispath);
-        } else {
-            ISSUE(INVALID_COMMAND, "multiple input files not supported");
+        if (aborted) {
+            // E4: gcc-fatal-error-style partial output. Only when the
+            // preprocessed result's own destination is stdout and it is not
+            // suppressed by -dM/-M/-MM (see the destination table's E4 row:
+            // "-o FILE、-dM、-M/-MM: 標準出力には何も出さない" -- unlike the
+            // E3 branch below, -dM prints nothing here either, since
+            // processing stopped before the macro table could reach its
+            // final state). Neither -o nor any dependency file is ever
+            // opened/written in this branch, and no existing file at either
+            // path is touched.
+            if (pp_output_to_stdout && !not_out) {
+                jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
+                    opts.no_line_markers ? jiepp::BlankLineMode::CollapseAll : jiepp::BlankLineMode::Markers,
+                    env.is_standard_pragma_style());
+                emit_tokens(ots);
+            }
+            return 1;
         }
 
-        // The whole preprocessed output is accumulated in ots by this point;
-        // only now is it safe to (re)open -o, even if -o names the same path
-        // as the input file. Blank-line compaction runs last, as a post-pass
-        // over the fully materialised stream: CollapseAll under -P (which
-        // already strips line markers, so blank runs must collapse to zero
-        // rather than gain a marker of their own), Markers otherwise.
+        // Not aborted: the whole preprocessed output is accumulated in ots
+        // by this point. Blank-line compaction runs unconditionally here
+        // (needed regardless of error_count_ below: it feeds both the E3
+        // stdout-only print and the ordinary success path's own output) --
+        // CollapseAll under -P (which already strips line markers, so blank
+        // runs must collapse to zero rather than gain a marker of their
+        // own), Markers otherwise.
         jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
             opts.no_line_markers ? jiepp::BlankLineMode::CollapseAll : jiepp::BlankLineMode::Markers,
             env.is_standard_pragma_style());
 
-        bool dep_has_separate_file = dep && effective_dep_file.has_value() && !effective_dep_file->empty();
-
-        // Write the separate dependency file (-MF / -MD / -MMD auto-named)
-        // before -o is opened: this write is completely independent of the
-        // main output, so if it fails, -o must not be touched at all -- a
-        // pre-existing -o from an earlier successful run stays byte-for-byte
-        // intact, and a fresh, correct -o is never opened only to be deleted
-        // again by the catch block below (see SPECIFICATION.md section 13,
-        // "dependency-file Make escaping" subsection).
-        if (dep_has_separate_file) {
-            const std::string dep_target_text = format_dep_target(opts);
-            std::ofstream dep_output;
-            dep_output.open(*effective_dep_file, std::ios::out | std::ios::binary);
-            if (!dep_output)
-                ISSUE(FILE_ERROR, *effective_dep_file);
-            write_dep_rules(dep_target_text, opts.dep_mode, dep_output, env);
-            dep_output.close();
-            dep_file_written = *effective_dep_file;
+        if (Issue::error_count_ >= 1) {
+            // E3: reached the end, but with one or more non-aborting errors
+            // counted along the way (U2). gcc/clang both still exit 1 here;
+            // -o and any dependency file are never opened/written, and
+            // neither touches an existing file at that path (destination
+            // table). Unlike the aborted (E4) branch above, -dM's own row
+            // in the destination table differs from the plain-output rows:
+            // since processing reached the end, `env`'s macro table is
+            // complete, so -dM still prints it in full on a stdout
+            // destination ("-dM（-oなし、または-o -）: マクロの一覧を全部
+            // 出す") -- only -o FILE (row below it) silently produces
+            // nothing. -M/-MM without -MF (not_out, but not opts.dM) prints
+            // nothing on either destination: a partial dependency list
+            // would mislead a Make-based build into thinking it has every
+            // prerequisite when it does not.
+            if (pp_output_to_stdout) {
+                if (opts.dM)
+                    dump_macros(env, std::cout);
+                else if (!not_out)
+                    emit_tokens(ots);
+            }
+            return 1;
         }
 
-        // -o (or stdout) is only needed when something will actually be
-        // written to it: the main preprocessed content (!not_out), a -dM
-        // macro dump, or dependency rules that have no separate file to go
-        // to (-M/-MM without -MF). A dependency-only invocation that already
-        // has a separate dep file (e.g. "-M -MF x.d -o out.iec") has nothing
-        // left to put in -o, so -o is deliberately left unopened/unwritten
-        // (matching gcc, whose -M/-MM never touch the compiler's normal
-        // output file either).
-        bool need_dep_to_stream = dep && !dep_has_separate_file;
-        bool need_output_stream = !not_out || opts.dM || need_dep_to_stream;
+        bool dep_has_separate_file = dep && effective_dep_file.has_value() && !effective_dep_file->empty();
 
-        if (need_output_stream) {
-            open_output();
-            emit_tokens(ots);
-
-            if (opts.dM) {
-                dump_macros(env, *output_stream);
+        // E4b: the dependency-file write and -o open are wrapped in their
+        // own try -- gcc has already flushed its preprocessed output before
+        // either of these can fail, so a PP10 here gets the same
+        // partial-output treatment as E4/E4a (plus the same "remove only
+        // what this run wrote" cleanup as the outer catch below, duplicated
+        // here rather than shared with it: by the time the outer catch
+        // runs, `ots`/`env` are already out of scope, so it cannot print
+        // anything itself).
+        try {
+            // Write the separate dependency file (-MF / -MD / -MMD auto-named)
+            // before -o is opened: this write is completely independent of the
+            // main output, so if it fails, -o must not be touched at all -- a
+            // pre-existing -o from an earlier successful run stays byte-for-byte
+            // intact, and a fresh, correct -o is never opened only to be deleted
+            // again if it were to fail (see SPECIFICATION.md section 13,
+            // "dependency-file Make escaping" subsection).
+            if (dep_has_separate_file) {
+                const std::string dep_target_text = format_dep_target(opts);
+                std::ofstream dep_output;
+                dep_output.open(*effective_dep_file, std::ios::out | std::ios::binary);
+                if (!dep_output)
+                    ISSUE(FILE_ERROR, *effective_dep_file);
+                write_dep_rules(dep_target_text, opts.dep_mode, dep_output, env);
+                dep_output.close();
+                dep_file_written = *effective_dep_file;
             }
 
-            if (need_dep_to_stream) {
-                // No dep file: write dep rules to main output stream (-M / -MM without -MF)
-                write_dep_rules(format_dep_target(opts), opts.dep_mode, *output_stream, env);
+            // -o (or stdout) is only needed when something will actually be
+            // written to it: the main preprocessed content (!not_out), a -dM
+            // macro dump, or dependency rules that have no separate file to go
+            // to (-M/-MM without -MF). A dependency-only invocation that already
+            // has a separate dep file (e.g. "-M -MF x.d -o out.iec") has nothing
+            // left to put in -o, so -o is deliberately left unopened/unwritten
+            // (matching gcc, whose -M/-MM never touch the compiler's normal
+            // output file either).
+            bool need_dep_to_stream = dep && !dep_has_separate_file;
+            bool need_output_stream = !not_out || opts.dM || need_dep_to_stream;
+
+            if (need_output_stream) {
+                open_output();
+                emit_tokens(ots);
+
+                if (opts.dM) {
+                    dump_macros(env, *output_stream);
+                }
+
+                if (need_dep_to_stream) {
+                    // No dep file: write dep rules to main output stream (-M / -MM without -MF)
+                    write_dep_rules(format_dep_target(opts), opts.dep_mode, *output_stream, env);
+                }
             }
+        } catch (const Issue::Exception&) {
+            // E4b: -o or the dependency file could not be opened (PP10).
+            if (output_file.is_open()) {
+                output_file.close();
+                if (opts.output_filepath) {
+                    std::error_code ec;
+                    fs::remove(*opts.output_filepath, ec);
+                }
+            }
+            if (!dep_file_written.empty()) {
+                std::error_code ec;
+                fs::remove(dep_file_written, ec);
+            }
+            if (pp_output_to_stdout && !not_out)
+                emit_tokens(ots);
+            return 1;
         }
         return 0;
     } catch (const Issue::Exception&) {
         // Do not leave a truncated/empty -o target behind on failure: a
         // Make-based build system must reprocess the file on the next run,
         // not treat a 0-byte, freshly-mtime'd file as an up-to-date target.
+        // Reached only by exceptions from *before* the E4a -include/expand
+        // guard above (e.g. a malformed -D/-U, an env-fixup failure, or the
+        // stdin+-MD/-MMD-without--MF check): `ots` is always still empty
+        // here, unlike the E4a/E4b catches above, so there is nothing to
+        // print.
         if (output_file.is_open()) {
             output_file.close();
             if (opts.output_filepath) {

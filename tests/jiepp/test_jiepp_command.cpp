@@ -2009,3 +2009,330 @@ TEST_F(JieppCommandTest, OutputDashWithMDDerivesDepFileFromInput) {
         << "-o - must not derive a dep file named '-.d'";
     EXPECT_FALSE(fs::exists(dash_marker));
 }
+
+// ─── Unit E: continue-after-error mode (U2) ───────────────────────────────
+//
+// Shared helpers below: jiepp_command() only ever writes the preprocessed
+// result through &std::cout when opts.output_filepath is unset or "-", so
+// capturing it in-process just means swapping std::cout's streambuf for the
+// call's duration (same technique as OutputDashMeansStdout above).
+
+namespace {
+
+fs::path write_temp_iec(const std::string& stem, const std::string& content) {
+    fs::path p = fs::temp_directory_path() / (stem + ".iec");
+    std::ofstream f(p, std::ios::binary);
+    f << content;
+    return p;
+}
+
+std::string run_capturing_stdout(const JieppOptions& opts, int& rc) {
+    std::ostringstream captured;
+    std::streambuf* saved_cout = std::cout.rdbuf(captured.rdbuf());
+    rc = jiepp_command(opts);
+    std::cout.rdbuf(saved_cout);
+    return captured.str();
+}
+
+} // namespace
+
+// E5: a jiepp equivalent of gcc's e2.c torture test (BEFORE;/#error/
+// #if 1/0/#warning/redefinition/AFTER;). Continuing past every non-abort
+// ERROR reaches the end of the file without crashing, still emitting
+// AFTER; -- exit code is 1 either way (U2), and since no -o was given, the
+// destination table's stdout row for the plain preprocessed result (E3)
+// says the full compacted output is still printed despite the errors.
+TEST_F(JieppCommandTest, ContinueModeGccE2Equivalent) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_e2", R"IEC(BEFORE;
+{#error stop}
+{#if 1/0}
+SKIPPED;
+{#endif}
+{#warning careful}
+{#define FOO 1}
+{#define FOO 2}
+AFTER;
+)IEC");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER"))   << out;
+    // {#if 1/0}: division by zero folds to 0 (A3/A4), so this behaves like
+    // any other false {#if} -- its body is skipped, not emitted.
+    EXPECT_EQ(std::string::npos, out.find("SKIPPED")) << out;
+    EXPECT_GE(Issue::error_count_, 2) << "expected #error and 1/0 to both count";
+}
+
+// E3 destination table, row 1 vs row 2: the same continuable error, once
+// with no -o (stdout row, prints in full) and once with -o FILE (silently
+// nothing, and -o is never created).
+TEST_F(JieppCommandTest, ContinueModeErrorCountWithOutputFileWritesNothing) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_e3_file", "{#error stop}\nAFTER;\n");
+    fs::path out_path = fs::temp_directory_path() / "continue_e3_file.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_FALSE(fs::exists(out_path)) << "-o must not be created when error_count_ >= 1";
+}
+
+TEST_F(JieppCommandTest, ContinueModeErrorCountLeavesExistingOutputFileUntouched) {
+    // E5: an existing -o/.d file must stay byte-for-byte identical, not
+    // just "still exist" -- a stale-but-untouched file is exactly what a
+    // Make-based build needs to correctly decide to reprocess it later.
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_e3_existing", "{#error stop}\nAFTER;\n");
+    fs::path out_path = fs::temp_directory_path() / "continue_e3_existing.piec";
+    const std::string sentinel = "PRE-EXISTING CONTENT, MUST NOT CHANGE";
+    {
+        std::ofstream f(out_path, std::ios::binary);
+        f << sentinel;
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+
+    EXPECT_EQ(1, jiepp_command(opts));
+    std::ifstream f(out_path, std::ios::binary);
+    std::string actual((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(sentinel, actual);
+}
+
+// E3 destination table, row 3 vs row 4: -dM differs from the plain
+// preprocessed result specifically for the stdout case (it is not
+// suppressed by error_count_ >= 1, since the macro table is already
+// complete by the time processing reaches the end) -- but -o FILE is still
+// silently nothing, same as the plain result.
+TEST_F(JieppCommandTest, ContinueModeDMPrintsFullMacroListOnStdoutDespiteError) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_dm_stdout", "{#define FOO 42}\n{#error stop}\n{#define BAR 7}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dM = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("{#define FOO 42}")) << out;
+    EXPECT_NE(std::string::npos, out.find("{#define BAR 7}"))  << out;
+}
+
+TEST_F(JieppCommandTest, ContinueModeDMWithOutputFileWritesNothing) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_dm_file", "{#define FOO 42}\n{#error stop}\n");
+    fs::path out_path = fs::temp_directory_path() / "continue_dm_file.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+    opts.dM = true;
+
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_FALSE(fs::exists(out_path));
+}
+
+// E3 destination table, row 5: -M/-MM without -MF never prints a partial
+// dependency list on error, even to stdout -- unlike the plain preprocessed
+// result and -dM, a half-built dependency list could make a Make-based
+// build think it already has every prerequisite when it does not.
+TEST_F(JieppCommandTest, ContinueModeMWithoutMFPrintsNothingOnStdoutDespiteError) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_m_stdout", "{#error stop}\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dep_mode = DepMode::ALL;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_TRUE(out.empty()) << out;
+}
+
+// E3 destination table, row 7: -MD behaves like the plain preprocessed
+// result for the main output (full print on the stdout row), but the
+// separate dependency file must not be written when error_count_ >= 1.
+TEST_F(JieppCommandTest, ContinueModeMDPrintsOutputButSkipsDepFile) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_md_stdout", "BEFORE;\n{#error stop}\nAFTER;\n");
+    fs::path dep_out = fs::temp_directory_path() / "continue_md_stdout.d";
+    std::error_code ec;
+    fs::remove(dep_out, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER"))  << out;
+    EXPECT_FALSE(fs::exists(dep_out)) << "-MD's dep file must not be written when error_count_ >= 1";
+}
+
+// E4: a code in the continue-mode abort set (here PP11, a missing
+// #include) still stops processing outright, like a gcc fatal error --
+// but (destination table's stdout row) whatever of the output had already
+// been produced before the abort is still flushed to stdout, unlike the
+// ordinary trailing-error case above where the *whole* file's compacted
+// output is available. -o FILE instead gets nothing, and no file is
+// created.
+TEST_F(JieppCommandTest, AbortedMidExpandPrintsPartialOutputToStdout) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("abort_partial_stdout",
+        "BEFORE;\n{#include 'definitely_does_not_exist.iec'}\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    // Processing stopped at the failed #include: AFTER; was never reached.
+    EXPECT_EQ(std::string::npos, out.find("AFTER")) << out;
+}
+
+TEST_F(JieppCommandTest, AbortedMidExpandWithOutputFileWritesNothing) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("abort_partial_file",
+        "BEFORE;\n{#include 'definitely_does_not_exist.iec'}\nAFTER;\n");
+    fs::path out_path = fs::temp_directory_path() / "abort_partial_file.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_FALSE(fs::exists(out_path));
+}
+
+// E4b: a PP10 raised *after* the preprocessed output was already fully
+// built -- opening the auto-named -MD dependency file, or opening -o --
+// gets the same partial-output treatment as E4/E4a (gcc has already
+// flushed its own output before either of those can fail).
+TEST_F(JieppCommandTest, DepFileOpenFailureAfterBuildPrintsFullOutputToStdout) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("e4b_dep_stdout", "BEFORE;\nAFTER;\n");
+    // Auto-derived dep file name is the input's stem with ".d": make that
+    // path unopenable by occupying it with a directory of the same name.
+    fs::path dep_out = fs::temp_directory_path() / "e4b_dep_stdout.d";
+    std::error_code ec;
+    fs::remove_all(dep_out, ec);
+    fs::create_directory(dep_out, ec);
+    ASSERT_TRUE(fs::is_directory(dep_out));
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER"))  << out;
+    EXPECT_TRUE(fs::is_directory(dep_out)) << "the blocking directory must be left alone, not removed";
+
+    fs::remove_all(dep_out, ec);
+}
+
+TEST_F(JieppCommandTest, DepFileOpenFailureAfterBuildWithOutputFileWritesNothing) {
+    // Same obstruction as above, but with an explicit -o FILE: stdout must
+    // stay empty and -o must never be created (destination table: -o FILE
+    // always prints nothing, dependency-file failure or not).
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("e4b_dep_file", "BEFORE;\nAFTER;\n");
+    fs::path dep_out = fs::temp_directory_path() / "e4b_dep_file.d";
+    std::error_code ec;
+    fs::remove_all(dep_out, ec);
+    fs::create_directory(dep_out, ec);
+    ASSERT_TRUE(fs::is_directory(dep_out));
+    fs::path out_path = fs::temp_directory_path() / "e4b_dep_file.piec";
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_TRUE(out.empty()) << out;
+    EXPECT_FALSE(fs::exists(out_path));
+    EXPECT_TRUE(fs::is_directory(dep_out));
+
+    fs::remove_all(dep_out, ec);
+}
+
+// E4b, -o open failure specifically (as opposed to the dep-file open
+// failure above): per plan.md unit E's own note, an -o FILE that cannot be
+// opened can *never* coincide with a stdout destination (pp_output_to_stdout
+// requires -o to be omitted, or explicitly "-", neither of which ever fails
+// to open) -- so unlike the dep-file-open-failure case above, this always
+// falls into E4b's "else" branch: stdout stays empty, matching plain -o
+// FILE's ordinary error/abort behavior (ErrorFormatFileError et al. above
+// already cover the file-not-created side of this; this test adds the
+// "and stdout printed nothing either" side that only exists post-unit-E).
+TEST_F(JieppCommandTest, OutputOpenFailureAfterBuildPrintsNothingToStdout) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("e4b_o_file", "BEFORE;\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = "/nonexistent/dir/e4b_o.piec";
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_TRUE(out.empty()) << out;
+}
+
+// E2: --silent suppresses the printed diagnostics but not the error count
+// (still exit 1); -w suppresses only unpromoted-warning *output*, not the
+// count either (there is nothing to count here, since no -Werror is set,
+// but the run must still succeed/continue exactly the same).
+TEST_F(JieppCommandTest, SilentStillCountsErrorsAndExitsNonZero) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_silent", "BEFORE;\n{#error stop}\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.silent = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER"))  << out;
+}

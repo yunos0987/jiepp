@@ -36,6 +36,11 @@ bool Issue::silent_ = false;
 bool Issue::suppress_warnings_ = false;
 bool Issue::werror_ = false;
 bool Issue::cli_mode_ = false;
+bool Issue::continue_mode_ = false;
+int Issue::error_count_ = 0;
+// Inert while continue_mode_ is false; ContinueMode always forces all
+// SEVERE codes in, mirroring make_default_blockings()'s severe-forcing.
+std::set<Issue::Code> Issue::continue_abort_codes_;
 IssueMessage& Issue::message_ = PlainTextMessage::instance();
 
 // ---------------------------------------------------------------------------
@@ -76,6 +81,9 @@ void Issue::initialize(std::ostream& stream) {
     suppress_warnings_ = false;
     werror_ = false;
     cli_mode_ = false;
+    continue_mode_ = false;
+    error_count_ = 0;
+    continue_abort_codes_.clear();
     message_ = PlainTextMessage::instance();
 }
 
@@ -164,6 +172,25 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         *stream_ << '\n';
     }
 
+    if (continue_mode_) {
+        // E0: only a code in continue_abort_codes_ (SEVERE is always forced
+        // in, see ContinueMode) stops processing. Every other code that
+        // would otherwise have thrown -- a plain blocked ERROR, or a
+        // -Werror-promoted WARNING judged by its own original code, not by
+        // the fact that it was promoted -- is instead counted here and
+        // swallowed, so jiepp_command can keep going past it. This check is
+        // independent of blockings_/is_blocked(): continue_mode_ replaces
+        // that decision entirely rather than layering on top of it (see the
+        // ContinueMode doc comment in issue.hpp for why -- -Werror
+        // promotion bypasses blockings_ already).
+        bool should_throw = is_severe(code) || continue_abort_codes_.count(code) != 0;
+        if (!should_throw && severity == Severity::ERROR)
+            ++error_count_; // E2: counted regardless of --silent
+        if (should_throw)
+            throw Exception(code);
+        return;
+    }
+
     // SEVERE always throws; promoted warnings throw if ERROR is in blockings;
     // other codes throw if in blockings
     if (is_severe(code) \
@@ -221,4 +248,20 @@ Issue::CliMode::CliMode() : original_(cli_mode_) {
 
 Issue::CliMode::~CliMode() {
     cli_mode_ = original_;
+}
+
+Issue::ContinueMode::ContinueMode(std::set<Issue::Code> abort_codes)
+    : original_continue_(continue_mode_), original_abort_(continue_abort_codes_) {
+    continue_mode_ = true;
+    continue_abort_codes_ = std::move(abort_codes);
+    // Ensure all SEVERE codes remain in the abort set (mirrors Blocking).
+#define JIEPP_ISSUE_CODE(name, id, severity, message) \
+    if (is_severe(Code::name)) continue_abort_codes_.insert(Code::name);
+#include "issue_codes.def"
+#undef JIEPP_ISSUE_CODE
+}
+
+Issue::ContinueMode::~ContinueMode() {
+    continue_mode_ = original_continue_;
+    continue_abort_codes_ = std::move(original_abort_);
 }
