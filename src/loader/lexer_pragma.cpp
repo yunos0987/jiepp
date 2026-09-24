@@ -134,8 +134,11 @@ Token read_pragma_body(const std::string& text,
     std::string full_text = "{" + body + "}";
 
     if (is_directive) {
-        DirectiveToken dt = DirectiveToken::create_empty(full_text);
-        dt.ready();
+        // B1: classifying/diagnosing this directive's key (PP45/PP46 for an
+        // unrecognized name) now happens at dispatch time in
+        // dispatch_directive() (expand.cpp), not here at lex time, so
+        // constructing a DirectiveToken merely to call ready() for its
+        // former diagnostic side effect is no longer needed.
         Token t;
         t.type = Token::DIRECTIVE;
         t.text = std::move(full_text);

@@ -58,8 +58,20 @@ void dispatch_directive(const Token& t,
                         std::vector<Token>& ots) {
     auto [key, raw_arg] = parse_directive(t.text);
     int kind = DirectiveToken::name_to_kind(key);
-    if (kind == -1)
+
+    bool active = ctrl_is_active(ctrl);
+
+    if (kind == -1) {
+        // B1: PP45 (UNKNOWN_DIRECTIVE, WARNING) / PP46 (INVALID_DIRECTIVE_NAME,
+        // ERROR) are reported here, at dispatch time, instead of at lex time
+        // (the former DirectiveToken::ready(), which no longer diagnoses
+        // this). Dispatch time has the correct line number and correctly
+        // suppresses the diagnostic for a directive inside an inactive
+        // {#if 0} block, matching gcc (see classify_unknown_directive()).
+        if (active)
+            Issue::happen(classify_unknown_directive(key), key);
         return;
+    }
 
     if (kind & DirectiveToken::MASK_CTRLEX) {
         if (kind == DirectiveToken::IFDEF) {
@@ -69,8 +81,6 @@ void dispatch_directive(const Token& t,
         }
         kind = DirectiveToken::IF;
     }
-
-    bool active = ctrl_is_active(ctrl);
 
     if (kind & DirectiveToken::MASK_CTRL) {
         switch (kind) {
@@ -456,10 +466,11 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                                 // before the enclosing macro call's own expansion. Note:
                                 // dkind == -1 (unrecognised directive name) must NOT take
                                 // this branch: in two's-complement, -1 has every bit set,
-                                // so it would spuriously match MASK_OUTPUT and raise a
-                                // second, wrong diagnostic on top of the lex-time
-                                // UNKNOWN_DIRECTIVE/INVALID_DIRECTIVE_NAME already issued
-                                // for the same malformed text (DirectiveToken::ready()).
+                                // so it would spuriously match MASK_OUTPUT. It falls
+                                // through to the `else` branch instead, which calls
+                                // dispatch_directive() below — the sole place that now
+                                // reports UNKNOWN_DIRECTIVE/INVALID_DIRECTIVE_NAME (B1) —
+                                // so it is still diagnosed exactly once, correctly.
                                 ISSUE(OPERATION_NOT_ALLOWED,
                                       "'" + dkey + "' inside macro argument: its output "
                                       "would be emitted before the enclosing macro call's "

@@ -66,13 +66,6 @@ struct DirectiveToken : Token {
 #include "directive_token.def"
 #undef JIEPP_DIRECTIVE_TOKEN
 
-    int         directive_kind = NOP;
-    std::string arg;
-
-    static DirectiveToken create_empty(std::string text);
-    // Parse text (e.g. "{#define N 1}") to set directive_kind and arg.
-    void ready();
-
     static int         name_to_kind(std::string_view name);
     static std::string kind_to_name(int kind);
 };

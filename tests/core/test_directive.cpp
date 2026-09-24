@@ -41,6 +41,51 @@ TEST_F(DirectiveTest, InvalidDirectiveName) {
     EXPECT_EQ(Issue::Code::INVALID_DIRECTIVE_NAME, code());
 }
 
+// ---- B2: PP45/PP46 are reported at dispatch time (correct line number,
+// suppressed inside an inactive {#if 0} block) ----
+
+TEST_F(DirectiveTest, UnknownDirectiveReportsCorrectLineNumber) {
+    // {#foo} is on physical line 3 (two blank lines precede it).
+    EXPECT_EQ(";\n;\n", pp(";\n;\n{#foo}"));
+    auto actual_diags = messages();
+    const std::vector<std::string> expected_diags = {
+        "<unknown location>:3.0: warning: PP45: Unknown directive; 'foo'",
+    };
+    EXPECT_EQ(expected_diags, actual_diags);
+}
+
+TEST_F(DirectiveTest, InvalidDirectiveNameReportsCorrectLineNumber) {
+    // {#foo.bar} is on physical line 3.
+    EXPECT_THROW(pp(";\n;\n{#foo.bar}"), Issue::Exception);
+    auto actual_diags = messages();
+    const std::vector<std::string> expected_diags = {
+        "<unknown location>:3.0: error: PP46: Invalid directive name; 'foo.bar'",
+    };
+    EXPECT_EQ(expected_diags, actual_diags);
+}
+
+TEST_F(DirectiveTest, UnknownDirectiveInsideInactiveIfNotReported) {
+    // gcc does not diagnose an unrecognized directive-shaped body inside a
+    // block skipped by {#if 0}; PP45/PP46 must be suppressed there too, now
+    // that they fire at dispatch time (which sees the ctrl-stack state)
+    // instead of at lex time (which did not).
+    EXPECT_EQ("", pp("{#if 0}{#foo}{#foo.bar}{#endif}"));
+    EXPECT_TRUE(empty());
+}
+
+// ---- B3: a directive-shaped token cached across a repeated #include of the
+// same file must still be diagnosed once per inclusion, not once overall ----
+
+TEST_F(DirectiveTest, UnknownDirectiveReportedOncePerInclusion) {
+    fs::current_path(jiepp_root_dir());
+    static const fs::path dir = "tests/core/test_include";
+    EXPECT_NO_THROW(pp_file(dir / "unknown_directive_double.iec"));
+    auto cs = codes();
+    ASSERT_EQ(2u, cs.size());
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, cs[0]);
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, cs[1]);
+}
+
 TEST_F(DirectiveTest, SpecialInDirective) {
     EXPECT_EQ(";'0';'1'", pp("{#define L ${## __COUNTER__$}};L;L"));
     EXPECT_TRUE(empty());
@@ -198,8 +243,9 @@ TEST_F(DirectiveTest, UnknownDirectiveInsideMacroArgumentSingleDiagnostic) {
     // must not be misclassified as an "output directive" -- in two's-
     // complement, -1 has every bit set, so -1 & MASK_OUTPUT is nonzero --
     // and must not receive a second, wrong OPERATION_NOT_ALLOWED diagnostic
-    // on top of the single lex-time UNKNOWN_DIRECTIVE warning already
-    // raised for the same malformed text (DirectiveToken::ready()).
+    // on top of the single UNKNOWN_DIRECTIVE warning that dispatch_directive()
+    // (expand.cpp) raises for the same malformed text (B1: this used to be
+    // raised at lex time by DirectiveToken::ready(), which no longer does).
     EXPECT_EQ(";[1]\n\n", pp("{#define F(x) [x]};F(\n{#bogus}\n1)"));
     auto cs = codes();
     ASSERT_EQ(1u, cs.size());
