@@ -62,6 +62,17 @@ public:
     // ---- Location type ----
     using LocationEntry = std::pair<int, std::string>;
 
+    // Sentinel `file` value for diagnostics raised by CLI-level code
+    // (jiepp_command()/main()/parse_args(), guarded by CliMode below) before
+    // any source file has been pushed -- CLI option errors, -o/-MF open
+    // failures, INVALID_COMMAND, and the top-level input's FILE_NOT_FOUND.
+    // PlainTextMessage::message() renders this exact value without a
+    // trailing ":line.column", i.e. "jiepp: error: PPxx: message". This is
+    // distinct from the "<unknown location>" bottom-of-stack dummy pushed by
+    // initialize(): the string-input preprocess()/preprocess_text() API
+    // keeps using that dummy's "<unknown location>:N.0" form unchanged.
+    static constexpr const char* CLI_LOCATION = "jiepp";
+
     // ---- Initialization ----
     static void initialize(std::ostream& stream);
     static void set_output(std::ostream& stream);
@@ -92,6 +103,7 @@ public:
     static bool silent_;
     static bool suppress_warnings_;
     static bool werror_;
+    static bool cli_mode_;
     static IssueMessage& message_;
 
     // ---- Exception ----
@@ -127,6 +139,19 @@ public:
         ~Ignoring();
     private:
         std::set<Code> original_;
+    };
+
+    // RAII guard marking CLI-level code (jiepp_command()/main()/parse_args())
+    // for the duration of its scope: diagnostics raised while cli_mode_ is
+    // set and no source file has been pushed yet (loc_stack_ still holds
+    // only the initialize()-time dummy) render as CLI_LOCATION, not the
+    // dummy's "<unknown location>:N.0" form. Guards nest safely: an inner
+    // guard just restores the (already-true) outer value on scope exit.
+    struct CliMode {
+        CliMode();
+        ~CliMode();
+    private:
+        bool original_;
     };
 };
 

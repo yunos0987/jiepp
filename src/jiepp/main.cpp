@@ -16,6 +16,19 @@ namespace {
 constexpr size_t FRAME_SIZE_ESTIMATE = 8192;  // ~8KB per recursion frame
 constexpr int    MAX_RECURSION_LIMIT = 65536; // upper bound (~512MB stack)
 
+// Last-resort diagnostic for exceptions that escape jiepp_command() itself
+// (jiepp_command() already turns every Issue::Exception into a printed
+// diagnostic + return 1, so only a genuinely unexpected std::exception
+// reaches here). Not tied to any source file, so it uses Issue::CLI_LOCATION
+// ("jiepp") rather than a line/column location.
+void report_uncaught_exception([[maybe_unused]] const std::exception& e) {
+#ifdef JIEPP_SANDBOX
+    std::cerr << Issue::CLI_LOCATION << ": error: PP01: Unknown error\n";
+#else
+    std::cerr << Issue::CLI_LOCATION << ": error: PP01: Unknown error; " << e.what() << "\n";
+#endif
+}
+
 #ifdef _WIN32
 
 struct JieppThreadArgs {
@@ -23,9 +36,22 @@ struct JieppThreadArgs {
     int result;
 };
 
+// D3: mirror main()'s own exception handling here. jiepp_command() runs on
+// this worker thread; a C++ exception that escapes a WinAPI thread callback
+// cannot safely unwind past ABI boundary, so without this catch, an
+// exception jiepp_command() does not itself catch (see the Issue::Exception
+// remark above) would previously crash the process (observed as rc=127)
+// instead of reporting "jiepp: error: PP01: ..." and exiting 1.
 DWORD WINAPI jiepp_thread_func(LPVOID arg) {
     auto* a = static_cast<JieppThreadArgs*>(arg);
-    a->result = jiepp_command(*a->opts);
+    try {
+        a->result = jiepp_command(*a->opts);
+    } catch (const Issue::Exception&) {
+        a->result = 1;
+    } catch (const std::exception& e) {
+        report_uncaught_exception(e);
+        a->result = 1;
+    }
     return 0;
 }
 
@@ -43,6 +69,11 @@ int main(int argc, char* argv[]) {
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
     Issue::initialize(std::cerr);
+
+    // Diagnostics raised directly by main() (below), parse_args(), or
+    // jiepp_command() before any source file has been pushed are not tied
+    // to a source file; see Issue::CLI_LOCATION.
+    Issue::CliMode cli_mode_guard;
 
     try {
         JieppOptions opts = parse_args(argc, argv);
@@ -100,12 +131,7 @@ int main(int argc, char* argv[]) {
         // Unknown error" line on top of the diagnostic already shown.
         return 1;
     } catch (const std::exception& e) {
-#ifdef JIEPP_SANDBOX
-        (void)e;
-        std::cerr << "<unknown location>: error: PP01: Unknown error\n";
-#else
-        std::cerr << "<unknown location>: error: PP01: Unknown error; " << e.what() << "\n";
-#endif
+        report_uncaught_exception(e);
         return 1;
     }
 }

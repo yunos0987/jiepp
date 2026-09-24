@@ -35,6 +35,7 @@ std::set<Issue::Code> Issue::blockings_ = make_default_blockings();
 bool Issue::silent_ = false;
 bool Issue::suppress_warnings_ = false;
 bool Issue::werror_ = false;
+bool Issue::cli_mode_ = false;
 IssueMessage& Issue::message_ = PlainTextMessage::instance();
 
 // ---------------------------------------------------------------------------
@@ -74,6 +75,7 @@ void Issue::initialize(std::ostream& stream) {
     silent_ = false;
     suppress_warnings_ = false;
     werror_ = false;
+    cli_mode_ = false;
     message_ = PlainTextMessage::instance();
 }
 
@@ -151,7 +153,14 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
     bool output_suppressed = suppress_warnings_ && is_warning(code) && !promoted;
 
     if (!silent_ && !output_suppressed && stream_) {
-        message_.message(*stream_, severity, code, context, filepath(), lineno(), 0, loc);
+        // CLI-level code (jiepp_command()/main()/parse_args(), see CliMode)
+        // raises diagnostics that are not tied to any source file while
+        // loc_stack_ still holds only the initialize()-time dummy entry
+        // (size() == 1); render those as CLI_LOCATION instead of the dummy's
+        // "<unknown location>:N.0" form, which the string-input
+        // preprocess()/preprocess_text() API keeps using unchanged.
+        std::string loc_file = (cli_mode_ && loc_stack_.size() == 1) ? CLI_LOCATION : filepath();
+        message_.message(*stream_, severity, code, context, loc_file, lineno(), 0, loc);
         *stream_ << '\n';
     }
 
@@ -204,4 +213,12 @@ Issue::Ignoring::Ignoring(std::set<Issue::Code> codes) : original_(ignorings_) {
 
 Issue::Ignoring::~Ignoring() {
     ignorings_ = std::move(original_);
+}
+
+Issue::CliMode::CliMode() : original_(cli_mode_) {
+    cli_mode_ = true;
+}
+
+Issue::CliMode::~CliMode() {
+    cli_mode_ = original_;
 }

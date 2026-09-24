@@ -103,6 +103,11 @@ void display_help_and_exit(int exit_code = 0) {
 } // namespace
 
 std::pair<std::string, std::string> define_macro_option(const std::string& arg) {
+    // Not tied to a source file; see Issue::CLI_LOCATION. Guarded here too
+    // (not only by jiepp_command(), its only non-test caller) so this
+    // function is independently correct when called directly, e.g. by tests.
+    Issue::CliMode cli_mode_guard;
+
     auto eq = arg.find('=');
     if (eq != std::string::npos) {
         std::string name = arg.substr(0, eq);
@@ -119,6 +124,13 @@ JieppOptions parse_args(int argc, char* argv[]) {
 #ifndef JIEPP_VERSION
 #define JIEPP_VERSION "0.0.0"
 #endif
+    // Diagnostics raised in this function (UNKNOWN_OPTION, INVALID_OPTION_VALUE,
+    // MISSING_OPTION_VALUE, ...) are not tied to a source file; see
+    // Issue::CLI_LOCATION. Guarded here too (not only by main()) so
+    // parse_args() is independently correct when called directly, e.g. by
+    // tests.
+    Issue::CliMode cli_mode_guard;
+
     JieppOptions opts;
     bool end_of_options = false;
 
@@ -320,12 +332,14 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
-        // Unknown option: error and exit (gcc-compatible behavior)
-        try {
-            ISSUE(UNKNOWN_OPTION, arg);
-        } catch (...) {
-            display_help_and_exit(1);
-        }
+        // Unknown option: exactly one diagnostic line on stderr and exit 1
+        // -- no usage dump (matches gcc/clang, e.g. clang's "unknown
+        // argument" error, neither of which print --help on this path).
+        // ISSUE() throws Issue::Exception; it is deliberately left
+        // unhandled here so it propagates to main()'s
+        // catch (const Issue::Exception&), which returns 1 without
+        // re-printing anything (happen() already emitted the PP70 line).
+        ISSUE(UNKNOWN_OPTION, arg);
     }
     return opts;
 }

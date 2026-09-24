@@ -132,7 +132,7 @@ TEST_F(JieppCommandTest, MultipleInputFilesRejected) {
     JieppOptions opts;
     opts.input_filepaths = {"file1.iec", "file2.iec"};
     EXPECT_NE(0, jiepp_command(opts));
-    EXPECT_EQ("<unknown location>:1.0: error: PP13: Invalid command; 'multiple input files not supported'", message());
+    EXPECT_EQ("jiepp: error: PP13: Invalid command; 'multiple input files not supported'", message());
 }
 
 TEST_F(JieppCommandTest, Regular) {
@@ -512,7 +512,7 @@ TEST_F(JieppCommandTest, ErrorFormatFileError) {
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
     opts.output_filepath = "/nonexistent/dir/output.iec";
     EXPECT_NE(0, jiepp_command(opts));
-    EXPECT_EQ("<unknown location>:1.0: error: PP10: An error occurred with the file; '/nonexistent/dir/output.iec'", message());
+    EXPECT_EQ("jiepp: error: PP10: An error occurred with the file; '/nonexistent/dir/output.iec'", message());
 }
 
 TEST_F(JieppCommandTest, DepOutputMMExcludesSystem) {
@@ -581,7 +581,7 @@ TEST_F(JieppCommandTest, DepOutputMFWriteFailure) {
     opts.dep_mode = DepMode::ALL;
     opts.dep_file = "/nonexistent/deeply/nested/path/output.d";
     EXPECT_NE(0, jiepp_command(opts));
-    EXPECT_EQ("<unknown location>:1.0: error: PP10: An error occurred with the file; '/nonexistent/deeply/nested/path/output.d'", message());
+    EXPECT_EQ("jiepp: error: PP10: An error occurred with the file; '/nonexistent/deeply/nested/path/output.d'", message());
 }
 
 // -MM Coverage: User includes not excluded

@@ -117,6 +117,13 @@ void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostr
 
 int jiepp_command(const JieppOptions& opts)
 {
+    // Diagnostics raised before any real input/include file has been pushed
+    // (-D/-o/-MF failures, INVALID_COMMAND, and the top-level input's own
+    // FILE_NOT_FOUND) are not tied to a source file; see Issue::CLI_LOCATION.
+    // Pushed here (not only by main()) so jiepp_command() is independently
+    // correct when called directly, e.g. by tests.
+    Issue::CliMode cli_mode_guard;
+
     std::ostream* output_stream = &std::cout;
     std::ofstream output_file;
     // Path of a separate dependency file (-MF / -MD / -MMD auto-named) that

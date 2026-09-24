@@ -67,7 +67,11 @@ Issue::Code PlainTextMessage::parse_code(const std::string& line) {
 }
 
 void PlainTextMessage::message(std::ostream& output, Issue::Severity severity, Issue::Code code, std::string context, std::string file, int lineno, int column, std::source_location loc_) {
-	std::string loc = file + ":" + std::to_string(lineno) + "." + std::to_string(column);
+	// Issue::happen() passes Issue::CLI_LOCATION verbatim (instead of a real
+	// file) for diagnostics not tied to any source file; render those as
+	// "jiepp: error: PPxx: message" with no ":line.column" suffix.
+	std::string loc = (file == Issue::CLI_LOCATION) ? file
+	    : file + ":" + std::to_string(lineno) + "." + std::to_string(column);
 
 	if ((code == Issue::Code::SEVERE_MESSAGE) || (code == Issue::Code::ERROR_MESSAGE) || (code == Issue::Code::WARNING_MESSAGE) || (code == Issue::Code::INFO_MESSAGE)) {
 		output << loc << ": " << severity_text(severity) << ": " << pp_code(code) << ": '" << context << "'";

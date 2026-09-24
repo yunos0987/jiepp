@@ -454,3 +454,29 @@ TEST_F(OptionTest, CLICodeSeverityClassification) {
     EXPECT_TRUE(Issue::is_error(Issue::Code::THREAD_CREATE_FAILED));
     EXPECT_TRUE(Issue::is_error(Issue::Code::STACK_LIMIT_FAILED));
 }
+
+// ---- D1/D2: unknown option -- single diagnostic, no --help dump ----
+
+TEST_F(OptionTest, ParseArgsUnknownOption) {
+    // D1: an unknown option must propagate Issue::Exception like every
+    // other option-parsing error in this file, instead of printing the full
+    // --help usage text to stdout and calling std::exit() itself (which
+    // would previously have terminated the whole test binary here).
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("--foo")};
+    EXPECT_THROW(parse_args(2, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::UNKNOWN_OPTION, code());
+}
+
+TEST_F(OptionTest, ParseArgsUnknownOptionMessageFormat) {
+    // D2: diagnostics not tied to a source file (PP70-76, PP13, PP10 for
+    // -o/-MF open failures, PP11 for the top-level input, PP01 from main)
+    // render as "jiepp: error: PPxx: message", not the string-input
+    // preprocess()/preprocess_text() API's "<unknown location>:N.0: ..."
+    // form -- exercised here for UNKNOWN_OPTION via parse_args() called
+    // directly, with no ambient jiepp_command()/main() context.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("--foo")};
+    EXPECT_THROW(parse_args(2, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ("jiepp: error: PP70: Unknown command-line option; '--foo'", msgs[0]);
+}
