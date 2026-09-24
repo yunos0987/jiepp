@@ -94,7 +94,9 @@ cmake --build --preset windows-clang-ninja-debug    # build
 ctest --preset windows-clang-ninja-debug            # test
 ```
 
-Release プリセットでは clang の ThinLTO (`-O3 -flto=thin`) が有効になります。
+`tests/` ディレクトリには loader・macro・core・constfold・env・jiepp・util 系のテストが含まれます。
+
+Release プリセットでは clang の ThinLTO (`-O3 -flto=thin`) が有効になります（Windows は常時有効、Linux では `ld.lld` が見つかった場合のみ有効で、見つからない場合は configure 時に警告が出て ThinLTO なしでビルドされます）。
 
 ### 性能測定 / Profiling
 
@@ -116,8 +118,8 @@ Windows で配布バイナリ (`jiepp.exe`) を実行する場合、以下が必
   Windows 10 以降では UCRT（Universal C Runtime）がOS に統合済みのため、個別インストール不要な場合がほとんどです。ただし、古い環境や一部カスタム設定では Redistributable が必要になることがあります。  
   不足している場合は、[Microsoft の公式ページ](https://support.microsoft.com/en-us/help/2977003/) から 2015-2022 版をダウンロード・インストールしてください。
 
-- **開発・テスト環境（Debug ビルド）**  
-  `jiepp_test.exe` を実行する場合は、上記に加えて Visual C++ の Debug ランタイムと Google Test ライブラリ が必要になります。通常、開発環境では自動的にインストール済みです。
+- **テスト実行 (`jiepp_test.exe`)**  
+  Debug・Release いずれのビルドでも `gtest.dll` / `gtest_main.dll`（ビルド時に実行ファイルと同じディレクトリに配置されます）が必要です。Debug ビルドではさらに Visual C++ の Debug ランタイムが必要になります。通常、開発環境では自動的にインストール済みです。
 
 ## 使い方 / Usage
 
@@ -156,12 +158,6 @@ cat input.iec | jiepp -
 ## サンプル再生成 / Sample Regeneration
 
 `iec_61131-3/samples/` ディレクトリのサンプル `.piec` ファイルは、対応する `.iec` ファイルを jiepp で前処理した結果です。ソースを編集した場合は再生成が必要です。手順は [CONTRIBUTING.md のサンプルの更新](CONTRIBUTING.md#サンプルの更新--updating-samples) を参照してください。
-
-```powershell
-ctest --preset windows-clang-ninja-debug
-```
-
-`tests/` ディレクトリには loader・macro・core・constfold・env・jiepp・util 系のテストが含まれます。
 
 ## Linux / WSL でのビルド
 
