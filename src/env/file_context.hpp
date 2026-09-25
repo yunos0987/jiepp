@@ -1,4 +1,6 @@
 #pragma once
+#include "lineno.hpp"
+
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -22,8 +24,13 @@ public:
     const std::vector<std::string>& syspaths() const;
 
     // ---- Line number (within current file) ----
-    int  get_lineno() const { return lineno_; }
-    void set_lineno(int n) { lineno_ = n; }
+    // item a: 64-bit storage, 32-bit unsigned wrap (see lineno.hpp) --
+    // matches gcc/clang's line counter (after 4294967295 the next line is
+    // 0). set_lineno() is the single place the wrap is applied, so every
+    // caller (advance_lineno(), handle_setline(), push_file()/pop_file())
+    // gets it for free.
+    LineNo get_lineno() const { return lineno_; }
+    void   set_lineno(LineNo n) { lineno_ = wrap_lineno(n); }
 
     // ---- Dependency tracking (for -M / -MM) ----
     // add_dependency: display_path for output, resolved_path for deduplication
@@ -43,9 +50,9 @@ public:
 
 private:
     std::vector<std::string> file_stack_;
-    std::vector<int>         lineno_stack_;
+    std::vector<LineNo>      lineno_stack_;
     std::vector<std::string> syspaths_;
-    int lineno_ = 1;
+    LineNo lineno_ = 1;
     std::vector<Dependency> deps_;
     std::unordered_set<std::string> once_files_;  // files marked with {#pragma once}
 };

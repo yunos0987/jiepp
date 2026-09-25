@@ -15,6 +15,7 @@
 // A "blank line" is a physical line all of whose characters are whitespace
 // (Token::WS tokens only — NOT Token::C, which also carries MASK_WS but is a
 // comment, not blank content).
+#include "../env/lineno.hpp"
 #include "../loader/token.hpp"
 
 #include <optional>
@@ -41,7 +42,7 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
 bool is_line_marker(const Token& t);
 
 struct LineMarker {
-    int              lineno;
+    LineNo           lineno; // item a: 64-bit storage, 32-bit unsigned wrap (see lineno.hpp)
     std::string_view enc_file; // already IEC-encoded (quotes included), or empty when the marker carries no path — a view into the source token's text; copy it out before that token is modified or moved
     bool             standard;
 };
@@ -52,6 +53,6 @@ std::optional<LineMarker> parse_line_marker(const Token& t);
 
 // Builds a line-marker token. `enc_file` is spliced back verbatim (never
 // decode/re-encode the path).
-Token make_line_marker(int lineno, std::string_view enc_file, bool standard);
+Token make_line_marker(LineNo lineno, std::string_view enc_file, bool standard);
 
 } // namespace jiepp

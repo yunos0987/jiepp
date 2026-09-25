@@ -1,6 +1,7 @@
 #include "preprocessor.hpp"
 #include "preprocessor_internal.hpp"
 
+#include "../env/lineno.hpp"
 #include "../env/param_constants.hpp"
 #include "../loader/lexer.hpp"
 #include "../loader/directive_parser.hpp" //kludge
@@ -33,13 +34,22 @@ bool strip_path(const std::string_view raw_path, std::string& path, bool& syspat
     return false;
 }
 
-// C3: strict, unsigned-decimal-only line-number operand parse. Unlike
-// std::istream >> int (the previous implementation), this does not accept
-// leading whitespace beyond a plain trim, a leading '+'/'-' sign, or a
-// value that overflows int32_t. On success, returns the parsed value and
-// the (unparsed, not yet trimmed) remainder of `s` right after the digit
-// run -- e.g. an optional quoted filepath -- for the caller to validate.
-std::optional<std::pair<std::int32_t, std::string_view>> parse_lineno_operand(std::string_view s) {
+// item a: the shared upper bound for both {#line}/{#set_line}/{#set-line}
+// and the marker form {#:N} -- 2^32 - 1, matching gcc/clang's unsigned
+// 32-bit line counter. A value above this is PP41 (clang; gcc instead
+// warns and wraps -- jiepp follows clang where the two disagree, per the
+// coordinator's rev2 decision).
+constexpr LineNo kLineNoMax = 4294967295;
+
+// C3, item a (rev2): strict, unsigned-decimal-only line-number operand
+// parse. Unlike std::istream >> int (the previous implementation), this
+// does not accept leading whitespace beyond a plain trim, a leading
+// '+'/'-' sign, or a value above kLineNoMax. On success, returns the
+// parsed value and the (unparsed, not yet trimmed) remainder of `s` right
+// after the digit run -- e.g. an optional quoted filepath -- for the
+// caller to validate. Both the named form and the marker form share this
+// same range (0..4294967295); there is no longer a form-specific bound.
+std::optional<std::pair<LineNo, std::string_view>> parse_lineno_operand(std::string_view s) {
     s = Util::ltrim_view(s);
     std::size_t i = 0;
     while (i < s.size() && s[i] >= '0' && s[i] <= '9')
@@ -49,10 +59,10 @@ std::optional<std::pair<std::int32_t, std::string_view>> parse_lineno_operand(st
     std::uint64_t v = 0;
     for (std::size_t j = 0; j < i; ++j) {
         v = v * 10 + static_cast<std::uint64_t>(s[j] - '0');
-        if (v > static_cast<std::uint64_t>(INT32_MAX))
-            return std::nullopt; // overflows the widest of the two valid ranges (C3)
+        if (v > static_cast<std::uint64_t>(kLineNoMax))
+            return std::nullopt; // above 4294967295 (C3, item a)
     }
-    return std::make_pair(static_cast<std::int32_t>(v), s.substr(i));
+    return std::make_pair(static_cast<LineNo>(v), s.substr(i));
 }
 
 // Resolve a {#syspath} operand relative to the directory of the file
@@ -202,13 +212,16 @@ void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, s
     std::string arg = preprocess_text(raw_arg, env);
     if (auto parsed = parse_lineno_operand(arg)) {
         auto [new_lineno, rest] = *parsed;
-        // C3: {#line}/{#set_line}/{#set-line} accept 1..2147483647 (0 is
-        // PP41, matching U1(a)); the marker form accepts 0..2147483646 --
-        // one less, so that a named directive's emitted marker (new_lineno
-        // - 1, below) is itself always a valid marker value.
-        const std::int32_t min_lineno = is_marker_form ? 0 : 1;
-        const std::int32_t max_lineno = is_marker_form ? 2147483646 : 2147483647;
-        if (new_lineno >= min_lineno && new_lineno <= max_lineno) {
+        // item a (rev2): both forms now accept the same range,
+        // 0..4294967295, already enforced by parse_lineno_operand() above
+        // (anything outside it fell through to nullopt, so this branch
+        // never sees it). This replaces the two different ranges
+        // introduced by commit 2cb1cc6 (U1(a): named form 1..2147483647,
+        // marker form 0..2147483646 -- one less than the named form, so a
+        // named directive's emitted N-1 marker was itself always a valid
+        // marker value). wrap_lineno() below now guarantees that instead,
+        // unconditionally, for every effective line number including 0.
+        {
             // Read the whole remainder (not just one whitespace-delimited word) so
             // quoted filenames containing spaces are captured intact; then trim
             // and parse as a single path argument. A quoted path followed by
@@ -225,7 +238,11 @@ void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, s
                 // the running counter to one less than new_lineno -- the
                 // nameless marker form's own "counter = new_lineno, next
                 // line = new_lineno + 1" semantics, which stays unchanged.
-                const int effective_lineno = is_marker_form ? new_lineno : new_lineno - 1;
+                // item a: the counter wraps mod 2^32 (wrap_lineno(), see
+                // lineno.hpp), like gcc/clang, so a named `{#line 0}` is
+                // valid: new_lineno - 1 = -1 wraps to 4294967295, and the
+                // next physical line is 0.
+                const LineNo effective_lineno = wrap_lineno(is_marker_form ? new_lineno : new_lineno - 1);
                 env.set_lineno(effective_lineno);
 #ifdef JIEPP_SANDBOX
                 // Sandbox: ignore filepath argument, keep original filepath

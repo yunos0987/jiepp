@@ -51,7 +51,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 `Env`（`env/env.hpp`）はプリプロセッサ全体の状態を保持し、3 つの Mixin 基底クラスの多重継承で構成される。
 
 - `Symtab`（`symtab.hpp/cpp`）— マクロシンボルテーブル。`undef()`/再定義で置き換えられた `Macro` は `retired_` に退避し破棄しない（取得済み `Macro*` を有効に保つため。1 回の実行内の退避でリークではない）
-- `FileContext`（`file_context.hpp/cpp`）— インクルードスタック・検索パス・行番号・依存関係追跡・`once_files_`（`{#pragma once}` の処理済みパスセット）
+- `FileContext`（`file_context.hpp/cpp`）— インクルードスタック・検索パス・行番号・依存関係追跡・`once_files_`（`{#pragma once}` の処理済みパスセット）。行番号は `LineNo`（`env/lineno.hpp`、64 ビット格納・32 ビットラップ、`Issue::LocationEntry`/`Token::line_pragma`/`LineMarker` も同じ型）
 - `Param`（`param.hpp/cpp`, `param_constants.hpp`）— リミット値・プラグマスタイル・トークンキャッシュ・`dd_mode_`（`-dD` フラグ）
 
 診断出力（`Issue`, `IssueMessage`）も `env/` が担当（詳細は「[エラー処理 (Issue)](#エラー処理-issue)」）。

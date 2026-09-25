@@ -52,7 +52,7 @@ Token Token::pragma(std::string_view key,
     return t;
 }
 
-Token Token::line_pragma(int lineno,
+Token Token::line_pragma(LineNo lineno,
                          std::optional<std::string_view> filepath,
                          bool standard,
                          int num_of_lines)

@@ -49,14 +49,14 @@ std::optional<LineMarker> parse_line_marker(const Token& t) {
     std::string_view num_part = (sp == std::string_view::npos) ? body : body.substr(0, sp);
     std::string_view enc_file = (sp == std::string_view::npos) ? std::string_view{} : body.substr(sp + 1);
 
-    int lineno = 0;
+    LineNo lineno = 0;
     auto result = std::from_chars(num_part.data(), num_part.data() + num_part.size(), lineno);
     if (result.ec != std::errc()) return std::nullopt;
 
     return LineMarker{lineno, enc_file, standard};
 }
 
-Token make_line_marker(int lineno, std::string_view enc_file, bool standard) {
+Token make_line_marker(LineNo lineno, std::string_view enc_file, bool standard) {
     std::string body = "#:" + std::to_string(lineno);
     if (!enc_file.empty()) {
         body += " ";
@@ -74,7 +74,7 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
     std::vector<Token> out;
     out.reserve(ots.size());
 
-    int         cur             = 0;
+    LineNo      cur             = 0; // item a: wrapped after every advance, see wrap_lineno()
     bool        line_has_content = false;
     std::string enc_file;
     bool        standard        = default_standard_style;
@@ -93,7 +93,7 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
         int nl = 0;
         for (const auto& t : run)
             nl += t.num_of_lines;
-        cur += nl;
+        cur = wrap_lineno(cur + nl);
 
         int blank_lines = nl - (line_has_content ? 1 : 0);
 
@@ -111,7 +111,7 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
             if (line_has_content)
                 out.push_back(Token::newline(1));
             if (mode == BlankLineMode::Markers && !next_is_marker_or_eof) {
-                out.push_back(make_line_marker(cur - 1, enc_file, standard));
+                out.push_back(make_line_marker(wrap_lineno(cur - 1), enc_file, standard));
                 out.push_back(Token::newline(1));
             }
             // Trailing inline whitespace (indentation of the next content
@@ -144,7 +144,7 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
             if (!marker->enc_file.empty())
                 enc_file = std::string(marker->enc_file);
         } else {
-            cur += t.num_of_lines;
+            cur = wrap_lineno(cur + t.num_of_lines);
         }
         // A marker token (num_of_lines == 0, always) is content-bearing:
         // it occupies its own printed line, so the run immediately

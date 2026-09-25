@@ -1,4 +1,6 @@
 #pragma once
+#include "../env/lineno.hpp"
+
 #include <memory>
 #include <set>
 #include <string>
@@ -33,7 +35,7 @@ struct Token {
                         std::optional<std::string_view> value = std::nullopt,
                         bool standard = false,
                         int num_of_lines = 0);
-    static Token line_pragma(int lineno,
+    static Token line_pragma(LineNo lineno,
                              std::optional<std::string_view> filepath = std::nullopt,
                              bool standard = false,
                              int num_of_lines = 0);

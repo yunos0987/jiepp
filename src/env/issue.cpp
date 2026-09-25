@@ -208,7 +208,7 @@ void Issue::fatal(std::string context, std::source_location loc) {
 // LineGuard
 // ---------------------------------------------------------------------------
 
-Issue::LineGuard::LineGuard(int ln, std::optional<std::string> fp) {
+Issue::LineGuard::LineGuard(LineNo ln, std::optional<std::string> fp) {
     std::string filepath_str = fp.has_value() ? std::move(*fp) : Issue::filepath();
     Issue::push({ln, std::move(filepath_str)});
 }

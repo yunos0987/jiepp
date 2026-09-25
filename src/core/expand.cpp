@@ -36,18 +36,22 @@ bool has_whitespace_before_hash(const std::string& body) {
     return (i > 0) && (i < body.size()) && (body[i] == '#');
 }
 
-void err_set_lineno(int ln) {
+void err_set_lineno(LineNo ln) {
     std::string fp = Issue::filepath();
     Issue::pop();
     Issue::push({ln, fp});
 }
 
-void advance_lineno(int delta, Env& env) {
+void advance_lineno(LineNo delta, Env& env) {
     if (delta == 0)
         return;
-    int nl = env.get_lineno() + delta;
-    env.set_lineno(nl);
-    err_set_lineno(nl);
+    // item a: set_lineno() applies the 32-bit wrap (wrap_lineno(), see
+    // lineno.hpp); err_set_lineno() must be given that *wrapped* value, not
+    // env.get_lineno() + delta recomputed separately -- otherwise the Issue
+    // location stack and env's own counter could disagree right after a
+    // wrap.
+    env.set_lineno(env.get_lineno() + delta);
+    err_set_lineno(env.get_lineno());
 }
 
 // ── jiepp extension: directive dispatch (not in Prosser) ──────────

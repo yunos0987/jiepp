@@ -1,4 +1,6 @@
 #pragma once
+#include "lineno.hpp"
+
 #include <exception>
 #include <functional>
 #include <optional>
@@ -60,7 +62,9 @@ public:
     static std::string_view codename(Code code);
 
     // ---- Location type ----
-    using LocationEntry = std::pair<int, std::string>;
+    // item a: the line number is LineNo (64-bit storage, 32-bit unsigned
+    // wrap, see lineno.hpp), matching FileContext's counter.
+    using LocationEntry = std::pair<LineNo, std::string>;
 
     // Sentinel `file` value for diagnostics raised by CLI-level code
     // (jiepp_command()/main()/parse_args(), guarded by CliMode below) before
@@ -83,7 +87,7 @@ public:
     static LocationEntry top();
     static std::string base_filepath();
     static std::string filepath() { return top().second; }
-    static int lineno() { return top().first; }
+    static LineNo lineno() { return top().first; }
 
     // ---- Ignore / block lists ----
     static void add_ignoring(Code code);
@@ -122,13 +126,13 @@ public:
 
     // ---- RAII guards ----
     struct LineGuard {
-        LineGuard(int ln, std::optional<std::string> fp = std::nullopt);
+        LineGuard(LineNo ln, std::optional<std::string> fp = std::nullopt);
         ~LineGuard();
     };
 
     // Execute f with fallback line context for error reporting.
     template <typename F>
-    static void with_lineno(int lineno, F&& f) {
+    static void with_lineno(LineNo lineno, F&& f) {
         Issue::LineGuard guard(lineno);
         f();
     }
