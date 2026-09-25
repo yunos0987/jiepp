@@ -73,6 +73,14 @@ TEST_F(LexerLiteralTest, Numbers) {
     expect_tokens({make(Token::ANY, "1_2_3_4_5_6_7_8_9_0")}, "1_2_3_4_5_6_7_8_9_0");
     expect_tokens({make(Token::ANY, "16#0f")}, "16#0f");
     expect_tokens({make(Token::ANY, "16#f_f")}, "16#f_f");
+    // Ed.3: one '_' may directly follow '#', before the first digit -- one
+    // token, not "16#" split from a macro-expandable identifier "_ff".
+    expect_tokens({make(Token::ANY, "16#_ff")}, "16#_ff");
+    // A doubled leading '_' still fails to match: only "16" is one token,
+    // and "#" / the identifier "__ff" are re-lexed separately (not one
+    // Token::ANY covering the whole literal).
+    expect_tokens({make(Token::ANY, "16"), make(Token::ANY, "#"), make(Token::ANY, "__ff")},
+                  "16#__ff");
     expect_tokens({make(Token::ANY, "10#01")}, "10#01");
     expect_tokens({make(Token::ANY, "1_2_3")}, "1_2_3");
     expect_tokens({make(Token::ANY, "1_2_3"), make(Token::ANY, "s")}, "1_2_3s");

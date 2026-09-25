@@ -140,6 +140,42 @@ TEST_F(ConstfoldTest, BaseNDoubleUnderscoreInvalid) {
     EXPECT_TRUE(empty());
 }
 
+// ---- B: Ed.3 allows one '_' directly after '#' (or the sign), before the
+// first digit ----
+
+TEST_F(ConstfoldTest, BaseNLeadingUnderscoreValid) {
+    EXPECT_NE(0LL, eval_const_expr("16#_ff = 255"));
+    EXPECT_NE(0LL, eval_const_expr("2#_1010 = 10"));
+    EXPECT_NE(0LL, eval_const_expr("8#_7_7 = 63"));
+    EXPECT_NE(0LL, eval_const_expr("16#_f_f = 255"));
+    EXPECT_NE(0LL, eval_const_expr("BYTE#16#_ff = BYTE#16#ff"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, BaseNDoubleLeadingUnderscoreInvalid) {
+    // "16#__ff": the leading '_' must be followed directly by a digit, so
+    // two in a row still fails to match, same as BaseNDoubleUnderscoreInvalid.
+    EXPECT_THROW(eval_const_expr("16#__ff"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, BaseNLoneLeadingUnderscoreInvalid) {
+    // "16#_" has nothing after the '_', so it cannot match either the
+    // leading-underscore form or the plain form.
+    EXPECT_THROW(eval_const_expr("16#_"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, BaseNSignedLeadingUnderscoreValid) {
+    // The leading '_' comes after the sign, not before it (review follow-up
+    // to item b): "16#-_ff" is base 16, sign '-', digits "_ff" -> -255.
+    EXPECT_NE(0LL, eval_const_expr("16#-_ff = -255"));
+    EXPECT_NE(0LL, eval_const_expr("16#+_ff = 255"));
+    EXPECT_TRUE(empty());
+}
+
 // ---- A2: based literals accumulate in uint64_t; report overflow past 2^64-1 ----
 
 TEST_F(ConstfoldTest, BaseNMaxUint64Valid) {

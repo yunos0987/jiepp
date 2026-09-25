@@ -29,11 +29,13 @@ ALPHA   [A-Za-z_]
 "\\or\\"    { return cf::CfParser::token::CF_LOR; }
 "\\xor\\"   { return cf::CfParser::token::CF_LXOR; }
 
-[0-9]+#[+-]?[0-9A-Za-z](_?[0-9A-Za-z])* {
-    // A1: '_' may only separate two digits, so a trailing '_' (e.g.
-    // "16#ff_") or a doubled '_' (e.g. "2#1__0") is not part of this match;
-    // the leftover characters are re-lexed (typically as CF_IDENT), which
-    // the parser then reports as a syntax error (PP52).
+[0-9]+#[+-]?(_?[0-9A-Za-z])+ {
+    // A1: '_' may directly precede any digit, including the first (Ed.3,
+    // e.g. "16#_ff"), but must always be followed by another alnum: a
+    // trailing '_' (e.g. "16#ff_"), a leading '_' with nothing after it
+    // (e.g. "16#_"), or a doubled '_' (e.g. "2#1__0") is not part of this
+    // match; the leftover characters are re-lexed (typically as CF_IDENT),
+    // which the parser then reports as a syntax error (PP52).
     const char* p = yytext;
     int base = 0;
     while (*p != '#') { base = base * 10 + (*p - '0'); ++p; }

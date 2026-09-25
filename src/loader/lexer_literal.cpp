@@ -152,6 +152,14 @@ bool try_push_number(std::vector<Token>& result,
         auto q = p + 1;
         if (q < text.size() && (text[q] == '+' || text[q] == '-'))
             ++q;
+        // Ed.3: one '_' may directly follow '#' (or the sign), preceding
+        // the first digit, e.g. "16#_ff" (§6.1). A trailing/double '_' is
+        // still rejected: the '_' is only consumed here if a digit follows.
+        if (q < text.size() && text[q] == '_'
+            && q + 1 < text.size()
+            && std::isalnum(static_cast<unsigned char>(text[q + 1]))) {
+            ++q;
+        }
         if (q < text.size() && std::isalnum(static_cast<unsigned char>(text[q]))) {
             ++q;
             while (q < text.size()) {

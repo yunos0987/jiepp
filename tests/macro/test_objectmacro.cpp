@@ -23,6 +23,13 @@ TEST_F(ObjectMacroTest, Simple) {
     EXPECT_EQ(Issue::Code::MACRO_REDEFINED, code());
 }
 
+TEST_F(ObjectMacroTest, BasedLiteralLeadingUnderscoreNotExpanded) {
+    // B: Ed.3's "16#_ff" is one literal token (the '_' directly after '#'),
+    // not "16#" followed by a macro-expandable identifier "_ff".
+    EXPECT_EQ("x := 16#_ff;", pp("{#define _ff 0}x := 16#_ff;"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(ObjectMacroTest, RedefineWarning) {
     EXPECT_NO_THROW(pp("{#define N 2};N;{#define N 3};N"));
     EXPECT_EQ(Issue::Code::MACRO_REDEFINED, code());
