@@ -345,14 +345,16 @@ int jiepp_command(const JieppOptions& opts)
                     dispath = fs::path(opts.input_filepaths[0]).generic_string();
 
                 if (opts.input_filepaths.empty() || ((opts.input_filepaths.size() == 1) && (opts.input_filepaths[0] == "-"))) {
-                    env.push_file("<stdin>");
-                    Issue::push({1, dispath});
+                    // item f: RAII-guarded (see expand()'s file-inclusion
+                    // wrapper in core/expand.cpp for the declaration-order
+                    // rationale), so an ERROR raised while processing stdin
+                    // still pops both stacks correctly.
+                    FileContext::FileScope file_guard(env, "<stdin>");
+                    Issue::LineGuard line_guard(1, dispath);
                     ots.push_back(Token::line_pragma(0, dispath, env.is_standard_pragma_style()));
                     ots.push_back(Token::newline());
                     auto its = iec3_tokens(std::cin, env.get_remove_comments(), 1);
                     expand(its, ots, env);
-                    Issue::pop();
-                    env.pop_file();
                 } else {
                     // Exactly one input file here: more than one was already
                     // rejected (PP13) before this point.

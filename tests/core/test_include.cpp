@@ -155,6 +155,25 @@ TEST_F(IncludeTest, CircularInclude) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(IncludeTest, ExceptionInsideIncludeLeavesStacksBalanced) {
+    // item f: expand()'s file-inclusion wrapper (src/core/expand.cpp) now
+    // RAII-guards its push_file()/Issue::push() pair (FileContext::FileScope
+    // + Issue::LineGuard) instead of a manual push...pop pair. Reuse
+    // CircularInclude's PP12 -- it throws from several nested include
+    // levels deep at once, so it would have left that many entries unpopped
+    // on each stack pre-fix -- and check that both stacks are back to
+    // exactly their pre-call depth after the exception, not just "smaller".
+    fs::current_path(jiepp_root_dir());
+    Env env = setup();
+    env.set_max_include_depth(8);
+    const auto loc_depth_before  = Issue::loc_stack_.size();
+    const auto file_depth_before = env.num_of_files();
+    EXPECT_THROW(pp("{#include '" + (DIR / "circular_a.iec").generic_string() + "'}", env),
+                 Issue::Exception);
+    EXPECT_EQ(loc_depth_before,  Issue::loc_stack_.size());
+    EXPECT_EQ(file_depth_before, env.num_of_files());
+}
+
 // ─── U1: {#syspath} resolves relative to the directory of the file
 // containing the directive, not the process's current working directory
 // (same base rule as {#include}). ────────────────────────────────────────

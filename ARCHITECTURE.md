@@ -120,6 +120,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - 診断は `Issue::happen(code, context)` で発生させる。`ISSUE(CODE, ...)` は `Issue::happen(Issue::Code::CODE, ...)` の短縮形で、呼び出し位置の `std::source_location` を自動で渡す（Debug ビルドは末尾に `@file:line` を付ける。`issue_message.cpp` の `#ifndef NDEBUG` 分岐）。`[[noreturn]]` な `Issue::fatal()`／`FATAL()` は `happen(Code::FATAL, ...)` の後 `throw std::logic_error("unreachable")` する
 - 例外送出の有無は `continue_mode_` フラグで 2 通り。既定（`false`、`preprocess()`/`expand()` 等が依存）は `SEVERE` と `blockings_`（既定で全 `ERROR`/`SEVERE`）内の `ERROR`、`-Werror` 格上げの `WARNING` で常に `Issue::Exception` を送出する。継続モード（`true`。`Issue::ContinueMode` RAII ガード、`jiepp_command()` のみ使用）は中断コード（`SEVERE` + `continue_abort_codes_`。`jiepp_command()` は PP10〜14, 60, 61 を渡す）だけが例外を送出し、他は `error_count_` を加算して続行する。件数・`--silent`/`{#ignore}`・終了コードと出し分けは [SPECIFICATION.md §16](SPECIFICATION.md#16-エラーコード一覧--issue-code-reference) を参照
 - `Issue::CliMode` という別の RAII ガードは、ソースファイルがまだスタックに積まれていない CLI 段階（`main()`／`parse_args()`／`jiepp_command()` 冒頭）の診断を `Issue::CLI_LOCATION`（`"jiepp"`）で「`jiepp: error: PPxx: message`」形式（`line.column` なし）に出す。文字列入力 API の `"<unknown location>:N.0"` 形式とは別物で両者は独立して共存する
+- ファイル処理に入る際の `Issue::loc_stack_`／`FileContext` の include スタックへの push/pop は、`Issue::LineGuard` と `FileContext::FileScope` の 2 つの RAII ガードで対になっている（`core/expand.cpp` の `expand()` ファイルインクルード版・`jiepp/jiepp.cpp` の標準入力分岐）。処理中に例外（ライブラリモードで `Issue::Exception` が送出される場合）が飛んでも両スタックは必ず呼び出し前の深さに戻る
 
 エラーコード定義（Issue Code X-macro）: `src/env/issue_codes.def` に全エラーコードを 4 フィールドの X-macro で定義する。
 

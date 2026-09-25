@@ -631,15 +631,17 @@ std::vector<Token>& expand(const std::string& filepath,
     // Record dependency for -M / -MM output
     env.add_dependency(fullpath, disppath, load_type == Loader::LoadType::SINCLUDE);
 
-    env.push_file(fullpath);
-    Issue::push({1, disppath});
+    // item f: RAII-guarded, so an exception raised while processing this
+    // file (or a file it includes) still pops both stacks correctly.
+    // Declaration order matters: file_guard is constructed (pushed) first
+    // and destructed (popped) last, matching the pre-RAII manual pairing.
+    FileContext::FileScope file_guard(env, fullpath);
+    Issue::LineGuard line_guard(1, disppath);
 
     ots.push_back(Token::line_pragma(0, disppath, env.is_standard_pragma_style()));
     ots.push_back(Token::newline());
     auto its = Loader::tokens(fullpath, env);
     expand(*its, ots, env);
 
-    Issue::pop();
-    env.pop_file();
     return ots;
 }

@@ -19,6 +19,28 @@ public:
     int         num_of_files() const;
     int         include_level() const;
 
+    // item f: RAII guard for the include stack -- push_file() on
+    // construction, pop_file() on destruction, so a file-processing
+    // function's entry is popped even if an exception (e.g. an ERROR
+    // raised somewhere inside that file, in library/throw mode) unwinds
+    // through it. Used by expand()'s file-inclusion wrapper
+    // (core/expand.cpp) and jiepp.cpp's stdin branch, both of which pair
+    // it with the matching Issue::LineGuard -- declare the FileScope
+    // first, then the LineGuard, so construction/destruction order
+    // matches the pre-RAII manual push_file()+Issue::push() /
+    // Issue::pop()+pop_file() pairs exactly (file pushed first, popped
+    // last).
+    struct FileScope {
+        FileScope(FileContext& fc, std::string filepath) : fc_(fc) {
+            fc_.push_file(std::move(filepath));
+        }
+        ~FileScope() { fc_.pop_file(); }
+        FileScope(const FileScope&) = delete;
+        FileScope& operator=(const FileScope&) = delete;
+    private:
+        FileContext& fc_;
+    };
+
     // ---- Syspaths ----
     void                            add_syspath(std::string syspath);
     const std::vector<std::string>& syspaths() const;

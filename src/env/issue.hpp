@@ -128,6 +128,11 @@ public:
     struct LineGuard {
         LineGuard(LineNo ln, std::optional<std::string> fp = std::nullopt);
         ~LineGuard();
+        // item f review follow-up: a copy would push once but pop twice
+        // (double-pop) when both the original and the copy go out of
+        // scope. Non-copyable, like FileContext::FileScope.
+        LineGuard(const LineGuard&) = delete;
+        LineGuard& operator=(const LineGuard&) = delete;
     };
 
     // Execute f with fallback line context for error reporting.
