@@ -2,12 +2,14 @@
 #include <cctype>
 #include <filesystem>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 #include <ranges>
 #include <fstream>
 #include <optional>
+#include <system_error>
 #include <utility>
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -32,6 +34,45 @@ inline const fs::path& jiepp_test_dir() {
     static const fs::path p = jiepp_root_dir() / "tests";
     return p;
 }
+
+// ---- RAII test guards (item e) ----
+//
+// Plain save-a-variable / restore-at-the-end-of-the-test CWD and std::cout
+// swaps leave that global state (CWD, std::cout's streambuf) permanently
+// changed for every later test in the same binary if an assertion failure
+// or an unexpected exception skips the manual restore line. These two
+// guards make the restore unconditional instead.
+
+// Switches the process CWD to `dir` on construction and restores whatever
+// CWD was in effect before construction, in a non-throwing destructor (the
+// error_code overload of current_path() -- a destructor must not throw).
+// Non-copyable.
+class CwdGuard {
+public:
+    explicit CwdGuard(const fs::path& dir) : saved_(fs::current_path()) {
+        fs::current_path(dir);
+    }
+    ~CwdGuard() {
+        std::error_code ec;
+        fs::current_path(saved_, ec);
+    }
+    CwdGuard(const CwdGuard&) = delete;
+    CwdGuard& operator=(const CwdGuard&) = delete;
+private:
+    fs::path saved_;
+};
+
+// Redirects std::cout to `target`'s streambuf on construction and restores
+// std::cout's original streambuf on destruction. Non-copyable.
+class CoutRedirect {
+public:
+    explicit CoutRedirect(std::ostream& target) : saved_(std::cout.rdbuf(target.rdbuf())) {}
+    ~CoutRedirect() { std::cout.rdbuf(saved_); }
+    CoutRedirect(const CoutRedirect&) = delete;
+    CoutRedirect& operator=(const CoutRedirect&) = delete;
+private:
+    std::streambuf* saved_;
+};
 
 // ---- preprocess helpers ----
 

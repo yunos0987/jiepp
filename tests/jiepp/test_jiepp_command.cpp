@@ -1962,9 +1962,11 @@ TEST_F(JieppCommandTest, OutputDashMeansStdout) {
     opts.output_filepath = "-";
 
     std::ostringstream captured;
-    std::streambuf* saved_cout = std::cout.rdbuf(captured.rdbuf());
-    int rc = jiepp_command(opts);
-    std::cout.rdbuf(saved_cout);
+    int rc;
+    {
+        CoutRedirect cout_guard(captured);
+        rc = jiepp_command(opts);
+    }
 
     ASSERT_EQ(0, rc);
     EXPECT_NE(std::string::npos, captured.str().find("out := 7"))
@@ -2002,12 +2004,10 @@ TEST_F(JieppCommandTest, MDWithoutOutputDerivesDepFileInCwdNotInputDirectory) {
     // run from a different CWD writes "in.d" there, not "subdir/in.d". Run
     // with CWD pointed at a scratch directory (restored afterward) so
     // nothing lands in the repo.
-    fs::path prev_cwd = fs::current_path();
     fs::path scratch_dir = fs::temp_directory_path() / "jiepp_md_subdir_test";
     std::error_code ec;
     fs::remove_all(scratch_dir, ec);
     fs::create_directories(scratch_dir / "subdir");
-    fs::current_path(scratch_dir);
 
     fs::path src = scratch_dir / "subdir" / "in.iec";
     {
@@ -2023,11 +2023,12 @@ TEST_F(JieppCommandTest, MDWithoutOutputDerivesDepFileInCwdNotInputDirectory) {
     opts.dep_mode = DepMode::ALL;
 
     std::ostringstream captured;
-    std::streambuf* saved_cout = std::cout.rdbuf(captured.rdbuf());
-    int rc = jiepp_command(opts);
-    std::cout.rdbuf(saved_cout);
-
-    fs::current_path(prev_cwd);
+    int rc;
+    {
+        CwdGuard cwd_guard(scratch_dir);
+        CoutRedirect cout_guard(captured);
+        rc = jiepp_command(opts);
+    }
 
     ASSERT_EQ(0, rc);
     EXPECT_TRUE(fs::exists(dep_in_cwd))
@@ -2043,12 +2044,10 @@ TEST_F(JieppCommandTest, MDWithOutputNoSuffixAppendsDotD) {
     // wholesale rather than, say, being rejected or left as "out" -- matches
     // GNU cpp 5.3.0's plain "argument, with a suffix of .d" rule (verified
     // empirically; see unit G's report).
-    fs::path prev_cwd = fs::current_path();
     fs::path scratch_dir = fs::temp_directory_path() / "jiepp_md_nosuffix_test";
     std::error_code ec;
     fs::remove_all(scratch_dir, ec);
     fs::create_directories(scratch_dir);
-    fs::current_path(scratch_dir);
 
     fs::path src = scratch_dir / "in.iec";
     {
@@ -2064,8 +2063,11 @@ TEST_F(JieppCommandTest, MDWithOutputNoSuffixAppendsDotD) {
     opts.MD = true;
     opts.dep_mode = DepMode::ALL;
 
-    int rc = jiepp_command(opts);
-    fs::current_path(prev_cwd);
+    int rc;
+    {
+        CwdGuard cwd_guard(scratch_dir);
+        rc = jiepp_command(opts);
+    }
 
     ASSERT_EQ(0, rc);
     EXPECT_TRUE(fs::exists(out_path));
@@ -2084,12 +2086,10 @@ TEST_F(JieppCommandTest, OutputDashWithMDDerivesDepFileFromLiteralDashArgument) 
     // the current directory. Run with CWD pointed at a scratch directory
     // (restored afterward), not the repo root, since that stray "-.d" is
     // exactly the kind of file this test must not leave behind.
-    fs::path prev_cwd = fs::current_path();
     fs::path scratch_dir = fs::temp_directory_path() / "jiepp_dash_md_test";
     std::error_code ec;
     fs::remove_all(scratch_dir, ec);
     fs::create_directories(scratch_dir);
-    fs::current_path(scratch_dir);
 
     fs::path src = scratch_dir / "o_dash_md.iec";
     {
@@ -2107,11 +2107,12 @@ TEST_F(JieppCommandTest, OutputDashWithMDDerivesDepFileFromLiteralDashArgument) 
     opts.dep_mode = DepMode::ALL;
 
     std::ostringstream captured;
-    std::streambuf* saved_cout = std::cout.rdbuf(captured.rdbuf());
-    int rc = jiepp_command(opts);
-    std::cout.rdbuf(saved_cout);
-
-    fs::current_path(prev_cwd);
+    int rc;
+    {
+        CwdGuard cwd_guard(scratch_dir);
+        CoutRedirect cout_guard(captured);
+        rc = jiepp_command(opts);
+    }
 
     ASSERT_EQ(0, rc);
     EXPECT_TRUE(fs::exists(dash_dep_marker))
@@ -2142,9 +2143,10 @@ fs::path write_temp_iec(const std::string& stem, const std::string& content) {
 
 std::string run_capturing_stdout(const JieppOptions& opts, int& rc) {
     std::ostringstream captured;
-    std::streambuf* saved_cout = std::cout.rdbuf(captured.rdbuf());
-    rc = jiepp_command(opts);
-    std::cout.rdbuf(saved_cout);
+    {
+        CoutRedirect cout_guard(captured);
+        rc = jiepp_command(opts);
+    }
     return captured.str();
 }
 
@@ -2356,12 +2358,10 @@ TEST_F(JieppCommandTest, DepFileOpenFailureAfterBuildPrintsFullOutputToStdout) {
     // see unit G's report) -- so this test runs with CWD pointed at a
     // scratch directory (restored afterward) rather than assuming the dep
     // file lands next to the input under temp_directory_path().
-    fs::path prev_cwd = fs::current_path();
     fs::path scratch_dir = fs::temp_directory_path() / "jiepp_e4b_dep_stdout_test";
     std::error_code ec;
     fs::remove_all(scratch_dir, ec);
     fs::create_directories(scratch_dir);
-    fs::current_path(scratch_dir);
 
     fs::path src = scratch_dir / "e4b_dep_stdout.iec";
     {
@@ -2380,9 +2380,11 @@ TEST_F(JieppCommandTest, DepFileOpenFailureAfterBuildPrintsFullOutputToStdout) {
     opts.dep_mode = DepMode::ALL;
 
     int rc = 0;
-    std::string out = run_capturing_stdout(opts, rc);
-
-    fs::current_path(prev_cwd);
+    std::string out;
+    {
+        CwdGuard cwd_guard(scratch_dir);
+        out = run_capturing_stdout(opts, rc);
+    }
 
     EXPECT_EQ(1, rc);
     EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;

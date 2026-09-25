@@ -184,10 +184,11 @@ TEST_F(IncludeTest, SyspathRelativeToDeclaringFile) {
     // against CWD (the old, pre-U1 behaviour) instead of main.iec's own
     // directory, this test would pick up the decoy content instead.
     fs::path main_abs = jiepp_root_dir() / DIR / "syspath_base/main.iec";
-    fs::current_path(jiepp_root_dir() / DIR / "syspath_base_cwd_decoy");
     std::string o;
-    EXPECT_NO_THROW({ o = pp_file(main_abs); });
-    fs::current_path(jiepp_root_dir());
+    {
+        CwdGuard cwd_guard(jiepp_root_dir() / DIR / "syspath_base_cwd_decoy");
+        EXPECT_NO_THROW({ o = pp_file(main_abs); });
+    }
     EXPECT_NE(std::string::npos, o.find("MAIN_LIB;"));
     EXPECT_EQ(std::string::npos, o.find("DECOY_LIB;"));
     EXPECT_TRUE(empty());

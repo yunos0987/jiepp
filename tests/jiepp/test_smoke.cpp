@@ -256,8 +256,6 @@ TEST_F(SmokeTest, SyspathFromStdinUsesCwd) {
     // U1: when reading from stdin there is no "containing file" on disk, so
     // a relative {#syspath} operand falls back to the process's current
     // working directory (same as {#syspath} with no current file at all).
-    fs::path saved_cwd = fs::current_path();
-
     fs::path lib_dir = tmp_dir_ / "stdin_syspath_lib";
     fs::create_directories(lib_dir);
     write_file(lib_dir / "lib.iec", "{#define STDIN_LIB_LOADED 1}\n");
@@ -265,9 +263,11 @@ TEST_F(SmokeTest, SyspathFromStdinUsesCwd) {
     fs::path input = tmp_dir_ / "stdin_syspath.iec";
     write_file(input, "{#syspath 'stdin_syspath_lib'}\n{#sinclude 'lib.iec'}\nloaded := STDIN_LIB_LOADED;\n");
 
-    fs::current_path(tmp_dir_);
-    auto r = run("-", input.generic_string());
-    fs::current_path(saved_cwd);
+    RunResult r;
+    {
+        CwdGuard cwd_guard(tmp_dir_);
+        r = run("-", input.generic_string());
+    }
 
     EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
     EXPECT_NE(r.out.find("loaded := 1"), std::string::npos)
@@ -280,8 +280,6 @@ TEST_F(SmokeTest, IOptionRelativeToCwdNotInputDir) {
     // -I is a CLI option (unlike {#syspath}), so it must keep resolving
     // relative to the process's CWD even though the input file lives in a
     // different directory that has its own decoy "mylib".
-    fs::path saved_cwd = fs::current_path();
-
     fs::path sub_dir = tmp_dir_ / "iopt_sub";
     fs::create_directories(sub_dir);
     write_file(sub_dir / "input.iec", "{#sinclude 'lib.iec'}\nloaded := LIB_LOADED;\n");
@@ -297,9 +295,11 @@ TEST_F(SmokeTest, IOptionRelativeToCwdNotInputDir) {
     fs::create_directories(real_lib_dir);
     write_file(real_lib_dir / "lib.iec", "{#define LIB_LOADED 1}\n");
 
-    fs::current_path(tmp_dir_);
-    auto r = run("-I mylib \"iopt_sub/input.iec\"");
-    fs::current_path(saved_cwd);
+    RunResult r;
+    {
+        CwdGuard cwd_guard(tmp_dir_);
+        r = run("-I mylib \"iopt_sub/input.iec\"");
+    }
 
     EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
     EXPECT_NE(r.out.find("loaded := 1"), std::string::npos)
