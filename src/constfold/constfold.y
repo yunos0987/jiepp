@@ -77,6 +77,36 @@ static int64_t wrap_neg(int64_t a) {
     return static_cast<int64_t>(static_cast<std::uint64_t>(0) - static_cast<std::uint64_t>(a));
 }
 
+// D: shift count n and left operand v/L for '<<'/'>>' in {#if}. "Out of
+// range" means n < 0 or n >= 64 (checked without shifting by an
+// out-of-range or negative amount, which is undefined behavior). Neither
+// helper below can trigger undefined behavior for any int64_t input: every
+// left shift is an unsigned shift by a count in [0,63], and the only right
+// shift is of a plain (possibly negative) int64_t by a count in [0,63],
+// which C++20 defines as arithmetic (floor division by 2^n).
+//
+// Int follows clang's PPExpressionEvaluator (SPEC §6.3, rev2/rev3
+// decision): out of range, '<<' gives 0 and '>>' behaves like a shift by
+// 63 (-1 for a negative value, 0 otherwise). In range, both are the
+// ordinary C shift.
+static int64_t shift_int(int64_t v, int64_t n, bool left) {
+    if (n < 0 || n >= 64)
+        return left ? 0 : (v < 0 ? -1 : 0);
+    if (left)
+        return static_cast<int64_t>(static_cast<std::uint64_t>(v) << n);
+    return v >> n;
+}
+
+// Bitstring is not a C type: out of range gives 0 for every width and both
+// directions (coordinator decision, rev3) -- unlike Int's '>>', which does
+// not clamp. In range, both directions are the ordinary logical shift
+// (masked to width by the caller via make_bitstring()).
+static std::uint64_t shift_bits(std::uint64_t v, int64_t n, bool left) {
+    if (n < 0 || n >= 64)
+        return 0;
+    return left ? (v << n) : (v >> n);
+}
+
 static CfValue cast_to_bool(const CfValue& v) {
     switch (v.kind) {
     case ValueKind::Bool:      return v;
@@ -225,13 +255,13 @@ shift_expr:
         CfValue l = $1;
         int64_t n = cast_scalar_to_int($3);
         if (l.kind == ValueKind::Int) {
-            $$ = CfValue::int_value(n < 0 || n >= 64 ? 0 : l.ival << n);
+            $$ = CfValue::int_value(shift_int(l.ival, n, true));
         } else if (l.kind == ValueKind::Bitstring) {
-            $$ = make_bitstring(n < 0 || n >= 64 ? 0 : l.bits << n, l.bit_kind);
+            $$ = make_bitstring(shift_bits(l.bits, n, true), l.bit_kind);
         } else {
             CfValue bit = cast_int_literal_to_dword(l);
             if (bit.kind == ValueKind::Bitstring)
-                $$ = make_bitstring(n < 0 || n >= 64 ? 0 : bit.bits << n, bit.bit_kind);
+                $$ = make_bitstring(shift_bits(bit.bits, n, true), bit.bit_kind);
             else type_error();
         }
     }
@@ -239,13 +269,13 @@ shift_expr:
         CfValue l = $1;
         int64_t n = cast_scalar_to_int($3);
         if (l.kind == ValueKind::Int) {
-            $$ = CfValue::int_value(n < 0 || n >= 64 ? 0 : l.ival >> n);
+            $$ = CfValue::int_value(shift_int(l.ival, n, false));
         } else if (l.kind == ValueKind::Bitstring) {
-            $$ = make_bitstring(n < 0 || n >= 64 ? 0 : l.bits >> n, l.bit_kind);
+            $$ = make_bitstring(shift_bits(l.bits, n, false), l.bit_kind);
         } else {
             CfValue bit = cast_int_literal_to_dword(l);
             if (bit.kind == ValueKind::Bitstring)
-                $$ = make_bitstring(n < 0 || n >= 64 ? 0 : bit.bits >> n, bit.bit_kind);
+                $$ = make_bitstring(shift_bits(bit.bits, n, false), bit.bit_kind);
             else type_error();
         }
     }
