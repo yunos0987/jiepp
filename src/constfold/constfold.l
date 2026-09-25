@@ -100,6 +100,26 @@ ALPHA   [A-Za-z_]
     clean.reserve(yyleng);
     for (const char* p = yytext; *p; ++p)
         if (*p != '_') clean.push_back(*p);
+    // H: also compare the separator-stripped spelling with any leading
+    // zeros removed against 2^63's magnitude, so "09223372036854775808"
+    // and "9_223_372_036_854_775_808" match it exactly like the canonical
+    // spelling does.
+    std::size_t first_nonzero = clean.find_first_not_of('0');
+    const std::string digits = (first_nonzero == std::string::npos)
+        ? "0" : clean.substr(first_nonzero);
+    if (digits == "9223372036854775808") {
+        // H: no diagnostic here. Whether this magnitude is valid depends on
+        // what follows it, which only the grammar knows: a unary minus
+        // directly before it (CF_MINUS CF_INT_MIN_MAG) accepts it as
+        // INT64_MIN with no diagnostic; every other occurrence reports the
+        // same PP52 "integer literal overflow" as today, via unary_expr's/
+        // cast_value's CF_INT_MIN_MAG rule. cflval.text keeps the original
+        // spelling (separators and leading zeros included) for that
+        // diagnostic.
+        cflval = CfValue::int_value(0);
+        cflval.text = yytext;
+        return cf::CfParser::token::CF_INT_MIN_MAG;
+    }
     int64_t ival = 0;
     try {
         ival = std::stoll(clean);

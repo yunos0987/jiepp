@@ -30,6 +30,12 @@ static int yylex(cf::CfParser::semantic_type* yylval) {
     case cf::CfParser::token::CF_FLOAT:
     case cf::CfParser::token::CF_TYPE_KW:
     case cf::CfParser::token::CF_IDENT:
+    // H: CF_INT_MIN_MAG carries cflval.text (the original spelling) for the
+    // "integer literal overflow" diagnostic in unary_expr; without this
+    // case the variant's CfValue slot is never constructed and every rule
+    // that reads $1/$2 for this token (including $1.text) is undefined
+    // behavior.
+    case cf::CfParser::token::CF_INT_MIN_MAG:
         yylval->emplace<CfValue>(cflval);
         break;
     default:
@@ -185,7 +191,7 @@ void cf::CfParser::error(const std::string& msg) {
 %token CF_TRUE CF_FALSE
 %token CF_NOT CF_AND CF_OR CF_XOR CF_MOD
 %token <CfValue> CF_TYPE_KW
-%token <CfValue> CF_INT CF_FLOAT
+%token <CfValue> CF_INT CF_FLOAT CF_INT_MIN_MAG
 %token <CfValue> CF_IDENT
 %token CF_LPAREN CF_RPAREN
 %token CF_PLUS CF_MINUS CF_STAR CF_SLASH
@@ -194,9 +200,15 @@ void cf::CfParser::error(const std::string& msg) {
 %token CF_HASH
 %token CF_UNKNOWN
 %token CF_END 0
+// H: fails the build on any shift/reduce or reduce/reduce conflict,
+// including in unary_expr/unary_core below (prototyped against bison 3.8.2
+// in scratchpad/followups/judge/cf_proto.y: 0 conflicts for this split
+// form; the naive "CF_MINUS unary_expr" + "CF_MINUS CF_INT_MIN_MAG" form
+// gives 22 reduce/reduce conflicts).
+%expect 0
 
 %type <CfValue> expr or_expr and_expr xor_expr not_expr cmp_expr
-%type <CfValue> shift_expr add_expr bor_expr bxor_expr band_expr mul_expr unary_expr primary
+%type <CfValue> shift_expr add_expr bor_expr bxor_expr band_expr mul_expr unary_expr unary_core primary
 %type <CfValue> cast_value
 
 %%
@@ -380,13 +392,30 @@ mul_expr:
     }
   ;
 
+// H: split so the grammar (not the lexer) decides which occurrences of '-'
+// are unary and adjacent to CF_INT_MIN_MAG (the 2^63 magnitude,
+// "9223372036854775808"). unary_core's closure after CF_MINUS does not
+// contain "unary_expr -> . CF_INT_MIN_MAG", so "CF_MINUS CF_INT_MIN_MAG" is
+// the only place that magnitude becomes INT64_MIN with no diagnostic;
+// everywhere else (bare, after '(', after another '+'/'not', as a binary
+// operand) reduces through unary_expr's own CF_INT_MIN_MAG rule below,
+// which reports the same PP52 "integer literal overflow" as today.
 unary_expr:
+    unary_core                        { $$ = $1; }
+  | CF_INT_MIN_MAG                    {
+        ISSUE(INVALID_EXPRESSION, "integer literal overflow: " + $1.text);
+        $$ = CfValue::int_value(0);
+    }
+  ;
+
+unary_core:
     primary                           { $$ = $1; }
+  | CF_MINUS CF_INT_MIN_MAG           { $$ = CfValue::int_value(INT64_MIN); }
   | CF_PLUS  unary_expr               {
         if ($2.kind == ValueKind::Int || $2.kind == ValueKind::Float) $$ = $2;
         else type_error();
     }
-  | CF_MINUS unary_expr               {
+  | CF_MINUS unary_core               {
         if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(wrap_neg($2.ival));
         else if ($2.kind == ValueKind::Float) $$ = CfValue::float_value(-$2.fval);
         else type_error();
@@ -428,6 +457,12 @@ cast_value:
     CF_TRUE                           { $$ = CfValue::bool_value(true); }
   | CF_FALSE                          { $$ = CfValue::bool_value(false); }
   | CF_INT                            { $$ = $1; }
+  // H: a typed literal accepts the 2^63 magnitude directly (no diagnostic):
+  // LWORD#9223372036854775808 = LWORD#16#8000000000000000, since the bit
+  // pattern fits; narrower widths mask it like any other large value
+  // (BYTE#9223372036854775808 = BYTE#16#00). LWORD#-9223372036854775808
+  // goes through CF_MINUS cast_value below (wrap_neg of INT64_MIN).
+  | CF_INT_MIN_MAG                    { $$ = CfValue::int_value(INT64_MIN); }
   | CF_FLOAT                          { $$ = $1; }
   | CF_MINUS cast_value               {
         if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(wrap_neg($2.ival));

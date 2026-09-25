@@ -215,3 +215,142 @@ TEST_F(ConstfoldTest, IntegerLiteralOverflow) {
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
     EXPECT_TRUE(empty());
 }
+
+// ---- H: the 2^63 magnitude (9223372036854775808, __LINT_MIN__'s absolute
+// value) in {#if}. gcc/clang read this as unsigned with a warning, so
+// "-9223372036854775808 < 0" is false there; jiepp has no unsigned Int, so
+// (coordinator decision, option A) it accepts the magnitude as INT64_MIN
+// only when a unary minus is its *direct* operand (CF_MINUS
+// CF_INT_MIN_MAG in the grammar) or inside a typed literal, and keeps
+// today's PP52 "integer literal overflow" everywhere else. Edge-case table
+// from plan.md item h.
+
+TEST_F(ConstfoldTest, LintMinMagDirectUnaryMinus) {
+    EXPECT_NE(0LL, eval_const_expr("-9223372036854775808 < 0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, LintMinMagWhitespaceBeforeLiteralStillDirect) {
+    // Whitespace between the '-' and the literal does not change tokenization.
+    EXPECT_NE(0LL, eval_const_expr("- 9223372036854775808 < 0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, LintMinMagParenthesizedDirectMinus) {
+    EXPECT_NE(0LL, eval_const_expr("(-9223372036854775808) < 0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, LintMinMagInsideParenthesesNotDirectOverflows) {
+    // Only a minus directly before the literal counts: here the '-' is
+    // outside the parentheses, so the literal itself is bare inside them
+    // and reports the same PP52 as any other occurrence.
+    EXPECT_THROW(eval_const_expr("-(9223372036854775808)"), Issue::Exception);
+    // message() (not code(), which would drain the one-message buffer
+    // first) also confirms exactly one diagnostic and its code (PP52).
+    EXPECT_NE(std::string::npos,
+              message().find("PP52: Invalid expression; 'integer literal overflow: "
+                              "9223372036854775808'"));
+}
+
+TEST_F(ConstfoldTest, LintMinMagDoubleMinusWraps) {
+    // jiepp lexes "--" as two CF_MINUS tokens (no "--" rule in constfold.l):
+    // the inner "-9223372036854775808" is INT64_MIN via CF_MINUS
+    // CF_INT_MIN_MAG, and the outer '-' negates it, which wraps back to
+    // INT64_MIN (two's-complement) with no diagnostic.
+    EXPECT_NE(0LL, eval_const_expr("--9223372036854775808 = -9223372036854775807 - 1"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, LintMinMagAfterUnaryPlusOrNotOverflows) {
+    // The literal is not the *direct* operand of '-' in either case (it is
+    // the operand of '+'/'not', which are not the special grammar rule), so
+    // both still report PP52.
+    EXPECT_THROW(eval_const_expr("-+9223372036854775808"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+    EXPECT_THROW(eval_const_expr("-not 9223372036854775808"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+}
+
+TEST_F(ConstfoldTest, LintMinMagAfterBinaryMinusOverflows) {
+    // A binary '-' (here, add_expr's CF_MINUS) does not count either.
+    EXPECT_THROW(eval_const_expr("1-9223372036854775808"), Issue::Exception);
+    EXPECT_NE(std::string::npos,
+              message().find("PP52: Invalid expression; 'integer literal overflow: "
+                              "9223372036854775808'"));
+}
+
+TEST_F(ConstfoldTest, LintMinMagAfterUnaryMinusThenBinaryMinusWraps) {
+    // "1 - -9223372036854775808": the second '-' is the direct (unary)
+    // operand of the literal, giving INT64_MIN; "1 - INT64_MIN" then wraps
+    // (two's-complement) with no diagnostic.
+    EXPECT_NE(0LL, eval_const_expr("1 - -9223372036854775808 = -9223372036854775807"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, LintMinMagAfterTypeKeywordMinusOverflows) {
+    // Bare "BOOL" (no '#') is an ordinary primary worth 0 (`primary:
+    // CF_TYPE_KW` yields CfValue::int_value(0), i.e. ValueKind::Int, not
+    // ValueKind::Bool); the '-' between it and the literal is the binary
+    // add_expr minus, not a unary operand of the literal.
+    EXPECT_THROW(eval_const_expr("BOOL - 9223372036854775808"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+}
+
+TEST_F(ConstfoldTest, LintMinMagBareOrWithUnaryPlusOverflows) {
+    EXPECT_THROW(eval_const_expr("9223372036854775808"), Issue::Exception);
+    EXPECT_NE(std::string::npos,
+              message().find("PP52: Invalid expression; 'integer literal overflow: "
+                              "9223372036854775808'"));
+    EXPECT_THROW(eval_const_expr("+9223372036854775808"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+}
+
+TEST_F(ConstfoldTest, ValuesAboveMinMagStillOverflow) {
+    // One more than the magnitude, and __ULINT_MAX__'s value: neither
+    // matches the exact "9223372036854775808" digit string the lexer
+    // special-cases, so both still go through std::stoll and overflow, same
+    // as before this change.
+    EXPECT_THROW(eval_const_expr("9223372036854775809"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+    EXPECT_THROW(eval_const_expr("18446744073709551615"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+}
+
+TEST_F(ConstfoldTest, LintMinMagSeparatorAndLeadingZeroSpellingsValid) {
+    // The lexer strips '_' separators and leading zeros before comparing
+    // against the magnitude string, so both spellings are recognized too.
+    EXPECT_NE(0LL, eval_const_expr("-9_223_372_036_854_775_808 < 0"));
+    EXPECT_TRUE(empty());
+    EXPECT_NE(0LL, eval_const_expr("-09223372036854775808 < 0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, LintMinMagSeparatorSpellingOverflowMessageKeepsOriginalText) {
+    // REQUIRED (design review): exercises the bare-literal PP52 diagnostic
+    // path with cflval.text set from a non-canonical spelling, so a
+    // regression that forgets to construct CF_INT_MIN_MAG's semantic value
+    // (see the yylex() wrapper's switch) shows up as a crash or garbage
+    // text here, not just as a wrong *value*.
+    EXPECT_THROW(eval_const_expr("9_223_372_036_854_775_808"), Issue::Exception);
+    EXPECT_NE(std::string::npos, message().find(
+        "PP52: Invalid expression; 'integer literal overflow: "
+        "9_223_372_036_854_775_808'"));
+}
+
+TEST_F(ConstfoldTest, LintMinTypedLiteral) {
+    // H: a typed literal accepts the magnitude directly (cast_value's
+    // CF_INT_MIN_MAG rule): the bit pattern fits LWORD exactly.
+    EXPECT_NE(0LL, eval_const_expr(
+        "LWORD#9223372036854775808 = LWORD#16#8000000000000000"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, BasedLiteralMinMagUnaffected) {
+    // The based-literal path (constfold.l's '#' rule) is untouched: it
+    // already accumulates in uint64_t and wraps to INT64_MIN with no
+    // diagnostic.
+    EXPECT_NE(0LL, eval_const_expr(
+        "16#8000000000000000 = -9223372036854775807 - 1"));
+    EXPECT_TRUE(empty());
+}

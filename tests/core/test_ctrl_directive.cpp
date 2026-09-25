@@ -174,3 +174,34 @@ TEST_F(CtrlDirectiveTest, ExprExactErrorCases) {
         EXPECT_EQ(c, code()) << i;
     }
 }
+
+// ---- H: __LINT_MIN__ in {#if}; the 2^63 magnitude via macro expansion
+// (constfold's token stream comes from the already-expanded text, so the
+// grammar's "CF_MINUS CF_INT_MIN_MAG" rule applies the same way whether the
+// '-' and the literal were typed directly or produced by macro expansion) ----
+
+TEST_F(CtrlDirectiveTest, LintMinUsableInIf) {
+    EXPECT_EQ("1e", strip(pp("{#if __LINT_MIN__ < 0}1{#endif}e")));
+    EXPECT_EQ("1e", strip(pp("{#if __LINT_MIN__ = -9223372036854775807 - 1}1{#endif}e")));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(CtrlDirectiveTest, LintMinPlainTextOutputUnchanged) {
+    // builtin_macros.def is untouched: outside {#if}, __LINT_MIN__ is still
+    // plain object-macro replacement, unrelated to constfold.
+    EXPECT_EQ("x := -9223372036854775808;", pp("x := __LINT_MIN__;"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(CtrlDirectiveTest, MacroDefinedNegativeMinMagUsableInIf) {
+    // The macro's replacement text "-9223372036854775808" is expanded into
+    // the {#if} condition before constfold sees it, so this is the same
+    // token sequence as a literal "-9223372036854775808" in the source.
+    EXPECT_EQ("1e", strip(pp("{#define M -9223372036854775808}{#if M < 0}1{#endif}e")));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(CtrlDirectiveTest, MacroDefinedMinMagAfterUnaryMinusUsableInIf) {
+    EXPECT_EQ("1e", strip(pp("{#define N 9223372036854775808}{#if -N < 0}1{#endif}e")));
+    EXPECT_TRUE(empty());
+}
