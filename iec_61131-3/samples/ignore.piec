@@ -1,7 +1,7 @@
 (*{#:0 'iec_61131-3/samples/ignore.iec'}*)
 (* ignore.iec - Suppress error codes with #ignore *)
 
-(* Suppress warnings for undefined directives *)
+(* Suppress diagnostics for unknown directives *)
 
 
 (*{#:998}*)

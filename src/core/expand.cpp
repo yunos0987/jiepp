@@ -62,7 +62,7 @@ void dispatch_directive(const Token& t,
     bool active = ctrl_is_active(ctrl);
 
     if (kind == -1) {
-        // B1: PP45 (UNKNOWN_DIRECTIVE, WARNING) / PP46 (INVALID_DIRECTIVE_NAME,
+        // B1: PP45 (UNKNOWN_DIRECTIVE, ERROR) / PP46 (INVALID_DIRECTIVE_NAME,
         // ERROR) are reported here, at dispatch time, instead of at lex time
         // (the former DirectiveToken::ready(), which no longer diagnoses
         // this). Dispatch time has the correct line number and correctly

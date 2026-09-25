@@ -1102,7 +1102,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP42 | `INVALID_IGNORE_OPERAND` | ERROR | Invalid operand for 'ignore' | `{#ignore}` の不正なオペランド |
 | PP43 | `INVALID_LIMIT_OPERAND` | ERROR | Invalid operand for limit directive | 制限ディレクティブの不正なオペランド |
 | PP44 | `INVALID_PARAMETER_VALUE` | ERROR | Invalid parameter value | パラメータ値が不正（0以下等） |
-| PP45 | `UNKNOWN_DIRECTIVE` | WARNING | Unknown directive | 未知のディレクティブ。有効な範囲（`{#if 0}` の中でない）でだけ発行される |
+| PP45 | `UNKNOWN_DIRECTIVE` | ERROR | Unknown directive | 未知のディレクティブ（gcc/clang の "invalid preprocessing directive" と同等）。有効な範囲（`{#if 0}` の中でない）でだけ発行される |
 | PP46 | `INVALID_DIRECTIVE_NAME` | ERROR | Invalid directive name | 英字または `_` で始まるが、識別子として使えない文字を含む名前（例: `{#foo.bar}`）。先頭が数字など識別子として始まれない名前は `PP45` になる |
 | PP47 | `INVALID_PATH` | ERROR | Invalid path | 不正なパス |
 | PP48 | `INVALID_PRAGMA_STYLE_OPERAND` | WARNING | Invalid operand for pragma style directive | `{#pp_output_pragma_style}` の不正なオペランド |
@@ -1144,6 +1144,7 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | `#if` / `#elif` / `#else` / `#endif` | `{#if}` / `{#elif}` / `{#else}` / `{#endif}` | 同等 |
 | `#ifdef` / `#ifndef` | `{#ifdef}` / `{#ifndef}` | 同等 |
 | `#error` / `#warning` | `{#error}` / `{#warning}` | 同等。jiepp コマンドラインは `#error`/`{#error}` の後も gcc と同じく処理を続ける（§16「重大度」） |
+| `#foo`（無効なディレクティブ） | `{#foo}`（無効なディレクティブ） | 同等。gcc/clang の "invalid preprocessing directive" と同じくエラー（`PP45`、§16「重大度」） |
 | `#line N "file"` | `{#line N 'file'}` / `{#line N "file"}` | 同等（次の行の行番号を N にする）。両方のクォートを同じ意味で受理（エイリアス `set_line`/`set-line` も同等）、出力される行マーカーと `__FILE__` は常に `'...'`（IEC エスケープ適用済み）で再エンコード（§9） |
 | `#arg` (stringize) | `@arg` | IEC 61131-3 では `#` が別の意味を持つため |
 | `##` (token paste) | `@@` | 同上 |

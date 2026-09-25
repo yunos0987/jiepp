@@ -24,12 +24,17 @@ TEST_F(DirectiveTest, LineComment) {
 }
 
 TEST_F(DirectiveTest, Unknown) {
-    const std::string input = "{# /**/};{# (**)};{# //};{# */};{# /*};";
-    EXPECT_EQ(";;;;;", pp(input));
-    auto cs = codes();
-    ASSERT_EQ(5u, cs.size());
-    for (auto c : cs)
-        EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, c);
+    // PP45 (UNKNOWN_DIRECTIVE) is ERROR: each throws in library mode.
+    EXPECT_THROW(pp("{# /**/};"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
+    EXPECT_THROW(pp("{# (**)};"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
+    EXPECT_THROW(pp("{# //};"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
+    EXPECT_THROW(pp("{# */};"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
+    EXPECT_THROW(pp("{# /*};"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
 }
 
 TEST_F(DirectiveTest, InvalidDirectiveName) {
@@ -45,11 +50,12 @@ TEST_F(DirectiveTest, InvalidDirectiveName) {
 // suppressed inside an inactive {#if 0} block) ----
 
 TEST_F(DirectiveTest, UnknownDirectiveReportsCorrectLineNumber) {
-    // {#foo} is on physical line 3 (two blank lines precede it).
-    EXPECT_EQ(";\n;\n", pp(";\n;\n{#foo}"));
+    // {#foo} is on physical line 3 (two blank lines precede it). PP45 is
+    // ERROR, so library mode throws.
+    EXPECT_THROW(pp(";\n;\n{#foo}"), Issue::Exception);
     auto actual_diags = messages();
     const std::vector<std::string> expected_diags = {
-        "<unknown location>:3.0: warning: PP45: Unknown directive; 'foo'",
+        "<unknown location>:3.0: error: PP45: Unknown directive; 'foo'",
     };
     EXPECT_EQ(expected_diags, actual_diags);
 }
@@ -79,6 +85,9 @@ TEST_F(DirectiveTest, UnknownDirectiveInsideInactiveIfNotReported) {
 TEST_F(DirectiveTest, UnknownDirectiveReportedOncePerInclusion) {
     fs::current_path(jiepp_root_dir());
     static const fs::path dir = "tests/core/test_include";
+    // PP45 is ERROR now: use ContinueMode so both occurrences are counted
+    // instead of the first one throwing.
+    Issue::ContinueMode guard({});
     EXPECT_NO_THROW(pp_file(dir / "unknown_directive_double.iec"));
     auto cs = codes();
     ASSERT_EQ(2u, cs.size());
@@ -95,6 +104,13 @@ TEST_F(DirectiveTest, Ignore) {
     EXPECT_THROW(pp("{#line x}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_SETLINE_OPERAND, code());
     EXPECT_NO_THROW(pp("{#ignore PP41}{#line x}"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, IgnorePP45SuppressesUnknownDirective) {
+    // is_ignored(code) && !is_severe(code) still applies now that PP45 is
+    // ERROR instead of WARNING: {#ignore PP45} suppresses it completely.
+    EXPECT_NO_THROW(pp("{#ignore PP45}{#foo}"));
     EXPECT_TRUE(empty());
 }
 
@@ -243,9 +259,13 @@ TEST_F(DirectiveTest, UnknownDirectiveInsideMacroArgumentSingleDiagnostic) {
     // must not be misclassified as an "output directive" -- in two's-
     // complement, -1 has every bit set, so -1 & MASK_OUTPUT is nonzero --
     // and must not receive a second, wrong OPERATION_NOT_ALLOWED diagnostic
-    // on top of the single UNKNOWN_DIRECTIVE warning that dispatch_directive()
+    // on top of the single UNKNOWN_DIRECTIVE error that dispatch_directive()
     // (expand.cpp) raises for the same malformed text (B1: this used to be
     // raised at lex time by DirectiveToken::ready(), which no longer does).
+    // PP45 is ERROR now: use ContinueMode so processing runs to completion
+    // instead of throwing, so the "exactly one diagnostic" guard can still
+    // be checked against the full output.
+    Issue::ContinueMode guard({});
     EXPECT_EQ(";[1]\n\n", pp("{#define F(x) [x]};F(\n{#bogus}\n1)"));
     auto cs = codes();
     ASSERT_EQ(1u, cs.size());
@@ -367,7 +387,8 @@ TEST_F(DirectiveTest, NewlineSplitsDirectiveName) {
     // A newline breaks up what would otherwise be one directive-name
     // token, so '#def\nine' is looked up (and rejected) as unknown
     // directive 'def', just like the plain unknown-directive case above.
-    EXPECT_NO_THROW(pp("{#def\nine X 1}"));
+    // PP45 is ERROR, so library mode throws.
+    EXPECT_THROW(pp("{#def\nine X 1}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
 }
 

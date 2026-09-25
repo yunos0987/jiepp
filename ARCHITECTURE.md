@@ -61,7 +61,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 字句解析ヘルパー: `lexer_comment.cpp`, `lexer_pragma.cpp`, `lexer_literal.cpp`, `lexer_helpers.hpp/cpp`。`.def` マクロ定義も含む。
 
 - `token.hpp` の `DirectiveToken` はディレクティブをビットマスクで分類する。`MASK_OUTPUT` は自身のハンドラが `ots`（出力トークン列）へ直接書き込むディレクティブ（`{#include}` 等）を示し、マクロ引数収集中に見つかると囲むマクロ展開より先に出力してしまうため拒否される
-- 未知のディレクティブ名（`DirectiveToken::name_to_kind()` が解決できないキー）は `directive_token.cpp` の `classify_unknown_directive()` が PP45 (`UNKNOWN_DIRECTIVE`, WARNING) / PP46 (`INVALID_DIRECTIVE_NAME`, ERROR) に振り分けるが、実際に診断を出すのは `core/expand.cpp` の `dispatch_directive()` 1 箇所のみ（有効なコード範囲内のときだけ）
+- 未知のディレクティブ名（`DirectiveToken::name_to_kind()` が解決できないキー）は `directive_token.cpp` の `classify_unknown_directive()` が PP45 (`UNKNOWN_DIRECTIVE`, ERROR) / PP46 (`INVALID_DIRECTIVE_NAME`, ERROR) に振り分けるが、実際に診断を出すのは `core/expand.cpp` の `dispatch_directive()` 1 箇所のみ（有効なコード範囲内のときだけ）
 - `{` と `#` の間に空白・改行・コメントがあると通常のプラグマとして扱われる。空白/改行なら `PP28`（`WHITESPACE_BEFORE_DIRECTIVE`）警告（`lexer_pragma.cpp`）
 - `Token`（`token.hpp`）はトークン 1 個を表す構造体（`text`, `kind` 等のフィールド）
 

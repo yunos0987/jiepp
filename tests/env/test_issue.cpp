@@ -22,7 +22,7 @@ TEST_F(IssueTest, IsError) {
 
 TEST_F(IssueTest, IsWarning) {
     EXPECT_TRUE(Issue::is_warning(Issue::Code::WARNING_MESSAGE));
-    EXPECT_TRUE(Issue::is_warning(Issue::Code::UNKNOWN_DIRECTIVE));
+    EXPECT_TRUE(Issue::is_warning(Issue::Code::INVALID_PRAGMA_STYLE_OPERAND));
     EXPECT_FALSE(Issue::is_warning(Issue::Code::FILE_NOT_FOUND));
     EXPECT_FALSE(Issue::is_warning(Issue::Code::FATAL));
     EXPECT_FALSE(Issue::is_warning(Issue::Code::INFO_MESSAGE));
@@ -106,12 +106,13 @@ TEST_F(IssueTest, DefaultBlockings) {
     // ERROR codes are blocked by default
     EXPECT_TRUE(Issue::is_blocked(Issue::Code::FILE_NOT_FOUND));
     EXPECT_TRUE(Issue::is_blocked(Issue::Code::EXPR_TYPE_ERROR));
+    // UNKNOWN_DIRECTIVE (PP45) is ERROR, so it is blocked by default too.
+    EXPECT_TRUE(Issue::is_blocked(Issue::Code::UNKNOWN_DIRECTIVE));
     // SEVERE codes are blocked by default
     EXPECT_TRUE(Issue::is_blocked(Issue::Code::FATAL));
     EXPECT_TRUE(Issue::is_blocked(Issue::Code::OPERATION_NOT_ALLOWED));
     // WARNING codes are NOT blocked by default
     EXPECT_FALSE(Issue::is_blocked(Issue::Code::WARNING_MESSAGE));
-    EXPECT_FALSE(Issue::is_blocked(Issue::Code::UNKNOWN_DIRECTIVE));
     // INFO codes are NOT blocked by default
     EXPECT_FALSE(Issue::is_blocked(Issue::Code::INFO_MESSAGE));
 }

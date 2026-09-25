@@ -17,8 +17,9 @@
 // a key DirectiveToken::name_to_kind() couldn't resolve.
 Issue::Code classify_unknown_directive(std::string_view key) {
     // If key starts with an identifier char but is NOT a pure identifier
-    // (e.g. "if;" with trailing semicolon), it looks like a typo → ERROR.
-    // Pure identifiers (e.g. "pragma") and non-identifier keys → WARNING only.
+    // (e.g. "if;" with trailing semicolon), it looks like a typo → ERROR
+    // (INVALID_DIRECTIVE_NAME). Pure identifiers (e.g. "pragma") and
+    // non-identifier keys → ERROR too (UNKNOWN_DIRECTIVE).
     auto is_ident_start = [](unsigned char c) { return std::isalpha(c) || c == '_'; };
     auto is_ident_cont  = [](unsigned char c) { return std::isalnum(c) || c == '_'; };
     bool starts_like_ident = !key.empty() && is_ident_start(static_cast<unsigned char>(key[0]));

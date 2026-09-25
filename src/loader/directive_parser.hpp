@@ -20,6 +20,6 @@ std::pair<std::string, std::string> parse_directive(std::string_view text);
 // with an identifier char but contains a character not valid in an
 // identifier, e.g. "if;") is INVALID_DIRECTIVE_NAME (PP46, ERROR); anything
 // else (e.g. a plain, unrelated pragma body) is UNKNOWN_DIRECTIVE (PP45,
-// WARNING). Shared between dispatch_directive() (expand.cpp, src/core/) --
+// ERROR). Shared between dispatch_directive() (expand.cpp, src/core/) --
 // the sole place that reports the diagnostic -- and directive_token.cpp.
 Issue::Code classify_unknown_directive(std::string_view key);

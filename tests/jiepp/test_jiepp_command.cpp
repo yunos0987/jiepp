@@ -2466,3 +2466,60 @@ TEST_F(JieppCommandTest, SilentStillCountsErrorsAndExitsNonZero) {
     EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
     EXPECT_NE(std::string::npos, out.find("AFTER"))  << out;
 }
+
+// C: PP45 (UNKNOWN_DIRECTIVE) is now ERROR, like gcc's "invalid
+// preprocessing directive": it is not in jiepp_continue_abort_codes(), so
+// continue mode counts it and keeps going, exiting 1 with the rest of the
+// file still emitted.
+TEST_F(JieppCommandTest, UnknownDirectiveIsErrorAndContinues) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("unknown_directive_error", "x;\n{#foo}\ny;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("x;")) << out;
+    EXPECT_NE(std::string::npos, out.find("y;")) << out;
+    EXPECT_NE(std::string::npos, message().find("error: PP45")) << message();
+}
+
+// C3: -w only suppresses WARNING-severity output (Issue::suppress_warnings_
+// checks is_warning(code)); it must not hide PP45 now that it is ERROR.
+TEST_F(JieppCommandTest, UnknownDirectiveNotHiddenByDashW) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("unknown_directive_dash_w", "x;\n{#foo}\ny;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.suppress_warnings = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("x;")) << out;
+    EXPECT_NE(std::string::npos, out.find("y;")) << out;
+    EXPECT_NE(std::string::npos, message().find("error: PP45")) << message();
+}
+
+// C4: {#ignore PP45} suppresses the diagnostic entirely -- no error is
+// counted, so the run exits 0.
+TEST_F(JieppCommandTest, UnknownDirectiveIgnoredExitsZero) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("unknown_directive_ignored", "{#ignore PP45}\nx;\n{#foo}\ny;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("x;")) << out;
+    EXPECT_NE(std::string::npos, out.find("y;")) << out;
+    EXPECT_TRUE(empty());
+}

@@ -54,7 +54,7 @@ JIEPP_ISSUE_CODE(INVALID_SETLINE_OPERAND,     41, ERROR,   "Invalid operand for 
 JIEPP_ISSUE_CODE(INVALID_IGNORE_OPERAND,      42, ERROR,   "Invalid operand for 'ignore'")
 JIEPP_ISSUE_CODE(INVALID_LIMIT_OPERAND,       43, ERROR,   "Invalid operand for limit directive")
 JIEPP_ISSUE_CODE(INVALID_PARAMETER_VALUE,     44, ERROR,   "Invalid parameter value")
-JIEPP_ISSUE_CODE(UNKNOWN_DIRECTIVE,           45, WARNING, "Unknown directive")
+JIEPP_ISSUE_CODE(UNKNOWN_DIRECTIVE,           45, ERROR,   "Unknown directive")
 JIEPP_ISSUE_CODE(INVALID_DIRECTIVE_NAME,      46, ERROR,   "Invalid directive name")
 JIEPP_ISSUE_CODE(INVALID_PATH,                47, ERROR,   "Invalid path")
 JIEPP_ISSUE_CODE(INVALID_PRAGMA_STYLE_OPERAND, 48, WARNING, "Invalid operand for pragma style directive")
