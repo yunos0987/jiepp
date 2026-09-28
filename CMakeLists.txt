@@ -92,6 +92,7 @@ set(JIEPP_SOURCES
     src/util/text.cpp
     src/util/path.cpp
     src/util/iec_61131-3.cpp
+    src/util/stack_guard.cpp
     src/loader/token.cpp
     src/loader/directive_token.cpp
     src/loader/lexer.cpp

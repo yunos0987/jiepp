@@ -41,7 +41,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 | `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp`, `line_compaction.hpp/cpp` | ディレクティブ処理・マクロ展開本体（`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む） |
 | `macro/` | `macro.hpp/cpp`, `macro_builtin.cpp` | `Macro` クラスと組み込みオブジェクトマクロ |
 | `constfold/` | `constfold.hpp/cpp`, `constfold_internal.hpp`, `constfold.l`, `constfold.y` | `#if` / `#elif` 式の定数畳み込み |
-| `util/` | `path.hpp/cpp`, `text.hpp/cpp`, `iec_61131-3.hpp/cpp` | `Util` 名前空間の低レベルヘルパー: パス正規化 (`absolute_path()`, `canonical_path()`)、トリム (`ltrim_view()`/`rtrim_view()`/`trim_view()`)、IEC 文字列エンコード (`encode_iec_string()`) |
+| `util/` | `path.hpp/cpp`, `text.hpp/cpp`, `iec_61131-3.hpp/cpp`, `stack_guard.hpp/cpp` | `Util` 名前空間の低レベルヘルパー: パス正規化 (`absolute_path()`, `canonical_path()`)、トリム (`ltrim_view()`/`rtrim_view()`/`trim_view()`)、IEC 文字列エンコード (`encode_iec_string()`)、スタック枯渇ガード（`note_stack_base()`/`stack_nearly_exhausted()`。スレッド入口で基点を記録し、`expand()` 入口で残量を検査する） |
 | `tools/perftest/` | `perftest.py`, `cases/<name>/<name>.py` | 性能測定ハーネス（`src/` 外）。CMake `profiling` ターゲットが `jiepp` を直接起動して計測（詳細は CONTRIBUTING.md「性能測定 / Profiling」） |
 
 `Loader::fullpath()` はインクルードパス解決結果を `Util::canonical_path()`（symlink 解決・OS 正規化）で正規化する。この正規化済みパスは `{#pragma once}` の処理済みファイル集合・`Loader::tokens()` のトークンキャッシュキー・`-M`/`-MM` 依存関係の重複排除に共通で使う同一性キー。

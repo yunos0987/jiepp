@@ -11,6 +11,7 @@
 #include "preprocessor_internal.hpp"
 
 #include "../macro/macro.hpp"
+#include "../util/stack_guard.hpp"
 #include "../util/text.hpp"
 
 #include <algorithm>
@@ -321,6 +322,23 @@ namespace {
 struct ExpansionDepthGuard {
     Env& env;
     explicit ExpansionDepthGuard(Env& e) : env(e) {
+        // Checked first, before the depth counter moves and before PP60, so
+        // a throw here leaves expansion_depth() untouched, and {#ignore
+        // PP60} cannot turn deep nesting into a crash by letting expansion
+        // continue past the depth limit on a near-exhausted stack.
+        if (Util::stack_nearly_exhausted()) {
+            const std::size_t kib = Util::stack_budget() >> 10;
+            ISSUE(STACK_EXHAUSTED,
+                  "expansion depth " + std::to_string(env.expansion_depth()) +
+                  " with a " + std::to_string(kib) + " KiB stack; retry with --recursion-limit greater than " +
+                  std::to_string(kib / 8));
+            // STACK_EXHAUSTED is SEVERE: happen() always throws for it
+            // (ignore list, blockings and continue mode cannot stop it, see
+            // Issue::happen()). This explicit throw is defense-in-depth so a
+            // future change there cannot silently turn this back into a
+            // stack overflow.
+            throw Issue::Exception(Issue::Code::STACK_EXHAUSTED);
+        }
         env.inc_expansion_depth();
         if (env.expansion_depth() > env.get_max_expansion_depth()) {
             // U6: ISSUE() throws before this constructor finishes, so this

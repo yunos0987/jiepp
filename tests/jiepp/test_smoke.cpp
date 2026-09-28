@@ -445,3 +445,60 @@ TEST_F(SmokeTest, DefaultDepthLimitReportsPP60NotCrash) {
     EXPECT_EQ(r.exit_code, 1);
     EXPECT_NE(r.err.find("PP60"), std::string::npos) << "stderr: " << r.err;
 }
+
+// A small explicit --recursion-limit exhausts the stack well before the
+// (raised) expansion-depth limit, so PP63 must fire instead of a crash, and
+// instead of PP60 (which the raised depth limit never reaches).
+TEST_F(SmokeTest, SmallStackReportsPP63NotCrash) {
+    constexpr int kDepth = 1000;
+    fs::path input = tmp_dir_ / "nested_fmacro_small_stack.iec";
+    write_file(input, nested_macro_source(kDepth));
+
+    auto r = run("--recursion-limit 128 --max-expansion-depth 2000 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("PP63"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("PP60"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("program Main"), std::string::npos) << "stdout: " << r.out;
+}
+
+// PP63 is SEVERE, so {#ignore PP60} (which lets deep nesting run past PP60
+// without stopping) and even {#ignore PP63} itself cannot turn a small
+// stack into a crash: PP63 still fires and still stops the run.
+TEST_F(SmokeTest, IgnoredPP60ReportsPP63NotCrash) {
+    constexpr int kDepth = 1000;
+
+    auto with_prefix = [](const std::string& prefix) {
+        return prefix + nested_macro_source(kDepth);
+    };
+
+    // Control: without {#ignore PP60}, the lowered depth limit (16) reports
+    // PP60 well before the small stack (128 * 8 KiB) would be exhausted.
+    {
+        fs::path input = tmp_dir_ / "ignored_pp60_control.iec";
+        write_file(input, with_prefix("{#max_expansion_depth 16}\n"));
+        auto r = run("--recursion-limit 128 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 1);
+        EXPECT_NE(r.err.find("PP60"), std::string::npos) << "stderr: " << r.err;
+    }
+
+    // With {#ignore PP60}, nesting continues past the depth limit until the
+    // small stack is exhausted, reporting PP63 instead of crashing.
+    {
+        fs::path input = tmp_dir_ / "ignored_pp60.iec";
+        write_file(input, with_prefix("{#max_expansion_depth 16}\n{#ignore PP60}\n"));
+        auto r = run("--recursion-limit 128 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 1);
+        EXPECT_NE(r.err.find("PP63"), std::string::npos) << "stderr: " << r.err;
+        EXPECT_EQ(r.err.find("PP60"), std::string::npos) << "stderr: " << r.err;
+    }
+
+    // {#ignore PP63} is accepted (any well-formed PPnn is) but has no
+    // effect: PP63 is SEVERE, so it still fires and still stops the run.
+    {
+        fs::path input = tmp_dir_ / "ignored_pp60_pp63.iec";
+        write_file(input, with_prefix("{#max_expansion_depth 16}\n{#ignore PP60}\n{#ignore PP63}\n"));
+        auto r = run("--recursion-limit 128 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 1);
+        EXPECT_NE(r.err.find("PP63"), std::string::npos) << "stderr: " << r.err;
+    }
+}

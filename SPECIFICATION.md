@@ -723,6 +723,8 @@ B 14;
 
 条件コンパイルの構造的エラーコード（`PP24`〜`PP27`、§16）を `{#ignore}` で抑制しても、条件コンパイル処理自体は不安定にならない。診断メッセージは抑制されるが、対応する構文異常は内部で安全に無視され、抑制対象の行以降のコンテンツも通常どおり出力される。
 
+SEVERE のコード（例: `PP63`）は `{#ignore}` を書いても抑制されない（§16「重大度」）。
+
 ---
 
 ## 11. ランタイム制限ディレクティブ / Runtime Limit Directives
@@ -738,6 +740,8 @@ B 14;
 | `{#pp_output_pragma_style STYLE}` | `--pp-output-pragma-style STYLE` | `annotated` | プラグマ出力スタイル |
 
 CLI オプションで設定した値はソースコード内のディレクティブで上書きできない（ロックされる）。
+
+**スタック残量の検査**: マクロ展開は入れ子 1 段ごとにスタックを使う（関数マクロで Release ビルド約 2 KiB）。jiepp コマンドは展開に入るたびにスタックの残りを調べ、256 KiB を下回ると `STACK_EXHAUSTED`（`PP63`、SEVERE）を出して処理を中断する。この検査は `PP60` の判定より先に行う。既定（深度上限 256、スタック 8 MiB）では先に `PP60` が出るので、`PP63` が出るのは `--max-expansion-depth`/`{#max_expansion_depth}` を大きくしたとき、`{#ignore PP60}` を使ったとき、または `--recursion-limit` でスタックを小さくしたときに限られる。`--recursion-limit` でスタックを大きくすれば、より深い入れ子を処理できる。ライブラリとして使う場合（`preprocess()` 等）はこの検査を行わない。
 
 `{#max_blank_lines}` は他の制限ディレクティブと異なる非自明な意味論を持つ: 空行圧縮は展開完了**後**に一度だけ行われ、その時点の値（＝ファイル内で最後に実行された `{#max_blank_lines}` の値）が出力全体に適用される。ファイル先頭付近の空行区間でも、ファイル後方の `{#max_blank_lines}` によって圧縮挙動が決まる（`{#max_if_nesting}` のように展開中に逐次適用される制限とは異なる）。
 
@@ -1109,7 +1113,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 
 **jiepp コマンドラインでの継続モード**: jiepp コマンド（`jiepp_command()`。CLI 本体）は、ライブラリの既定動作と別に、gcc と同じ「エラーが出ても最後まで処理を続ける」モードで動く。
 
-- 中断するのは SEVERE と `PP10`（`FILE_ERROR`）・`PP11`（`FILE_NOT_FOUND`）・`PP12`（`MAX_INCLUDE_DEPTH_EXCEEDED`）・`PP13`（`INVALID_COMMAND`）・`PP14`（`INCLUDE_TARGET_IS_DIRECTORY`）・`PP60`（`MAX_EXPANSION_DEPTH_EXCEEDED`）・`PP61`（`MAX_IF_NESTING_EXCEEDED`）だけ。gcc がまだ中断しない場合でも jiepp は中断する（例: インクルード深度超過を許すと処理量が指数的に増えかねないため）
+- 中断するのは SEVERE（`PP63` など）と `PP10`（`FILE_ERROR`）・`PP11`（`FILE_NOT_FOUND`）・`PP12`（`MAX_INCLUDE_DEPTH_EXCEEDED`）・`PP13`（`INVALID_COMMAND`）・`PP14`（`INCLUDE_TARGET_IS_DIRECTORY`）・`PP60`（`MAX_EXPANSION_DEPTH_EXCEEDED`）・`PP61`（`MAX_IF_NESTING_EXCEEDED`）だけ。gcc がまだ中断しない場合でも jiepp は中断する（例: インクルード深度超過を許すと処理量が指数的に増えかねないため）
 - 上記以外の ERROR（`{#error}` を含む）はメッセージを出してエラー件数を 1 増やし処理を続ける。`-Werror` で昇格した WARNING も、元のコードが中断コードでなければ同様に件数へ加算するだけ
 - `--silent`/`-w` は表示だけを抑制し件数には影響しない。`{#ignore}` で抑制した診断は表示も件数加算も行わない
 - 終了コードは、処理を中断した場合、またはエラー件数が 1 件以上ある場合に `1`
@@ -1171,6 +1175,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP60 | `MAX_EXPANSION_DEPTH_EXCEEDED` | ERROR | Maximum expansion depth exceeded | マクロ展開深度上限超過 |
 | PP61 | `MAX_IF_NESTING_EXCEEDED` | ERROR | Maximum conditional nesting depth exceeded | 条件分岐ネスト深度上限超過 |
 | PP62 | `SANDBOX_RESTRICTED_DIRECTIVE` | ERROR | Directive is restricted in sandbox mode | サンドボックスモードで禁止されたディレクティブ |
+| PP63 | `STACK_EXHAUSTED` | SEVERE | Stack nearly exhausted | マクロ展開の入れ子が深く、スタックの残りが 256 KiB を下回った。処理を中断する（クラッシュはしない）。`--recursion-limit` でスタックを大きくできる（§11・§13）。jiepp コマンドだけが発行する |
 | PP70 | `UNKNOWN_OPTION` | ERROR | Unknown command-line option | 未知のコマンドラインオプション |
 | PP71 | `INVALID_OPTION_VALUE` | ERROR | Invalid option value | オプション値が不正（正の整数でない等） |
 | PP72 | `MISSING_OPTION_VALUE` | ERROR | Option requires a value | オプションに値が指定されていない |

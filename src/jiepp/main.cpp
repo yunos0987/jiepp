@@ -1,6 +1,7 @@
 #include "option.hpp"
 #include "jiepp.hpp"
 #include "../env/issue.hpp"
+#include "../util/stack_guard.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <iostream>
@@ -64,6 +65,18 @@ void raise_soft_stack_limit_to_default() {
     rl.rlim_cur = (rl.rlim_max == RLIM_INFINITY || rl.rlim_max >= want) ? want : rl.rlim_max;
     (void)setrlimit(RLIMIT_STACK, &rl);
 }
+
+// Stack budget for the PP63 guard: the soft RLIMIT_STACK now in force (read
+// back after any change above), DEFAULT_STACK_BYTES when unlimited, or 0
+// (guard disabled) when it cannot be read.
+std::size_t current_stack_budget() {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) != 0)
+        return 0;
+    if (rl.rlim_cur == RLIM_INFINITY)
+        return DEFAULT_STACK_BYTES;
+    return static_cast<std::size_t>(rl.rlim_cur);
+}
 #endif
 
 // Last-resort diagnostic for exceptions that escape jiepp_command() itself
@@ -93,6 +106,7 @@ void report_uncaught_exception() {
 struct JieppThreadArgs {
     const JieppOptions* opts;
     int result;
+    std::size_t stack_bytes;
 };
 
 // D3: mirror main()'s own exception handling here. jiepp_command() runs on
@@ -103,6 +117,9 @@ struct JieppThreadArgs {
 // instead of reporting "jiepp: error: PP01: ..." and exiting 1.
 DWORD WINAPI jiepp_thread_func(LPVOID arg) {
     auto* a = static_cast<JieppThreadArgs*>(arg);
+    // Record this thread's stack base for the PP63 guard (expand.cpp) before
+    // anything runs on it.
+    Util::note_stack_base(a->stack_bytes);
     try {
         a->result = jiepp_command(*a->opts);
     } catch (const Issue::Exception&) {
@@ -157,7 +174,7 @@ int main(int argc, char* argv[]) {
         // executable's 1 MiB default reserve has no effect (why Windows
         // additionally floors requested_stack_bytes() at 1 MiB).
         const std::size_t stack_bytes = requested_stack_bytes(opts);
-        JieppThreadArgs args{&opts, 1};
+        JieppThreadArgs args{&opts, 1, stack_bytes};
         HANDLE thread = CreateThread(NULL, stack_bytes, jiepp_thread_func, &args,
                                      STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
         if (!thread) {
@@ -209,6 +226,9 @@ int main(int argc, char* argv[]) {
             // instead of leaving the OS/shell default in effect.
             raise_soft_stack_limit_to_default();
         }
+        // Record this thread's stack base for the PP63 guard (expand.cpp),
+        // reading back the soft limit now in force (just changed above).
+        Util::note_stack_base(current_stack_budget());
         return jiepp_command(opts);
 #endif
     } catch (const Issue::Exception&) {

@@ -68,6 +68,7 @@ JIEPP_ISSUE_CODE(INVALID_EXPRESSION,          52, ERROR,   "Invalid expression")
 JIEPP_ISSUE_CODE(MAX_EXPANSION_DEPTH_EXCEEDED, 60, ERROR,  "Maximum expansion depth exceeded")
 JIEPP_ISSUE_CODE(MAX_IF_NESTING_EXCEEDED,      61, ERROR,   "Maximum conditional nesting depth exceeded")
 JIEPP_ISSUE_CODE(SANDBOX_RESTRICTED_DIRECTIVE, 62, ERROR,   "Directive is restricted in sandbox mode")
+JIEPP_ISSUE_CODE(STACK_EXHAUSTED,              63, SEVERE,  "Stack nearly exhausted")
 
 // --- CLI/Option (70-79) ---
 JIEPP_ISSUE_CODE(UNKNOWN_OPTION,               70, ERROR,   "Unknown command-line option")

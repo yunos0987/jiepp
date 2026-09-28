@@ -10,6 +10,7 @@ TEST_F(IssueTest, IsSevere) {
     EXPECT_FALSE(Issue::is_severe(Issue::Code::FILE_NOT_FOUND));
     EXPECT_FALSE(Issue::is_severe(Issue::Code::WARNING_MESSAGE));
     EXPECT_FALSE(Issue::is_severe(Issue::Code::INFO_MESSAGE));
+    EXPECT_TRUE(Issue::is_severe(Issue::Code::STACK_EXHAUSTED));
 }
 
 TEST_F(IssueTest, IsError) {
@@ -44,6 +45,7 @@ TEST_F(IssueTest, Codename) {
     EXPECT_EQ("FILE_NOT_FOUND", Issue::codename(Issue::Code::FILE_NOT_FOUND));
     EXPECT_EQ("EXPR_TYPE_ERROR", Issue::codename(Issue::Code::EXPR_TYPE_ERROR));
     EXPECT_EQ("FATAL", Issue::codename(Issue::Code::FATAL));
+    EXPECT_EQ("STACK_EXHAUSTED", Issue::codename(Issue::Code::STACK_EXHAUSTED));
 }
 
 TEST_F(IssueTest, RetiredCode3Unassigned) {
