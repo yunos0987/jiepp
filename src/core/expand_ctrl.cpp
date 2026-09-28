@@ -131,13 +131,39 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
     return result;
 }
 
+#ifdef JIEPP_SANDBOX
+// Index of the first actual __has_include operator use in s -- the keyword
+// not preceded by an identifier character (so a longer name such as
+// weird__has_include does not match) and followed, after optional
+// whitespace, by '(' -- or npos. `defined(__has_include)` and
+// `defined __has_include` are feature tests, not uses.
+std::size_t find_has_include_call(const std::string& s) {
+    static constexpr std::string_view KW = "__has_include";
+    std::size_t pos = 0;
+    while ((pos = s.find(KW, pos)) != std::string::npos) {
+        std::size_t kw = pos;
+        pos += KW.size();
+        if (kw > 0) {
+            unsigned char prev = static_cast<unsigned char>(s[kw - 1]);
+            if (std::isalnum(prev) || prev == '_')
+                continue;
+        }
+        std::size_t i = pos;
+        while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
+        if (i < s.size() && s[i] == '(')
+            return kw;
+    }
+    return std::string::npos;
+}
+#endif
+
 } // namespace
 
 std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_error) {
 #ifdef JIEPP_SANDBOX
-    // In sandbox mode, __has_include is not allowed (filesystem probe)
-    static constexpr std::string_view KW_HI = "__has_include";
-    if (raw_cond.find(KW_HI) != std::string::npos)
+    // In sandbox mode the __has_include operator is not allowed (filesystem
+    // probe); only an actual use is PP62, see find_has_include_call().
+    if (find_has_include_call(raw_cond) != std::string::npos)
         ISSUE(SANDBOX_RESTRICTED_DIRECTIVE, "__has_include");
     std::string cond = raw_cond;
 #else

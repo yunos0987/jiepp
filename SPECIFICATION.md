@@ -1015,7 +1015,7 @@ jiepp -- -unusual-name.iec
 | `{#max_if_nesting}` | 制限緩和の防止 |
 | `{#max_blank_lines}` | 制限緩和の防止 |
 | `{#ignore}` | エラー抑制の防止 |
-| `__has_include` | ファイルシステム探査の防止 |
+| `__has_include` | ファイルシステム探査の防止。`__has_include(…)` の形で使うと `PP62`。`{#ifdef __has_include}` / `defined(__has_include)` は `PP62` にならず、偽になる |
 
 ### 情報漏洩防止 / Information Leak Prevention
 

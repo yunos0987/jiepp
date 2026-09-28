@@ -41,6 +41,54 @@ TEST_F(SandboxDirectiveTest, HasIncludeBlocked) {
     EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
 }
 
+// ---- R4 follow-up U8: PP62 only for an actual __has_include(...) use ----
+
+// X1: __has_include reads as undefined in sandbox mode, so {#ifdef}/
+// {#ifndef} do not need the filesystem probe and are not PP62.
+TEST_F(SandboxDirectiveTest, HasIncludeUndefinedForIfdefIfndef) {
+    {
+        auto r = pp("{#ifdef __has_include}y{#else}n{#endif}");
+        EXPECT_EQ("n", r);
+        EXPECT_TRUE(empty());
+    }
+    {
+        auto r = pp("{#ifndef __has_include}y{#else}n{#endif}");
+        EXPECT_EQ("y", r);
+        EXPECT_TRUE(empty());
+    }
+}
+
+// X2: likewise 'defined(__has_include)'/'defined __has_include' are feature
+// tests, not uses, so they are not PP62 either.
+TEST_F(SandboxDirectiveTest, HasIncludeUndefinedForDefined) {
+    {
+        auto r = pp("{#if defined(__has_include)}y{#else}n{#endif}");
+        EXPECT_EQ("n", r);
+        EXPECT_TRUE(empty());
+    }
+    {
+        auto r = pp("{#if defined __has_include}y{#else}n{#endif}");
+        EXPECT_EQ("n", r);
+        EXPECT_TRUE(empty());
+    }
+}
+
+// X3: a user macro whose name happens to end in "__has_include" is not the
+// operator and must not be blocked.
+TEST_F(SandboxDirectiveTest, KeywordSuffixMacroNotBlocked) {
+    auto r = pp("{#define weird__has_include(x) 99}"
+                "{#if weird__has_include('foo') = 99}YES{#else}NO{#endif}");
+    EXPECT_NE(std::string::npos, r.find("YES"));
+    EXPECT_EQ(std::string::npos, r.find("NO"));
+    EXPECT_TRUE(empty());
+}
+
+// X4: regression -- an actual __has_include(...) use is still PP62.
+TEST_F(SandboxDirectiveTest, HasIncludeCallStillBlocked) {
+    EXPECT_THROW(pp("{#if __has_include ('dummy.iec')}YES{#endif}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
+}
+
 TEST_F(SandboxDirectiveTest, MaxExpansionDepthBlocked) {
     EXPECT_THROW(pp("{#max_expansion_depth 100}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());

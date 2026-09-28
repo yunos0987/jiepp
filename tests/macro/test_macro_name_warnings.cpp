@@ -224,4 +224,3 @@ TEST_F(MacroNameWarningTest, IgnoredPP38Silent) {
     EXPECT_EQ(";.B 1;", r);
     EXPECT_TRUE(empty());
 }
-
