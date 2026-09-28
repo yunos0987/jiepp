@@ -57,6 +57,102 @@ TEST_F(FuncMacroTest, DuplicateParameter) {
     EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, code());
 }
 
+// R2: in continue mode, a duplicate parameter name aborts the whole
+// {#define} -- the macro is never defined, so a later call is left as
+// plain, unexpanded text (matching gcc/clang).
+TEST_F(FuncMacroTest, DuplicateParameterNotDefinedInContinueMode) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";F(1,2);", pp("{#define F(x,x) [x]};F(1,2);"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    EXPECT_EQ(1, Issue::error_count_);
+}
+
+// R2: only the *first* duplicate is reported (clang-like), not one per
+// repeated name.
+TEST_F(FuncMacroTest, DuplicateParameterReportedOnce) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";G(1,2,3);", pp("{#define G(a,a,a) [a]};G(1,2,3);"));
+    // messages() (like codes()/message()) drains the diagnostic buffer, so
+    // it must be captured once and both the code and the text checked
+    // against that same snapshot -- calling codes() then message() would
+    // have the second call see an already-drained (empty) buffer.
+    auto msgs1 = messages();
+    ASSERT_EQ(1u, msgs1.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, PlainTextMessage::parse_code(msgs1[0]));
+    EXPECT_NE(std::string::npos, msgs1[0].find('a'));
+
+    EXPECT_EQ(";H(1,2,3,4);", pp("{#define H(a,b,a,b) a};H(1,2,3,4);"));
+    auto msgs2 = messages();
+    ASSERT_EQ(1u, msgs2.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, PlainTextMessage::parse_code(msgs2[0]));
+    EXPECT_NE(std::string::npos, msgs2[0].find('a'));
+
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+// R2: a rejected redefinition leaves the existing definition of the same
+// name untouched -- no MACRO_REDEFINED (PP35), no PP34, and the old
+// definition still expands.
+TEST_F(FuncMacroTest, DuplicateParameterKeepsExistingDefinition) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";;[1];",
+              pp("{#define F(x) [x]};{#define F(y,y) <y>};F(1);"));
+    auto cs1 = codes();
+    ASSERT_EQ(1u, cs1.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs1[0]);
+
+    EXPECT_EQ(";;7;", pp("{#define N 7};{#define N(a,a) a};N;"));
+    auto cs2 = codes();
+    ASSERT_EQ(1u, cs2.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs2[0]);
+}
+
+// R2: under {#ignore PP36}, the diagnostic is suppressed but the macro is
+// still not defined (like {#ignore PP33}).
+TEST_F(FuncMacroTest, DuplicateParameterIgnoredStillNotDefined) {
+    EXPECT_EQ(";F(1,2);",
+              pp("{#ignore PP36}{#define F(x,x) [x]};F(1,2);"));
+    EXPECT_TRUE(empty());
+}
+
+// R2: a duplicate parameter before a trailing '...' is caught the same way
+// as an ordinary duplicate.
+TEST_F(FuncMacroTest, DuplicateParameterVariadicNotDefined) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";V(1,2,3);", pp("{#define V(a,a,...) [a]};V(1,2,3);"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+}
+
+// D4/R2: a regular parameter named __VA_ARGS__/__VA_ARGC__ collides with
+// the implicit name(s) a trailing '...' introduces, so it is a duplicate
+// too and the {#define} is abandoned -- it must not be silently
+// overwritten by the implicit variadic entry (FunctionMacro's args_ map).
+// Without a trailing '...', these names are ordinary parameter names.
+TEST_F(FuncMacroTest, VaArgsNamedParameterClashesWithEllipsis) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";F(1,2);",
+              pp("{#define F(__VA_ARGS__, ...) [__VA_ARGS__]};F(1,2);"));
+    // See DuplicateParameterReportedOnce: capture messages() once (codes()
+    // then message() would drain the buffer twice).
+    auto msgs1 = messages();
+    ASSERT_EQ(1u, msgs1.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, PlainTextMessage::parse_code(msgs1[0]));
+    EXPECT_NE(std::string::npos, msgs1[0].find("__VA_ARGS__"));
+
+    EXPECT_EQ(";C(1,2);",
+              pp("{#define C(__VA_ARGC__, ...) [__VA_ARGC__]};C(1,2);"));
+    auto cs2 = codes();
+    ASSERT_EQ(1u, cs2.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs2[0]);
+
+    EXPECT_EQ(";[3];", pp("{#define H(__VA_ARGS__) [__VA_ARGS__]};H(3);"));
+    EXPECT_TRUE(empty());
+}
+
 // NOTE: Leading/trailing Token::WS is trimmed from macro arguments (Python-compatible).
 // ts_flatten strips leading/trailing Token::WS and Token::C (Python-compatible).
 TEST_F(FuncMacroTest, WhitespaceInParams) {

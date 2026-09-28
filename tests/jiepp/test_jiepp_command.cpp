@@ -2248,6 +2248,27 @@ TEST_F(JieppCommandTest, ContinueModeDMPrintsFullMacroListOnStdoutDespiteError) 
     EXPECT_NE(std::string::npos, out.find("{#define BAR 7}"))  << out;
 }
 
+// R2: a {#define} rejected for a duplicate parameter name never reaches
+// env.define(), so -dM's macro table must not list it either.
+TEST_F(JieppCommandTest, ContinueModeDuplicateMacroParameterNotInDM) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_dup_param",
+        "{#define F(x) [x]}\n{#define F(y,y) <y>}\n{#define G(a,a) a}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dM = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("{#define F(x) [x]}")) << out;
+    EXPECT_EQ(std::string::npos, out.find("F(y,y)")) << out;
+    EXPECT_EQ(std::string::npos, out.find("{#define G(")) << out;
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
 TEST_F(JieppCommandTest, ContinueModeDMWithOutputFileWritesNothing) {
     fs::current_path(jiepp_root_dir());
     fs::path src = write_temp_iec("continue_dm_file", "{#define FOO 42}\n{#error stop}\n");

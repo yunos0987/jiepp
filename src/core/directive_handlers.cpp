@@ -107,6 +107,22 @@ void handle_define(const std::string& raw_arg, Env& env) {
     // the vector reallocates.
     std::unordered_set<std::string_view> seen_params;
 
+    // Like gcc/clang: the first duplicate parameter is reported once and the
+    // whole {#define} is abandoned -- the macro is not defined and any
+    // existing definition of `name` is left untouched.
+    // A regular parameter named __VA_ARGS__/__VA_ARGC__ collides with the
+    // implicit names a trailing '...' introduces (FunctionMacro's args_ map
+    // would silently let the variadic entry win), so it is a duplicate too.
+    auto variadic_name_clash = [&]() -> bool {
+        for (const char* va : {FunctionMacro::VA_ARGS, FunctionMacro::VA_ARGC}) {
+            if (seen_params.count(va)) {
+                ISSUE(DUPLICATE_MACRO_PARAMETER, va);
+                return true;
+            }
+        }
+        return false;
+    };
+
     if (is_function) {
         ++i;
         while (i < ts.size() && ts[i].type != Token::RP) {
@@ -120,6 +136,8 @@ void handle_define(const std::string& raw_arg, Env& env) {
             }
             if (ts[i].type == Token::ANY) {
                 if (ts[i].text == "...") {
+                    if (variadic_name_clash())
+                        return;
                     param_names.push_back(FunctionMacro::VA_SYM);
                     ++i;
                     while (i < ts.size() && (ts[i].type & Token::MASK_WS)) ++i;
@@ -131,6 +149,8 @@ void handle_define(const std::string& raw_arg, Env& env) {
                 }
                 if (ts[i].text == "." && i + 2 < ts.size() && ts[i + 1].text == "." &&
                     ts[i + 2].text == ".") {
+                    if (variadic_name_clash())
+                        return;
                     param_names.push_back(FunctionMacro::VA_SYM);
                     i += 3;
                     while (i < ts.size() && (ts[i].type & Token::MASK_WS)) ++i;
@@ -140,8 +160,10 @@ void handle_define(const std::string& raw_arg, Env& env) {
                     }
                     break;
                 }
-                if (!seen_params.insert(ts[i].text).second)
+                if (!seen_params.insert(ts[i].text).second) {
                     ISSUE(DUPLICATE_MACRO_PARAMETER, ts[i].text);
+                    return;
+                }
                 param_names.push_back(ts[i].text);
                 ++i;
             } else {

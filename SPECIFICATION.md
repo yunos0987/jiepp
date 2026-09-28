@@ -164,6 +164,7 @@ area := PI * r * r;         (* → 3.14159 * r * r; *)
 
 - `NAME` と `(` の間にスペースがあるとオブジェクトマクロになる
 - パラメータはカンマ区切り
+- 同じパラメータ名を 2 回以上書くと `DUPLICATE_MACRO_PARAMETER` (`PP36`) エラーになる。エラーは最初に重複した名前について 1 回だけ出し、その `{#define}` 全体を無視する（マクロは定義されず、同じ名前の既存の定義があればそのまま残る）。gcc/clang と同じ動作。jiepp コマンドラインの継続モード（§16「重大度」）でも `{#ignore PP36}` で診断を抑制した場合でも定義は行われず、`-dM`/`-dD` にも出ない
 
 ```
 {#define DOUBLE(x) (x) + (x)}
@@ -171,6 +172,11 @@ area := PI * r * r;         (* → 3.14159 * r * r; *)
 
 result := DOUBLE(5);     (* → (5) + (5) *)
 result := ADD(x, y);     (* → (x) + (y) *)
+```
+
+```
+{#define F(x, x) [x]}   (* → PP36。F は定義されない *)
+F(1, 2);                (* → F(1, 2); マクロ呼び出しとして扱われずそのまま出力される *)
 ```
 
 引数を区切るカンマは `(...)` だけでなく `[...]` の内側でも保護される（Jiepp 拡張。C プリプロセッサは丸括弧のみネスト対象、§17）:
@@ -218,6 +224,8 @@ Y)   (* → OPERATION_NOT_ALLOWED: 'include' inside macro argument: ... *)
 | `__VA_ARGS__` | 可変長引数全体に展開される |
 | `__VA_ARGC__` | 可変長引数の個数（整数）に展開される |
 | `__VA_OPT__(tokens)` | `__VA_ARGS__` が空なら何も展開しない。空でなければ `tokens` に展開される |
+
+可変長引数マクロで、通常のパラメータに `__VA_ARGS__` / `__VA_ARGC__` という名前を付けることはできない。`...` が導入する暗黙の名前と重複するため `PP36` になり、その `{#define}` は無視される（§3.2）。`...` を持たないマクロではこれらも通常のパラメータ名として使える
 
 `__VA_ARGC__` は単独で本体に現れる場合だけでなく、`@@`（トークン連結、§4.3）や `@`（文字列化、§4.1）の直接のオペランドとして現れる場合も常に個数（整数）に展開される。可変長引数そのもののテキストが貼り付け・文字列化されることはない:
 
@@ -1103,7 +1111,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP33 | `INVALID_VARIADIC_PLACEMENT` | ERROR | '...' must be the last parameter | 可変長引数が最後のパラメータでない |
 | PP34 | `ARGUMENT_COUNT_MISMATCH` | ERROR | Argument count mismatch | 関数マクロの引数数不一致 |
 | PP35 | `MACRO_REDEFINED` | WARNING | Macro redefined | マクロの再定義警告 |
-| PP36 | `DUPLICATE_MACRO_PARAMETER` | ERROR | Duplicate macro parameter name | マクロパラメータ名の重複 |
+| PP36 | `DUPLICATE_MACRO_PARAMETER` | ERROR | Duplicate macro parameter name | マクロパラメータ名の重複。最初の重複で 1 回だけ報告し、その `{#define}` は無視する（§3.2） |
 | PP37 | `INVALID_VA_OPT` | ERROR | Invalid __VA_OPT__ | `__VA_OPT__` の不正な使用（非可変長マクロ内での使用・ネスト） |
 | PP40 | `INVALID_DEFINED_OPERAND` | ERROR | Invalid operand for 'defined' | `defined` の不正なオペランド |
 | PP41 | `INVALID_SETLINE_OPERAND` | ERROR | Invalid operand for 'set_line' | `{#set_line}` の不正なオペランド |
