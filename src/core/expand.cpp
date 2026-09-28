@@ -173,8 +173,10 @@ void dispatch_directive(const Token& t,
         }
         break;
     case DirectiveToken::UNDEF:
-        jiepp::preprocessor_detail::handle_undef(raw_arg, env);
-        if (env.is_dd_mode()) {
+        // Echo under -dD only if a macro was actually undefined (C1): a
+        // rejected {#undef} (missing/non-identifier name) changed nothing
+        // and must not appear in the -dD stream, matching {#define} above.
+        if (jiepp::preprocessor_detail::handle_undef(raw_arg, env) && env.is_dd_mode()) {
             ots.push_back(Token::create(Token::DIRECTIVE, t.text));
         }
         break;

@@ -101,8 +101,17 @@ namespace jiepp::preprocessor_detail {
 bool handle_define(const std::string& raw_arg, Env& env) {
     auto ts = iec3_tokens_from_string(raw_arg, false);
     ts = ts_ltrim(std::move(ts));
-    if (ts.empty() || ts[0].type != Token::ANY) {
-        ISSUE(INVALID_DEFINE_SYNTAX, Util::escape_line_breaks(raw_arg));
+    // C1: like gcc/clang, the macro name must be an identifier (comments
+    // are whitespace, already stripped by ts_ltrim above). A missing name
+    // and a non-identifier name are separate diagnoses so the message names
+    // the actual operand in the latter case.
+    if (ts.empty()) {
+        ISSUE(INVALID_DEFINE_SYNTAX, "macro name missing");
+        return false;
+    }
+    if (ts[0].type != Token::ANY || !iec3_is_identifier(ts[0].text)) {
+        ISSUE(INVALID_DEFINE_SYNTAX,
+              "macro name must be an identifier: " + Util::escape_line_breaks(raw_arg));
         return false;
     }
 
@@ -243,13 +252,36 @@ bool handle_define(const std::string& raw_arg, Env& env) {
     return true;
 }
 
-void handle_undef(const std::string& raw_arg, Env& env) {
-    auto name = Util::trim_view(raw_arg);
-    if (name == "defined") {
-        ISSUE(OPERATION_NOT_ALLOWED, "undef 'defined'");
-        return;
+// Returns true iff the {#undef} operand was accepted (a valid name, even
+// if it was never defined); false if it was rejected (missing/non-identifier
+// name) and nothing changed. See handle_define()'s matching comment: the
+// caller uses this to decide whether to echo the directive under -dD.
+bool handle_undef(const std::string& raw_arg, Env& env) {
+    // C1: same name validation as {#define} (comments removed, as whitespace).
+    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    if (ts.empty()) {
+        ISSUE(INVALID_DEFINE_SYNTAX, "macro name missing");
+        return false;
     }
-    env.undef(name);
+    if (ts[0].type != Token::ANY || !iec3_is_identifier(ts[0].text)) {
+        ISSUE(INVALID_DEFINE_SYNTAX,
+              "macro name must be an identifier: " + Util::escape_line_breaks(raw_arg));
+        return false;
+    }
+    if (ts[0].text == "defined") {
+        ISSUE(OPERATION_NOT_ALLOWED, "undef 'defined'");
+        return false;
+    }
+    if (ts.size() > 1) {
+        // Extra tokens after NAME (e.g. "{#undef A B}"): pending user
+        // decision Q1 (a WARNING code for this); keep the pre-R4 behavior
+        // until then -- the whole trimmed operand is used as one name,
+        // which matches nothing already defined.
+        env.undef(std::string(Util::trim_view(raw_arg)));
+        return true;
+    }
+    env.undef(ts[0].text);
+    return true;
 }
 
 void handle_tokenize(const std::string& raw_arg, Env& env, std::vector<Token>& ots) {

@@ -15,7 +15,10 @@ namespace jiepp::preprocessor_detail {
 // nothing. See handle_define()'s definition (directive_handlers.cpp) for
 // details.
 bool handle_define(const std::string& raw_arg, Env& env);
-void handle_undef(const std::string& raw_arg, Env& env);
+// Returns true iff the {#undef} operand was accepted (a valid name, even
+// if it was never defined); see handle_undef()'s definition
+// (directive_handlers.cpp) for the rejection cases (C1).
+bool handle_undef(const std::string& raw_arg, Env& env);
 void handle_tokenize(const std::string& raw_arg, Env& env, std::vector<Token>& ots);
 void handle_stringize(const std::string& raw_arg,
                       Env& env,

@@ -142,6 +142,8 @@ Jiepp が認識・保持するコメント形式:
 
 マクロ名は大文字・小文字を区別する（C プリプロセッサと同じ）。IEC 61131-3 の識別子は本来大文字・小文字を区別しないが、Jiepp は `{#define}` / `{#ifdef}` / 展開のすべてで一貫して区別する仕様を意図的に採用している。
 
+マクロ名は識別子（英字または `_` で始まり、英数字と `_` だけが続く ASCII の名前）でなければならない。`{#define}` / `{#undef}` / `-D` / `-U` で名前がない場合や、識別子でない名前（`{#define 1 x}`・`{#define + y}`・`{#define %IX0 z}`・`{#define 16#FF 1}`・`{#define 'a' 1}`・`{#define 変数 1}` など）を書いた場合は `INVALID_DEFINE_SYNTAX` (`PP30`) エラーになり、そのディレクティブは無視される（マクロは定義も解除もされず、`-dD` にも出ない。gcc/clang と同じ）。`if` や `var` などの IEC 61131-3 のキーワードもマクロ名に使える。gcc/clang が受理する `$` や非 ASCII 文字を含む名前は、IEC 61131-3 の識別子ではないため受理しない。名前の前後のコメントは空白として扱う。
+
 ### 3.1 オブジェクトマクロ / Object Macros
 
 ```
@@ -281,6 +283,7 @@ LOG('code=%d', 42);    (* → write_log('code=%d', 42) *)
 
 `NAME` の定義を解除する。未定義の名前への `{#undef}` はエラーにならない。
 `defined` の再定義・定義解除は `OPERATION_NOT_ALLOWED` エラーになる。
+名前がない・識別子でない `{#undef}` は `PP30` エラーになり、何もしない（`-dD` にも出ない）。
 
 ### 3.6 マクロ再定義 / Redefinition
 
@@ -1111,7 +1114,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP26 | `ELSE_ERROR` | ERROR | Unexpected else directive | `{#else}` の位置エラー |
 | PP27 | `ENDIF_ERROR` | ERROR | Unexpected endif directive | `{#endif}` の位置エラー |
 | PP28 | `WHITESPACE_BEFORE_DIRECTIVE` | WARNING | Whitespace between '{' and '#'; treated as an ordinary pragma | `{` と `#` の間に空白があり、通常のプラグマとして扱われた（§2。コメントを挟んだ場合はこの警告は出ない） |
-| PP30 | `INVALID_DEFINE_SYNTAX` | ERROR | Invalid define syntax | `{#define}` の構文エラー（マクロ名がない、パラメータリストが不正など。§3.2） |
+| PP30 | `INVALID_DEFINE_SYNTAX` | ERROR | Invalid define syntax | `{#define}` / `{#undef}` / `-D` / `-U` の構文エラー（マクロ名がない、識別子でない、パラメータリストが不正など。§3） |
 | PP31 | `INVALID_STRINGIZING` | ERROR | Invalid stringizing (@) | 不正な文字列化演算子 |
 | PP32 | `INVALID_TOKEN_PASTING` | ERROR | Invalid token pasting (@@) | 不正なトークン連結演算子 |
 | PP33 | `INVALID_VARIADIC_PLACEMENT` | ERROR | '...' must be the last parameter | 可変長引数が最後のパラメータでない |
@@ -1295,6 +1298,10 @@ setline-arg   := INTEGER
                | INTEGER ws quoted-string
 
 quoted-string := "'" <chars> "'" | '"' <chars> '"'
+
+// NAME: {#define}/{#undef}/-D/-U/{#ifdef}/{#ifndef}/defined のすべてで共通
+// の識別子規則（§3）。ASCII のみ。
+NAME          := [A-Za-z_][A-Za-z0-9_]*
 
 define-body   := NAME ws replacement
                | NAME '(' params ')' ws replacement

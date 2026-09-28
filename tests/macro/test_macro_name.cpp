@@ -1,0 +1,82 @@
+#include "test_helper.hpp"
+
+#include "core/preprocessor.hpp"
+
+// R4/D5: macro NAMEs (in {#define}/{#undef}/-D/-U/{#ifdef}/{#ifndef}/
+// `defined`) must be identifiers, like gcc/clang. See
+// scratchpad/design-r4.md for the full design; only "Part A" (C1..C6,
+// settled by gcc/clang) is covered here.
+
+class MacroNameTest : public JieppTest {};
+
+// ---- C1: {#define}/{#undef} name validation --------------------------
+
+TEST_F(MacroNameTest, DefineRejectsNonIdentifierName) {
+    for (const std::string& def : {
+             std::string("{#define 1 x}"),
+             std::string("{#define + y}"),
+             std::string("{#define %IX0 z}"),
+             std::string("{#define 16#FF 1}"),
+             std::string("{#define \xE5\xA4\x89\xE6\x95\xB0 1}"), // "変数"
+             std::string("{#define 'a' 1}"),
+             std::string("{#define (x) 1}"),
+             std::string("{#define}"),
+             std::string("{#define (* c *)}"),
+         }) {
+        SCOPED_TRACE(def);
+        EXPECT_THROW(pp(def), Issue::Exception);
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+    }
+}
+
+TEST_F(MacroNameTest, DefineRejectedNamesReportedOnceEachInContinueMode) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";1 + %IX0;", pp("{#define 1 x}{#define + y}{#define %IX0 z};1 + %IX0;"));
+    auto msgs = messages();
+    ASSERT_EQ(3u, msgs.size());
+    for (const auto& m : msgs)
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, PlainTextMessage::parse_code(m)) << m;
+    EXPECT_NE(std::string::npos, msgs[0].find("macro name must be an identifier: 1 x")) << msgs[0];
+}
+
+// IEC keywords, __VA_ARGS__, and a name preceded by a comment (comments are
+// whitespace) all remain valid macro names -- this is a regression check,
+// not new behavior.
+TEST_F(MacroNameTest, ValidNamesUnaffected) {
+    EXPECT_EQ(";1;", pp("{#define if 1};if;"));
+    EXPECT_EQ(";1;", pp("{#define __VA_ARGS__ 1};__VA_ARGS__;"));
+    EXPECT_EQ(";1;", pp("{#define (* c *) X 1};X;"));
+    EXPECT_EQ(";2;", pp("{#define _x1 2};_x1;"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(MacroNameTest, UndefRejectsNonIdentifierName) {
+    for (const std::string& def : {
+             std::string("{#undef 1}"),
+             std::string("{#undef}"),
+             std::string("{#undef %IX0}"),
+             std::string("{#undef \xE5\xA4\x89\xE6\x95\xB0}"),
+         }) {
+        SCOPED_TRACE(def);
+        EXPECT_THROW(pp(def), Issue::Exception);
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+    }
+}
+
+// A trailing comment after the name is whitespace (tokenized away), so
+// {#undef A (* c *)} undefines A cleanly -- pre-fix, the untokenized string
+// "A (* c *)" matched nothing, so A silently stayed defined.
+TEST_F(MacroNameTest, UndefStripsTrailingComment) {
+    EXPECT_EQ(";A;", pp("{#define A 1}{#undef A (* c *)};A;"));
+}
+
+// A rejected {#undef} must not appear in -dD output (matches {#define}'s
+// existing rule for a rejected directive), while an accepted one still does.
+TEST_F(MacroNameTest, RejectedUndefNotEchoedUnderDD) {
+    Issue::ContinueMode guard({});
+    Env env = setup();
+    env.set_dd_mode(true);
+    std::string out = pp("{#undef 1}{#undef A}", env);
+    EXPECT_EQ(std::string::npos, out.find("{#undef 1}"));
+    EXPECT_NE(std::string::npos, out.find("{#undef A}"));
+}
