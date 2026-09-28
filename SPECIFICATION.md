@@ -171,6 +171,8 @@ Jiepp が認識・保持するコメント形式:
 area := PI * r * r;         (* → 3.14159 * r * r; *)
 ```
 
+オブジェクトマクロの `NAME` の直後には空白が必要。`{#define A.B 1}`・`{#define X-1 2}`・`{#define T#1s 1}` のように名前の直後に `(` 以外のトークンが続くと `MISSING_WHITESPACE_AFTER_MACRO_NAME` (`PP38`) 警告を出す（gcc/clang の "ISO C99 requires whitespace after the macro name" と同じ）。定義はそのまま行われ、名前は `A`、値は `.B 1` になる（`A.B` という名前にはならない）。名前の直後のコメント `(* … *)` や `//` は空白として扱うので警告にならない。ドキュメントコメント `(*! … *)` は本体のトークンなので警告になる。`-D` でも同じ（`-D A.B=1` は `{#define A.B 1}` として警告する）。
+
 ### 3.2 関数マクロ / Function Macros
 
 ```
@@ -885,7 +887,7 @@ jiepp [filepath] [options]
 | オプション | 説明 | デフォルト |
 |-----------|------|-----------|
 | `-o PATH` | 出力先ファイルパス。`-` は標準出力（gcc/clang と同様。`-` という名前のファイルは作成しない） | stdout |
-| `-D NAME[=VALUE]` | マクロ定義。gcc/clang と同じく、最初の `=` を空白に置き換えた `{#define}` として処理する（`=` がなければ値は `1`）。`-D NAME` は `{#define NAME 1}`、`-D NAME=` は空のマクロ、`-D 'F(x)=x+1'` は関数マクロ `F(x)` になる。名前が不正な場合などは `{#define}` と同じエラー（`PP30` など）になる。既存の定義（組み込みマクロや先の `-D` を含む）と内容が異なる場合は `MACRO_REDEFINED` (`PP35`) 警告になる。値・名前を丸ごと省略（末尾の裸の `-D`、または `-D ""`）すると `MISSING_OPTION_VALUE` エラー（`PP72`）。`-D=VALUE` のようにマクロ名だけが空だと `INVALID_MACRO_DEF` エラー（`PP73`） | — |
+| `-D NAME[=VALUE]` | マクロ定義。gcc/clang と同じく、最初の `=` を空白に置き換えた `{#define}` として処理する（`=` がなければ値は `1`）。`-D NAME` は `{#define NAME 1}`、`-D NAME=` は空のマクロ、`-D 'F(x)=x+1'` は関数マクロ `F(x)` になる。名前が不正な場合などは `{#define}` と同じエラー（`PP30` など）になる。既存の定義（組み込みマクロや先の `-D` を含む）と内容が異なる場合は `MACRO_REDEFINED` (`PP35`) 警告になる。値・名前を丸ごと省略（末尾の裸の `-D`、または `-D ""`）すると `MISSING_OPTION_VALUE` エラー（`PP72`）。`-D=VALUE` のようにマクロ名だけが空だと `INVALID_MACRO_DEF` エラー（`PP73`）。`-D A.B=1` のように名前の直後に空白も `(` もないと `PP38` 警告（§3.1） | — |
 | `-U NAME` | マクロ定義の取り消し（`-D` の後に適用）。`{#undef NAME}` と同じ検査を行う（名前が不正なら `PP30`、`defined` は `PP02`）。値省略（末尾の裸の `-U`、または `-U ""`）は `MISSING_OPTION_VALUE` エラー（`PP72`、`-D` の裸指定と同じコード）。`NAME` の後に余分なトークンがあると `PP49` 警告を出し（メッセージは `{#undef …}` の形）、`NAME` だけを取り消す | — |
 | `-I PATH` | インクルード検索パスの追加。`PATH` は宣言元ファイルでなく常に**プロセス起動時の CWD** を基準に解決する（`{#syspath}` とは異なる。§7.4、§7.9） | — |
 | `-include FILE` | 入力ファイルの前に強制インクルード | — |
@@ -1163,6 +1165,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP35 | `MACRO_REDEFINED` | WARNING | Macro redefined | マクロの再定義警告 |
 | PP36 | `DUPLICATE_MACRO_PARAMETER` | ERROR | Duplicate macro parameter name | マクロパラメータ名の重複。最初の重複で 1 回だけ報告し、その `{#define}` は無視する（§3.2） |
 | PP37 | `INVALID_VA_OPT` | ERROR | Invalid __VA_OPT__ | `__VA_OPT__` の不正な使用（非可変長マクロ内での使用・ネスト） |
+| PP38 | `MISSING_WHITESPACE_AFTER_MACRO_NAME` | WARNING | Missing whitespace after the macro name | オブジェクトマクロの名前の直後に空白がない（`{#define A.B 1}` など。定義は行う。§3.1） |
 | PP40 | `INVALID_DEFINED_OPERAND` | ERROR | Invalid operand for 'defined' | `defined` / `{#ifdef}` / `{#ifndef}` の不正なオペランド（マクロ名がない、または識別子でない。§5） |
 | PP41 | `INVALID_SETLINE_OPERAND` | ERROR | Invalid operand for 'set_line' | `{#set_line}` の不正なオペランド |
 | PP42 | `INVALID_IGNORE_OPERAND` | ERROR | Invalid operand for 'ignore' | `{#ignore}` の不正なオペランド |

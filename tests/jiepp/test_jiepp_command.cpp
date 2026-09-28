@@ -247,6 +247,18 @@ TEST_F(JieppCommandTest, SuppressWarningsSuppressesUOptionExtraTokensWarning) {
     EXPECT_TRUE(empty());
 }
 
+// ---- R4 follow-up Q2: -D NAME.suffix=... with no whitespace/'(' (PP38) ----
+
+// S7
+TEST_F(JieppCommandTest, DOptionMissingWhitespaceWarns) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A.B=1"};
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: warning: PP38: Missing whitespace after the macro name; 'A.B 1'", message());
+}
+
 TEST_F(JieppCommandTest, Regular) {
     run_e2e("none");
     run_e2e("not_directive");

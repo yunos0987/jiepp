@@ -121,6 +121,18 @@ bool handle_define(const std::string& raw_arg, Env& env) {
         return false;
     }
 
+    // Like gcc/clang ("ISO C99 requires whitespace after the macro name"),
+    // NAME directly followed by a token other than '(' -- e.g.
+    // {#define A.B 1}, {#define X-1 2}, {#define T#1s 1} -- is a warning.
+    // The definition proceeds unchanged (NAME = A, body ".B 1"). A comment
+    // (Token::C has MASK_WS) and a decoded $n/$l newline are whitespace; a
+    // DOCUMENT comment (*! *) is a body token, so it warns. Checked before
+    // the body's '@@' check, so {#define A@@B} gives PP38 then PP32, like
+    // gcc/clang.
+    if (ts.size() > 1 && !(ts[1].type & Token::MASK_WS) && ts[1].type != Token::LP)
+        ISSUE(MISSING_WHITESPACE_AFTER_MACRO_NAME,
+              Util::escape_line_breaks(Util::trim_view(raw_arg)));
+
     std::size_t i = 1;
     bool is_function = (i < ts.size() && ts[i].type == Token::LP);
     std::vector<std::string> param_names;
