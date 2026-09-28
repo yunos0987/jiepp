@@ -229,6 +229,22 @@ bool handle_define(const std::string& raw_arg, Env& env) {
         ++i;
     std::vector<Token> body(ts.begin() + i, ts.end());
 
+    // C6/U1: '@@' (GLUE) at either end of the replacement list has nothing
+    // to paste with, like gcc/clang ("'##' cannot appear at either end of
+    // macro expansion"). body's leading whitespace is already stripped by
+    // the skip above; only the trailing side needs a reverse scan past
+    // whitespace here to find the true last token.
+    if (!body.empty()) {
+        std::size_t last = body.size();
+        while (last > 0 && (body[last - 1].type & Token::MASK_WS))
+            --last;
+        if (last > 0 && (body.front().type == Token::GLUE || body[last - 1].type == Token::GLUE)) {
+            ISSUE(INVALID_TOKEN_PASTING,
+                  "'@@' cannot appear at either end of a macro expansion: " + Util::escape_line_breaks(raw_arg));
+            return false;
+        }
+    }
+
     auto make_and_define = [&]() {
         if (is_function) {
             auto nm = std::make_unique<FunctionMacro>(param_names, body);

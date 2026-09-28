@@ -347,6 +347,8 @@ s := {## __LINE__};     (* → 展開された行番号の文字列 *)
 VAR_NAME(sensor, 1)   (* → sensor_1 *)
 ```
 
+`@@` をマクロ本体の先頭または末尾に置くことはできない（`{#define A @@ b}`・`{#define F(x) x @@}` など）。その場合は `INVALID_TOKEN_PASTING` (`PP32`) エラーになり、その `{#define}` は無視される（gcc/clang と同じ）。
+
 #### プレースマーカー規則 / Placemarker Rule
 
 `@@` の左辺または右辺の仮引数に対応する実引数が空の場合、C17 6.10.3.3p2 の「プレースマーカー」規則を適用する。プレースマーカーは「何もないトークン」として扱われ、連結相手だけが残る。
@@ -1120,7 +1122,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP28 | `WHITESPACE_BEFORE_DIRECTIVE` | WARNING | Whitespace between '{' and '#'; treated as an ordinary pragma | `{` と `#` の間に空白があり、通常のプラグマとして扱われた（§2。コメントを挟んだ場合はこの警告は出ない） |
 | PP30 | `INVALID_DEFINE_SYNTAX` | ERROR | Invalid define syntax | `{#define}` / `{#undef}` / `-D` / `-U` の構文エラー（マクロ名がない、識別子でない、パラメータリストが不正など。§3） |
 | PP31 | `INVALID_STRINGIZING` | ERROR | Invalid stringizing (@) | 不正な文字列化演算子 |
-| PP32 | `INVALID_TOKEN_PASTING` | ERROR | Invalid token pasting (@@) | 不正なトークン連結演算子 |
+| PP32 | `INVALID_TOKEN_PASTING` | ERROR | Invalid token pasting (@@) | 不正なトークン連結演算子、または `@@` がマクロ本体の先頭・末尾にある（§4.3） |
 | PP33 | `INVALID_VARIADIC_PLACEMENT` | ERROR | '...' must be the last parameter | 可変長引数が最後のパラメータでない |
 | PP34 | `ARGUMENT_COUNT_MISMATCH` | ERROR | Argument count mismatch | 関数マクロの引数数不一致 |
 | PP35 | `MACRO_REDEFINED` | WARNING | Macro redefined | マクロの再定義警告 |

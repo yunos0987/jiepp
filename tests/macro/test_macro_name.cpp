@@ -214,3 +214,20 @@ TEST_F(MacroNameTest, SetupProcessesPredefineMacrosLikeDefine) {
 }
 
 // ---- C4/C5: jiepp_command()-level checks live in test_jiepp_command.cpp ---
+
+// ---- C6: '@@' at either end of a macro body ----------------------------
+
+TEST_F(MacroNameTest, GlueAtEitherEndOfMacroBodyRejected) {
+    for (const std::string& def : {
+             std::string("{#define A @@ b}"),
+             std::string("{#define A b @@}"),
+             std::string("{#define F(x) @@ x}"),
+             std::string("{#define F(x) x @@}"),
+         }) {
+        SCOPED_TRACE(def);
+        EXPECT_THROW(pp(def), Issue::Exception);
+        EXPECT_EQ(Issue::Code::INVALID_TOKEN_PASTING, code());
+    }
+    // '@@' in the middle of a body is unaffected.
+    EXPECT_EQ(";ab;", pp("{#define A a@@b};A;"));
+}
