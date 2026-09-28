@@ -163,7 +163,9 @@ area := PI * r * r;         (* → 3.14159 * r * r; *)
 ```
 
 - `NAME` と `(` の間にスペースがあるとオブジェクトマクロになる
-- パラメータはカンマ区切り
+- パラメータリストは、空 `()`、`(...)`、識別子のカンマ区切り `(a, b, c)`、その末尾に `, ...` を付けた `(a, b, ...)` のいずれかの形で書く（C/clang と同じ）。各要素の前後には空白・改行・コメントを置いてよい
+- パラメータ名は識別子（英字または `_` で始まり、英数字と `_` だけが続く ASCII の名前）に限る。`if` や `var` などの IEC 61131-3 のキーワードや `defined` もパラメータ名に使える（C プリプロセッサと同じ）。gcc/clang が受理する `$` や非 ASCII 文字を含む名前は、IEC 61131-3 の識別子ではないため受理しない
+- パラメータリストが不正な場合は `INVALID_DEFINE_SYNTAX` (`PP30`) エラーになり、その `{#define}` 全体を無視する（扱いは `PP36` と同じ。最初の誤りについて 1 回だけ報告し、マクロは定義されず、既存の定義はそのまま残り、`-dM`/`-dD` にも出ない）。対象は、カンマ抜け `F(a b)`、空の要素 `F(a,,b)`・`F(,a)`・`F(a,)`、閉じ括弧 `)` がない `F(a`、識別子以外の要素 `F(1)`・`F(a+b)`・`F('s')`・`F(int#1)`、間に空白を入れた `F(. . .)`、GNU 拡張の名前付き可変長引数 `F(args...)`（§3.3）。`...` の後に `)` 以外が続く場合は `PP33`（§3.3）
 - 同じパラメータ名を 2 回以上書くと `DUPLICATE_MACRO_PARAMETER` (`PP36`) エラーになる。エラーは最初に重複した名前について 1 回だけ出し、その `{#define}` 全体を無視する（マクロは定義されず、同じ名前の既存の定義があればそのまま残る）。gcc/clang と同じ動作。jiepp コマンドラインの継続モード（§16「重大度」）でも `{#ignore PP36}` で診断を抑制した場合でも定義は行われず、`-dM`/`-dD` にも出ない
 
 ```
@@ -177,6 +179,8 @@ result := ADD(x, y);     (* → (x) + (y) *)
 ```
 {#define F(x, x) [x]}   (* → PP36。F は定義されない *)
 F(1, 2);                (* → F(1, 2); マクロ呼び出しとして扱われずそのまま出力される *)
+{#define G(a b) a}      (* → PP30（カンマがない）。G は定義されない *)
+{#define H(a,) a}       (* → PP30（最後のカンマの後にパラメータがない） *)
 ```
 
 引数を区切るカンマは `(...)` だけでなく `[...]` の内側でも保護される（Jiepp 拡張。C プリプロセッサは丸括弧のみネスト対象、§17）:
@@ -218,6 +222,8 @@ Y)   (* → OPERATION_NOT_ALLOWED: 'include' inside macro argument: ... *)
 {#define PRINT(...) print(__VA_ARGS__)}
 {#define COUNT(...) __VA_ARGC__}
 ```
+
+`...` は 3 つのピリオドを間を空けずに書く。GNU 拡張の名前付き可変長引数（`{#define F(args...) args}`）には対応しておらず、`PP30` になる（gcc/clang は受理する）。代わりに `F(...)` と `__VA_ARGS__` を使う
 
 | 特殊マクロ | 説明 |
 |-----------|------|
@@ -1105,7 +1111,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP26 | `ELSE_ERROR` | ERROR | Unexpected else directive | `{#else}` の位置エラー |
 | PP27 | `ENDIF_ERROR` | ERROR | Unexpected endif directive | `{#endif}` の位置エラー |
 | PP28 | `WHITESPACE_BEFORE_DIRECTIVE` | WARNING | Whitespace between '{' and '#'; treated as an ordinary pragma | `{` と `#` の間に空白があり、通常のプラグマとして扱われた（§2。コメントを挟んだ場合はこの警告は出ない） |
-| PP30 | `INVALID_DEFINE_SYNTAX` | ERROR | Invalid define syntax | `{#define}` の構文エラー |
+| PP30 | `INVALID_DEFINE_SYNTAX` | ERROR | Invalid define syntax | `{#define}` の構文エラー（マクロ名がない、パラメータリストが不正など。§3.2） |
 | PP31 | `INVALID_STRINGIZING` | ERROR | Invalid stringizing (@) | 不正な文字列化演算子 |
 | PP32 | `INVALID_TOKEN_PASTING` | ERROR | Invalid token pasting (@@) | 不正なトークン連結演算子 |
 | PP33 | `INVALID_VARIADIC_PLACEMENT` | ERROR | '...' must be the last parameter | 可変長引数が最後のパラメータでない |
@@ -1167,6 +1173,7 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | `#pragma once` | `{#pragma once}` | 同等。正規化パス（symlink 解決・大小文字正規化）ベースで判定 |
 | `__VA_OPT__(tokens)` | `__VA_OPT__(tokens)` | 同等。`__VA_ARGS__` 空→なし、非空→tokens展開 |
 | `__VA_ARGS__` | `__VA_ARGS__` | 同等。ただし空の `__VA_ARGS__` を `@@` の右辺に置いた場合、gcc/clang の GNU 拡張（comma-swallowing、直前のカンマを削除）でなく C17 のプレースマーカー規則（カンマを保持）を採用（§3.3）。gcc 相当の挙動が必要なら `__VA_OPT__` を使う |
+| `#define F(args...)`（GNU 拡張の名前付き可変長引数） | 未対応 | `PP30` エラー。`F(...)` と `__VA_ARGS__` を使う（§3.3） |
 | `-P` | `-P` | 同等。行マーカー出力を抑制。連続空行もすべて除去される |
 | `-dD` | `-dD` | 同等。処理中マクロ定義をインライン出力 |
 | （内部動作、専用オプションなし） | `--max-blank-lines N` | Jiepp 拡張（圧縮の閾値・動作は §1）。gcc/clang も同じ閾値（8 行以上）で圧縮するが、jiepp が自動挿入するマーカーの N は gcc の `# N` より 1 小さい（§9。ユーザーが書く `{#line N}` 自体は gcc と同じ意味） |

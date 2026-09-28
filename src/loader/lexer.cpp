@@ -239,3 +239,13 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
     }
     return tokens;
 }
+
+bool iec3_is_identifier(std::string_view s) {
+    if (s.empty() || !is_ident_start(s.front()))
+        return false;
+    for (char c : s.substr(1)) {
+        if (!is_ident_cont(c))
+            return false;
+    }
+    return true;
+}

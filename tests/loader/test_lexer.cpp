@@ -177,3 +177,43 @@ TEST_F(LexerTest, NestedBrackets) {
     EXPECT_EQ(make(Token::RB, "]"),  result[12]);
     EXPECT_TRUE(empty());
 }
+
+// ---- iec3_is_identifier ----
+
+// R3: iec3_is_identifier accepts exactly what tokenize() lexes as a single
+// identifier: [A-Za-z_][A-Za-z0-9_]*, ASCII only.
+TEST_F(LexerTest, IsIdentifier) {
+    EXPECT_TRUE(iec3_is_identifier("a"));
+    EXPECT_TRUE(iec3_is_identifier("_x1"));
+    EXPECT_TRUE(iec3_is_identifier("X_2"));
+    EXPECT_TRUE(iec3_is_identifier("__VA_ARGS__"));
+    EXPECT_TRUE(iec3_is_identifier("if"));
+    EXPECT_FALSE(iec3_is_identifier(""));
+    EXPECT_FALSE(iec3_is_identifier("1"));
+    EXPECT_FALSE(iec3_is_identifier("1a"));
+    EXPECT_FALSE(iec3_is_identifier("a+b"));
+    EXPECT_FALSE(iec3_is_identifier("."));
+    EXPECT_FALSE(iec3_is_identifier("%IX0"));
+    EXPECT_FALSE(iec3_is_identifier("$"));
+    EXPECT_FALSE(iec3_is_identifier("\xE5"));
+}
+
+// ---- ellipsis tokenization ----
+
+// R3: '...' is three adjacent one-character Token::ANY "." tokens, not a
+// single "..." token; whitespace between dots breaks the run.
+TEST_F(LexerTest, EllipsisIsThreeDotTokens) {
+    auto result = ts("...");
+    ASSERT_EQ(3u, result.size());
+    EXPECT_EQ(make(Token::ANY, "."), result[0]);
+    EXPECT_EQ(make(Token::ANY, "."), result[1]);
+    EXPECT_EQ(make(Token::ANY, "."), result[2]);
+
+    auto result2 = ts(". .");
+    ASSERT_EQ(3u, result2.size());
+    EXPECT_EQ(Token::ANY, result2[0].type);
+    EXPECT_EQ(".", result2[0].text);
+    EXPECT_TRUE(result2[1].type & Token::MASK_WS);
+    EXPECT_EQ(Token::ANY, result2[2].type);
+    EXPECT_EQ(".", result2[2].text);
+}

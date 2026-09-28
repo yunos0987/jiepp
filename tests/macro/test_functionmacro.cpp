@@ -8,7 +8,20 @@ static std::vector<Token> ts(const std::string& text) {
 
 // ---- function macro: simple ----
 
-class FuncMacroTest : public JieppTest {};
+class FuncMacroTest : public JieppTest {
+protected:
+    // R3: `{#define <def>}` followed by an {#ifdef F} probe, in continue mode
+    // (caller installs the guard). Asserts F was not defined ("U") and exactly
+    // one PP30 whose text contains `reason`. messages() is read once.
+    void expect_param_list_error(const std::string& def, const std::string& reason) {
+        SCOPED_TRACE(def);
+        EXPECT_EQ("U", pp("{#define " + def + "}{#ifdef F}D{#else}U{#endif}"));
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find(reason)) << msgs[0];
+    }
+};
 
 TEST_F(FuncMacroTest, Simple) {
     EXPECT_EQ(";2+A+ab;", pp("{#define F(a) a+A+ab};F(2);"));
@@ -442,16 +455,178 @@ TEST_F(FuncMacroTest, BracketSyntaxComplex2) {
 
 // ---- function macro: define syntax errors ----
 
-// NOTE: '{#define: ...}' (colon after define) is silently consumed without error.
+// NOTE: '{#define: ...}' is the colon form of {#define}; an unterminated
+// parameter list is PP30.
 // '{#define F(() ...}' (invalid param list) triggers INVALID_DEFINE_SYNTAX.
 TEST_F(FuncMacroTest, SyntaxErrorInDefine) {
-    // Fact: define with colon produces no output and no diagnostic
-    EXPECT_EQ("", pp("{#define: F( a}"));
+    // Fact: the colon form still requires a well-formed parameter list --
+    // an unterminated list ('(a' with no ')') is PP30, like any other define.
+    EXPECT_THROW(pp("{#define: F( a}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+    EXPECT_EQ(";[1];", pp("{#define: F(a) [a]};F(1);"));
     EXPECT_TRUE(empty());
 
     // Fact: define with invalid param list (open paren inside params) triggers an error
     EXPECT_THROW(pp("{#define  F(() a}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+    EXPECT_TRUE(empty());
+}
+
+// R3: a parameter is expected but the next token is neither ',' nor ')'.
+TEST_F(FuncMacroTest, ParamListExpectedCommaOrParen) {
+    Issue::ContinueMode guard({});
+    const char* reason = "expected ',' or ')'";
+    expect_param_list_error("F(a b) ok", reason);
+    expect_param_list_error("F(x body text", reason);
+    expect_param_list_error("F(a+b) ok", reason);
+    expect_param_list_error("F(int#1) ok", reason);
+    expect_param_list_error("F(T#1s) ok", reason);
+    expect_param_list_error("F(a (*! d *)) ok", reason);
+    expect_param_list_error("F(a$$b) ok", reason);
+    expect_param_list_error("F(a@@b) ok", reason);
+}
+
+// R3: a parameter name or '...' is expected but the next token is not a
+// valid identifier (iec3_is_identifier).
+TEST_F(FuncMacroTest, ParamListExpectedParameterName) {
+    Issue::ContinueMode guard({});
+    const char* reason = "expected parameter name or '...'";
+    expect_param_list_error("F(a,,b) ok", reason);
+    expect_param_list_error("F(,a) ok", reason);
+    expect_param_list_error("F(a,) ok", reason);
+    expect_param_list_error("F(,) ok", reason);
+    expect_param_list_error("F(1) ok", reason);
+    expect_param_list_error("F(. x) ok", reason);
+    expect_param_list_error("F(..) ok", reason);
+    expect_param_list_error("F(. . .) ok", reason);
+    expect_param_list_error("F('s') ok", reason);
+    expect_param_list_error("F(%IX0.1) ok", reason);
+    expect_param_list_error("F(${x$}) ok", reason);
+    expect_param_list_error("F(${#undef X$}) ok", reason);
+    expect_param_list_error("F(@a) ok", reason);
+    expect_param_list_error("F((a)) ok", reason);
+    expect_param_list_error("F([a]) ok", reason);
+    expect_param_list_error("F(\xE5\xA4\x89\xE6\x95\xB0) ok", reason);
+}
+
+// R3: the parameter list runs out of tokens before a closing ')'.
+TEST_F(FuncMacroTest, ParamListMissingCloseParen) {
+    Issue::ContinueMode guard({});
+    const char* reason = "missing ')'";
+    expect_param_list_error("F(x", reason);
+    expect_param_list_error("F(a,", reason);
+    expect_param_list_error("F(a, body", reason);
+    expect_param_list_error("F(", reason);
+    expect_param_list_error("F(...", reason);
+    expect_param_list_error("F(a, ...", reason);
+    // A real newline inside the '// c' comment (D6: '//' swallows the rest
+    // of the line up to that newline) is consumed by the directive and
+    // echoed as a leading blank line, like any other raw newline inside a
+    // directive (test_directive.cpp NewlineInDirectiveLineCountUnchanged).
+    {
+        SCOPED_TRACE("F(a, // c\\n b) x");
+        EXPECT_EQ("\nU", pp("{#define F(a, // c\n b) x}{#ifdef F}D{#else}U{#endif}"));
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find(reason)) << msgs[0];
+    }
+}
+
+// R3, Q1 (design default): the GNU named-variadic-parameter extension
+// ('F(args...)', no comma before '...') is not supported; use 'F(...)' and
+// __VA_ARGS__ instead.
+TEST_F(FuncMacroTest, ParamListNamedVariadicNotSupported) {
+    Issue::ContinueMode guard({});
+    const char* reason = "named variadic parameter";
+    expect_param_list_error("F(a...) a", reason);
+    expect_param_list_error("F(a ...) a", reason);
+}
+
+// R3: only the first malformed-list error is reported, like the existing
+// duplicate-parameter and variadic-placement checks (O1-O4 in the design).
+TEST_F(FuncMacroTest, ParamListFirstErrorWins) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("F(1, a, a)");
+        EXPECT_EQ(";F(1,2,3);", pp("{#define F(1, a, a) ok};F(1,2,3);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(a, a, 1)");
+        EXPECT_EQ(";F(1,2,3);", pp("{#define F(a, a, 1) ok};F(1,2,3);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(... 1)");
+        EXPECT_EQ(";F(1);", pp("{#define F(... 1) ok};F(1);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(a, ... x)");
+        EXPECT_EQ(";F(1,2);", pp("{#define F(a, ... x) ok};F(1,2);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(__VA_ARGS__, ...");
+        EXPECT_EQ(";F(1);", pp("{#define F(__VA_ARGS__, ...};F(1);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    }
+}
+
+// R3: a rejected {#define} leaves an existing definition of the same name
+// untouched (like the R2 duplicate-parameter behavior).
+TEST_F(FuncMacroTest, ParamListErrorKeepsExistingDefinition) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";;[1];", pp("{#define F(x) [x]};{#define F(a b) <a>};F(1);"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, cs[0]);
+    EXPECT_EQ(1, Issue::error_count_);
+}
+
+// R3: {#ignore PP30} silences the diagnostic but F is still not defined.
+TEST_F(FuncMacroTest, ParamListErrorIgnoredStillNotDefined) {
+    EXPECT_EQ("U", pp("{#ignore PP30}{#define F(a b) ok}{#ifdef F}D{#else}U{#endif}"));
+    EXPECT_TRUE(empty());
+}
+
+// R3: in library (non-continue) mode, a malformed parameter list throws.
+TEST_F(FuncMacroTest, ParamListErrorThrowsInLibraryMode) {
+    EXPECT_THROW(pp("{#define F(a b) ok}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+}
+
+// R3: forms that were valid before the change must keep working exactly as
+// before, including jiepp extensions beyond plain C (whitespace/newlines and
+// comments inside the list; the '$n'/'$t' escapes for newline/tab).
+TEST_F(FuncMacroTest, ParamListValidFormsAccepted) {
+    EXPECT_EQ(";2;", pp("{#define F() 2};F();"));
+    EXPECT_EQ(";2;", pp("{#define F( ) 2};F();"));
+    EXPECT_EQ(";[1,2];", pp("{#define F(...) [__VA_ARGS__]};F(1,2);"));
+    EXPECT_EQ(";[1|2,3];", pp("{#define F(a, ...) [a|__VA_ARGS__]};F(1,2,3);"));
+    // a takes "1", the trailing variadic takes just "2" -> __VA_ARGC__ is 1.
+    EXPECT_EQ(";[1];", pp("{#define F(a,  ...  ) [__VA_ARGC__]};F(1,2);"));
+    EXPECT_EQ(";[1|2];", pp("{#define F( a (* c *) , b /* d */ ) [a|b]};F(1,2);"));
+    EXPECT_EQ("[1|2]", pp("{#define F( a $n, $t b ) [a|b]}F(1,2)"));
+    EXPECT_EQ(";[1|2|3];", pp("{#define F(if, var, and) [if|var|and]};F(1,2,3);"));
+    EXPECT_EQ(";[1];", pp("{#define F(defined) [defined]};F(1);"));
+    EXPECT_EQ(";[1|2];", pp("{#define F(_x1, X_2) [_x1|X_2]};F(1,2);"));
+    EXPECT_EQ(";[1];", pp("{#define: F(a) [a]};F(1);"));
+    EXPECT_EQ(";[3];", pp("{#define F(__VA_ARGS__) [__VA_ARGS__]};F(3);"));
+    // Real-newline parameter list (as test_directive.cpp:360): output keeps
+    // the leading newline from inside the list.
+    EXPECT_EQ("\n[1|2]", pp("{#define F( a,\n b ) [a|b]}F(1,2)"));
     EXPECT_TRUE(empty());
 }
 

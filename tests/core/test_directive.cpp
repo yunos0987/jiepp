@@ -427,6 +427,25 @@ TEST_F(DirectiveTest, DdModeDoesNotEchoRejectedDefine) {
     EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[1]);
 }
 
+// R3: -dD must not echo a {#define} whose parameter list was rejected as
+// malformed either -- same rule as DdModeDoesNotEchoRejectedDefine, but for
+// the new parameter-list-syntax checks instead of duplicate-parameter /
+// variadic-placement ones.
+TEST_F(DirectiveTest, DdModeDoesNotEchoMalformedParamList) {
+    Issue::ContinueMode guard({});
+    Env env = setup();
+    env.set_dd_mode(true);
+    const std::string output =
+        pp("{#define F(a b) x}{#define G(a,) x}{#define OK(a) a}", env);
+    EXPECT_EQ(std::string::npos, output.find("{#define F(")) << "output:\n" << output;
+    EXPECT_EQ(std::string::npos, output.find("{#define G(")) << "output:\n" << output;
+    EXPECT_NE(std::string::npos, output.find("{#define OK(a) a}")) << "output:\n" << output;
+    auto cs = codes();
+    ASSERT_EQ(2u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, cs[0]);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, cs[1]);
+}
+
 TEST_F(DirectiveTest, NewlineInDirectiveRedefinitionNoWarning) {
     // Redefining X with a raw-newline body that normalizes to the same
     // text as its previous definition must not raise MACRO_REDEFINED.

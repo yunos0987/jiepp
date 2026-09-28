@@ -80,6 +80,17 @@ std::string resolve_syspath_base(const std::string& raw_syspath, Env& env) {
     return candidate.lexically_normal().generic_string();
 }
 
+// Number of tokens forming '...' at ts[i], or 0. The lexer emits every '.'
+// as its own one-character Token::ANY, so '...' is three adjacent '.'
+// tokens; ". . ." (whitespace between) is not an ellipsis, as in C/clang.
+std::size_t ellipsis_at(const std::vector<Token>& ts, std::size_t i) {
+    for (std::size_t k = i; k < i + 3; ++k) {
+        if (k >= ts.size() || ts[k].type != Token::ANY || ts[k].text != ".")
+            return 0;
+    }
+    return 3;
+}
+
 } // namespace
 
 namespace jiepp::preprocessor_detail {
@@ -127,41 +138,53 @@ bool handle_define(const std::string& raw_arg, Env& env) {
     };
 
     if (is_function) {
-        ++i;
-        while (i < ts.size() && ts[i].type != Token::RP) {
-            if (ts[i].type & Token::MASK_WS) {
+        // Parameter list, following C17 6.10.3 / clang:
+        //   '(' ')'  |  '(' '...' ')'  |  '(' id (',' id)* [',' '...'] ')'
+        // where id is an identifier as the lexer tokenizes it
+        // (iec3_is_identifier). Whitespace, newlines and comments may appear
+        // between any two items. The first error found left to right is
+        // reported once and the whole {#define} is abandoned, like PP33/PP36:
+        // nothing is defined, an existing definition is kept, and -dD does
+        // not echo it.
+        auto skip_ws = [&]() {
+            while (i < ts.size() && (ts[i].type & Token::MASK_WS))
                 ++i;
-                continue;
-            }
-            if (ts[i].type == Token::SEP) {
-                ++i;
-                continue;
-            }
-            if (ts[i].type == Token::ANY) {
-                if (ts[i].text == "...") {
+        };
+        auto list_error = [&](const std::string& what) {
+            ISSUE(INVALID_DEFINE_SYNTAX,
+                  what + " in macro parameter list: " + raw_arg);
+        };
+        ++i; // '('
+        skip_ws();
+        if (i < ts.size() && ts[i].type == Token::RP) {
+            ++i; // "()": no parameters
+        } else {
+            for (;;) {
+                // Expect a parameter name or '...'.
+                if (i >= ts.size()) {
+                    list_error("missing ')'");
+                    return false;
+                }
+                if (std::size_t n = ellipsis_at(ts, i)) {
                     if (variadic_name_clash())
                         return false;
                     param_names.push_back(FunctionMacro::VA_SYM);
-                    ++i;
-                    while (i < ts.size() && (ts[i].type & Token::MASK_WS)) ++i;
-                    if (i < ts.size() && ts[i].type != Token::RP) {
+                    i += n;
+                    skip_ws();
+                    if (i >= ts.size()) {
+                        list_error("missing ')'");
+                        return false;
+                    }
+                    if (ts[i].type != Token::RP) {
                         ISSUE(INVALID_VARIADIC_PLACEMENT, raw_arg);
                         return false;
                     }
+                    ++i; // ')'
                     break;
                 }
-                if (ts[i].text == "." && i + 2 < ts.size() && ts[i + 1].text == "." &&
-                    ts[i + 2].text == ".") {
-                    if (variadic_name_clash())
-                        return false;
-                    param_names.push_back(FunctionMacro::VA_SYM);
-                    i += 3;
-                    while (i < ts.size() && (ts[i].type & Token::MASK_WS)) ++i;
-                    if (i < ts.size() && ts[i].type != Token::RP) {
-                        ISSUE(INVALID_VARIADIC_PLACEMENT, raw_arg);
-                        return false;
-                    }
-                    break;
+                if (ts[i].type != Token::ANY || !iec3_is_identifier(ts[i].text)) {
+                    list_error("expected parameter name or '...'");
+                    return false;
                 }
                 if (!seen_params.insert(ts[i].text).second) {
                     ISSUE(DUPLICATE_MACRO_PARAMETER, ts[i].text);
@@ -169,13 +192,28 @@ bool handle_define(const std::string& raw_arg, Env& env) {
                 }
                 param_names.push_back(ts[i].text);
                 ++i;
-            } else {
-                ISSUE(INVALID_DEFINE_SYNTAX, raw_arg);
-                return false;
+                // Expect ',' or ')'.
+                skip_ws();
+                if (i >= ts.size()) {
+                    list_error("missing ')'");
+                    return false;
+                }
+                if (ts[i].type == Token::RP) {
+                    ++i;
+                    break;
+                }
+                if (ts[i].type != Token::SEP) {
+                    if (ellipsis_at(ts, i))
+                        list_error("named variadic parameter '" + param_names.back() +
+                                   "...' (GNU extension) is not supported; use '...' and __VA_ARGS__");
+                    else
+                        list_error("expected ',' or ')'");
+                    return false;
+                }
+                ++i; // ','
+                skip_ws();
             }
         }
-        if (i < ts.size() && ts[i].type == Token::RP)
-            ++i;
     }
 
     while (i < ts.size() && (ts[i].type & Token::MASK_WS))
