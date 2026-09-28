@@ -1,6 +1,7 @@
 #include "option.hpp"
 #include "jiepp.hpp"
 #include "../env/issue.hpp"
+#include <algorithm>
 #include <iostream>
 
 #ifdef _WIN32
@@ -118,12 +119,29 @@ int main(int argc, char* argv[]) {
         CloseHandle(thread);
         return args.result;
 #else
-        // POSIX: set stack limit via setrlimit when specified
+        // POSIX: set stack limit via setrlimit when specified.
+        // U5/F1: only the soft limit (rlim_cur) is raised, like gcc/clang --
+        // the hard limit (rlim_max) is never touched. The previous code set
+        // rlim_max = stack_bytes too, which *lowers* the hard limit whenever
+        // stack_bytes is below the process's existing hard limit, making it
+        // impossible for anything later in the process (or a child) to ever
+        // raise the soft limit back above stack_bytes again.
         if (opts.recursion_limit) {
             size_t stack_bytes = static_cast<size_t>(*opts.recursion_limit) * FRAME_SIZE_ESTIMATE;
             struct rlimit rl;
-            rl.rlim_cur = stack_bytes;
-            rl.rlim_max = stack_bytes;
+            if (getrlimit(RLIMIT_STACK, &rl) != 0) {
+                try {
+                    ISSUE(STACK_LIMIT_FAILED, std::to_string(stack_bytes) + " bytes");
+                } catch (const std::exception&) {
+                }
+                return 1;
+            }
+            // If the hard limit is below the requested size, clamp the soft
+            // limit to it instead of failing outright (setrlimit() would
+            // reject rlim_cur > rlim_max for an unprivileged process).
+            rl.rlim_cur = (rl.rlim_max == RLIM_INFINITY)
+                              ? static_cast<rlim_t>(stack_bytes)
+                              : std::min(static_cast<rlim_t>(stack_bytes), rl.rlim_max);
             if (setrlimit(RLIMIT_STACK, &rl) != 0) {
                 try {
                     ISSUE(STACK_LIMIT_FAILED, std::to_string(stack_bytes) + " bytes");
