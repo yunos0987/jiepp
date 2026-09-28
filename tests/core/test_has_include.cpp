@@ -150,3 +150,60 @@ TEST_F(HasIncludeTest, DirectoryIsNotAFile) {
     EXPECT_EQ(std::string::npos, r.find("YES"));
     EXPECT_TRUE(empty());
 }
+
+// ---- R4 follow-up Q5: __has_include counts as defined (not in sandbox) ----
+#ifndef JIEPP_SANDBOX
+
+// H1
+TEST_F(HasIncludeTest, CountsAsDefinedForIfdefIfndefAndDefined) {
+    {
+        auto r = pp("{#ifdef __has_include}y{#else}n{#endif}");
+        EXPECT_EQ("y", r);
+        EXPECT_TRUE(empty());
+    }
+    {
+        auto r = pp("{#ifndef __has_include}y{#else}n{#endif}");
+        EXPECT_EQ("n", r);
+        EXPECT_TRUE(empty());
+    }
+    {
+        auto r = pp("{#if defined(__has_include)}y{#else}n{#endif}");
+        EXPECT_EQ("y", r);
+        EXPECT_TRUE(empty());
+    }
+    {
+        auto r = pp("{#if defined __has_include}y{#else}n{#endif}");
+        EXPECT_EQ("y", r);
+        EXPECT_TRUE(empty());
+    }
+}
+
+// H2
+TEST_F(HasIncludeTest, IfdefGuardsActualUse) {
+    auto r = pp_hi("{#ifdef __has_include}{#if __has_include('existing.iec')}Y{#endif}{#endif}");
+    EXPECT_NE(std::string::npos, r.find("Y"));
+    EXPECT_TRUE(empty());
+}
+
+// H3
+TEST_F(HasIncludeTest, StaysDefinedAfterUndef) {
+    // jiepp's __has_include(...) operator cannot be disabled by {#undef}
+    // (Q4: documented, not changed); it survives.
+    auto r = pp("{#undef __has_include}{#ifdef __has_include}y{#else}n{#endif}");
+    EXPECT_EQ("y", r);
+    EXPECT_TRUE(empty());
+}
+
+// H4: regression -- __has_include_next is not implemented, so it reads as
+// undefined and never appears in a macro dump.
+TEST_F(HasIncludeTest, HasIncludeNextNotImplemented) {
+    auto r = pp("{#ifdef __has_include_next}y{#else}n{#endif}");
+    EXPECT_EQ("n", r);
+
+    Env env = setup();
+    std::ostringstream os;
+    dump_macros(env, os);
+    EXPECT_EQ(std::string::npos, os.str().find("__has_include"));
+}
+
+#endif  // !JIEPP_SANDBOX

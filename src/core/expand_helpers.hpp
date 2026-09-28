@@ -8,6 +8,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -38,6 +39,10 @@ bool eval_cond(const std::string& raw_cond, Env& env);
 // (even for {#ifndef}), so a later {#elif}/{#else} may still be taken.
 // Tokens after NAME are PP49 (warning) and ignored.
 bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env);
+
+// Whether NAME counts as defined for {#ifdef}/{#ifndef}/`defined`. See the
+// definition in expand_ctrl.cpp for the __has_include special case.
+bool macro_name_is_defined(std::string_view name, Env& env);
 
 // ── Prosser's algorithm support (expand_subst.cpp) ─────────────────
 // Corresponds to cpp.algo.md: §hsadd, §glue, §Support functions, §subst.

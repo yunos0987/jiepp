@@ -12,6 +12,7 @@
 
 #include <cctype>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace jiepp::expand_detail {
@@ -207,9 +208,24 @@ bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env) {
               std::string(is_ifndef ? "{#ifndef " : "{#ifdef ") +
                   Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
     }
-    Macro* m = env.lookup(ts[0].text);
-    bool is_def = m && !dynamic_cast<DefinedOperator*>(m);
+    bool is_def = macro_name_is_defined(ts[0].text, env);
     return is_ifndef ? !is_def : is_def;
+}
+
+// Whether NAME counts as defined for {#ifdef}/{#ifndef}/`defined`.
+// A macro in env counts (the transient 'defined' operator itself does not).
+// Like gcc/clang, `__has_include` also counts in a normal build so code can
+// feature-test it; jiepp's __has_include(...) operator cannot be disabled
+// by {#undef}/{#define}, so it stays defined even after
+// {#undef __has_include}. Not in a JIEPP_SANDBOX build, where the operator
+// itself is restricted (PP62): there it reads as undefined.
+bool macro_name_is_defined(std::string_view name, Env& env) {
+#ifndef JIEPP_SANDBOX
+    if (name == "__has_include")
+        return true;
+#endif
+    Macro* m = env.lookup(name);
+    return m && !dynamic_cast<DefinedOperator*>(m);
 }
 
 } // namespace jiepp::expand_detail

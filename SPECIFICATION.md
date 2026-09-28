@@ -446,6 +446,8 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 
 `defined` の被演算子は識別子でなければならない。被演算子がない、または識別子でない場合（`defined 1`・`defined(%IX0)`・`defined 'a'` など）は `PP40`、`defined(` の後に `)` がない場合は `PP52` エラーになる。このとき条件式全体を偽とみなし、残りの部分は評価しない（診断はその式の最初の 1 件だけ。clang と同じ）。
 
+`__has_include` はマクロではないが、gcc/clang と同じく `{#ifdef}` / `{#ifndef}` / `defined` では定義済みとして扱う。`{#ifdef __has_include}` で `__has_include(…)` を使えるか判定できる。jiepp の `__has_include(…)` は `{#undef}` / `{#define}` で働きが変わらないため、`{#undef __has_include}` の後も定義済みのまま（gcc/clang では `#undef` で使えなくなり、未定義になる）。サンドボックスモード（§14）では未定義として扱う。
+
 ### 5.3 未定義の識別子 / Undefined Identifiers
 
 `{#if}` 式内で未定義の識別子は `0` に評価される（C プリプロセッサと同じセマンティクス）。
@@ -578,6 +580,8 @@ N進数リテラルの `N` は 2〜36。符号 `+`/`-` を基数の直後（通�
 ```
 
 指定ファイルがインクルードパスに存在すれば `1`、なければ `0` に評価される。`"file"` 形式は `{#include}` 検索順序、`<file>` 形式は `{#sinclude}` 検索順序を使う。候補がディレクトリの場合もファイルとして存在しないため `0`。
+
+`{#ifdef __has_include}` / `defined(__has_include)` は通常のビルドでは真（§5.2）。
 
 ### 7.6 `{#pragma once}` — 重複インクルード防止
 

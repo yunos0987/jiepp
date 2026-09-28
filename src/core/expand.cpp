@@ -455,9 +455,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     }
                 }
 
-                Macro* m = env.lookup(operand);
-                bool is_def = m && !dynamic_cast<DefinedOperator*>(m);
-                ots.push_back(Token::create(Token::ANY, is_def ? "1" : "0"));
+                ots.push_back(Token::create(Token::ANY,
+                                            macro_name_is_defined(operand, env) ? "1" : "0"));
                 continue;
             }
 
