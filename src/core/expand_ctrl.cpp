@@ -132,7 +132,7 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
 
 } // namespace
 
-std::string eval_cond_str(const std::string& raw_cond, Env& env) {
+std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_error) {
 #ifdef JIEPP_SANDBOX
     // In sandbox mode, __has_include is not allowed (filesystem probe)
     static constexpr std::string_view KW_HI = "__has_include";
@@ -143,16 +143,44 @@ std::string eval_cond_str(const std::string& raw_cond, Env& env) {
     std::string cond = resolve_has_include(raw_cond, env);
 #endif
     bool had_defined = env.exist("defined");
-    if (!had_defined)
-        env.define("defined", std::make_unique<DefinedOperator>());
+    // C3/U5: install the temporary 'defined' operator via an RAII guard so
+    // it is removed on scope exit even when preprocess_text() below throws
+    // (previously the matching env.undef("defined") was skipped on that
+    // path, leaking the operator into `env` for the rest of the run).
+    struct DefinedGuard {
+        Env& env;
+        bool owns;
+        ~DefinedGuard() { if (owns) env.undef("defined"); }
+    } guard{env, !had_defined};
+    DefinedOperator* defop;
+    if (!had_defined) {
+        auto d = std::make_unique<DefinedOperator>();
+        defop = d.get();
+        env.define("defined", std::move(d));
+    } else {
+        // Defensive only: 'defined' is installed transiently and
+        // non-reentrantly by this function, so a nested eval_cond_str call
+        // observing an already-installed 'defined' is not expected to
+        // happen in practice. Reset it anyway so a hypothetical nested call
+        // does not inherit a stale operand_error from an unrelated caller.
+        defop = dynamic_cast<DefinedOperator*>(env.lookup("defined"));
+        if (defop)
+            defop->operand_error = false;
+    }
     std::string result = preprocess_text(cond, env);
-    if (!had_defined)
-        env.undef("defined");
+    if (operand_error)
+        *operand_error = defop && defop->operand_error;
     return result;
 }
 
 bool eval_cond(const std::string& raw_cond, Env& env) {
-    std::string expanded = eval_cond_str(raw_cond, env);
+    bool operand_error = false;
+    std::string expanded = eval_cond_str(raw_cond, env, &operand_error);
+    // C3: a 'defined' operand/paren error already reported the diagnostic;
+    // the whole condition is false and the rest of it is not evaluated,
+    // like clang.
+    if (operand_error)
+        return false;
     int64_t val = eval_const_expr(expanded);
     return val != 0;
 }

@@ -409,6 +409,8 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 
 括弧は省略できる（`defined NAME` は `defined(NAME)` と同じ）。`defined` は `{#if}` / `{#elif}` 式内でのみ使用可能。
 
+`defined` の被演算子は識別子でなければならない。被演算子がない、または識別子でない場合（`defined 1`・`defined(%IX0)`・`defined 'a'` など）は `PP40`、`defined(` の後に `)` がない場合は `PP52` エラーになる。このとき条件式全体を偽とみなし、残りの部分は評価しない（診断はその式の最初の 1 件だけ。clang と同じ）。
+
 ### 5.3 未定義の識別子 / Undefined Identifiers
 
 `{#if}` 式内で未定義の識別子は `0` に評価される（C プリプロセッサと同じセマンティクス）。

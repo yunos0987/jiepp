@@ -388,7 +388,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             if (macro) {
 
             // defined operator (jiepp extension)
-            if (dynamic_cast<DefinedOperator*>(macro)) {
+            if (auto* defop = dynamic_cast<DefinedOperator*>(macro)) {
                 while (!work.empty() && (work.back().type & Token::MASK_WS))
                     work.pop_back();
 
@@ -400,12 +400,24 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         work.pop_back();
                 }
 
+                // C3: the operand must be an identifier, like clang. Only
+                // the first such error within one #if/#elif condition is
+                // reported (defop->operand_error, reset per condition by
+                // eval_cond_str); every later 'defined' in the same
+                // condition just pushes "0" silently, since eval_cond()
+                // discards the whole (already-erroring) condition anyway.
                 std::string operand;
-                if (!work.empty() && work.back().type == Token::ANY) {
+                if (!work.empty() && work.back().type == Token::ANY && iec3_is_identifier(work.back().text)) {
                     operand = work.back().text;
                     work.pop_back();
                 } else {
-                    ISSUE(INVALID_DEFINED_OPERAND, t.text);
+                    if (!defop->operand_error) {
+                        defop->operand_error = true;
+                        ISSUE(INVALID_DEFINED_OPERAND,
+                              work.empty() ? "macro name missing"
+                                           : "macro name must be an identifier: " +
+                                                 Util::escape_line_breaks(work.back().text));
+                    }
                     ots.push_back(Token::create(Token::ANY, "0"));
                     continue;
                 }
@@ -416,7 +428,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     if (!work.empty() && work.back().type == Token::RP) {
                         work.pop_back();
                     } else {
-                        ISSUE(INVALID_EXPRESSION, "defined");
+                        if (!defop->operand_error) {
+                            defop->operand_error = true;
+                            ISSUE(INVALID_EXPRESSION, "missing ')' after 'defined'");
+                        }
+                        ots.push_back(Token::create(Token::ANY, "0"));
+                        continue;
                     }
                 }
 

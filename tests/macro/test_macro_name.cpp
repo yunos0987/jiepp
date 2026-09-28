@@ -120,3 +120,49 @@ TEST_F(MacroNameTest, IfdefIfndefDoNotDisturbLineNumbering) {
     EXPECT_NE(std::string::npos, out.find("4"));
     EXPECT_NE(std::string::npos, out.find("6"));
 }
+
+// ---- C3: 'defined' operand validation ----------------------------------
+
+TEST_F(MacroNameTest, DefinedConditionsRejectNonIdentifierOperand) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("n", pp("{#if 1 \\or\\ defined 1}y{#else}n{#endif}"));
+    {
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, cs[0]);
+    }
+    EXPECT_EQ("n", pp("{#if defined()}y{#else}n{#endif}"));
+    {
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, cs[0]);
+    }
+    EXPECT_EQ("n", pp("{#if defined(A B)}y{#else}n{#endif}"));
+    {
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("missing ')' after 'defined'")) << msgs[0];
+    }
+    EXPECT_EQ("n", pp("{#if 0}{#elif defined 1}y{#else}n{#endif}"));
+    {
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, cs[0]);
+    }
+    // Only the first 'defined' error in the condition is reported.
+    EXPECT_EQ("n", pp("{#if defined 1 \\or\\ defined 2}y{#else}n{#endif}"));
+    {
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, cs[0]);
+    }
+}
+
+// U5: an exception raised while evaluating a {#if defined ...} condition
+// must not leave the temporary 'defined' operator installed in `env`.
+TEST_F(MacroNameTest, DefinedOperatorNotLeakedAfterException) {
+    Env env = setup();
+    EXPECT_THROW(pp("{#if defined 1}{#endif}", env), Issue::Exception);
+    EXPECT_NE(std::string::npos, pp("{#define X}{#if defined(X)}y{#endif}", env).find("y"));
+}

@@ -26,7 +26,10 @@ struct CtrlState {
 bool ctrl_is_active(const std::vector<CtrlState>& stack);
 bool ctrl_parent_active(const std::vector<CtrlState>& stack);
 
-std::string eval_cond_str(const std::string& raw_cond, Env& env);
+// operand_error, when non-null, receives whether the condition's evaluation
+// hit a 'defined' operand/paren error (C3): eval_cond() uses this to treat
+// the whole condition as false without ever calling eval_const_expr on it.
+std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_error = nullptr);
 bool eval_cond(const std::string& raw_cond, Env& env);
 
 // C2: {#ifdef NAME}/{#ifndef NAME}, like clang's HandleIfdefDirective. NAME

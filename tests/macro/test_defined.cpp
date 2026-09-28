@@ -22,10 +22,14 @@ TEST_F(DefinedTest, Regular) {
     EXPECT_EQ("e",  strip(pp("{#if defined int}1{#endif}e")));
     // 'defined' itself is not a pre-defined macro in this impl
     EXPECT_EQ("e",  strip(pp("{#if defined defined}1{#endif}e")));
-    // numeric operands: no error in C++ impl; evaluates to false
-    EXPECT_EQ("2e", strip(pp("{#if defined 0}1{#else}2{#endif}e")));
-    EXPECT_EQ("2e", strip(pp("{#if defined 1}1{#else}2{#endif}e")));
-    EXPECT_EQ("2e", strip(pp("{#if defined 0.0}1{#else}2{#endif}e")));
+    // R4/C3: a numeric operand is not an identifier (C17 6.10.1, clang/gcc
+    // error), like a string-literal operand below -- INVALID_DEFINED_OPERAND.
+    EXPECT_THROW(pp("{#if defined 0}1{#else}2{#endif}e"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+    EXPECT_THROW(pp("{#if defined 1}1{#else}2{#endif}e"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+    EXPECT_THROW(pp("{#if defined 0.0}1{#else}2{#endif}e"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
     EXPECT_TRUE(empty());
     // string-literal operand → INVALID_DEFINED_OPERAND
     EXPECT_THROW(pp("{#if defined ''}1{#endif}e"), Issue::Exception);
@@ -35,6 +39,12 @@ TEST_F(DefinedTest, Regular) {
     EXPECT_THROW(pp("{#if defined \"\"}1{#endif}e"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
     EXPECT_THROW(pp("{#if defined \"abc\"}1{#endif}e"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+    // R4/C3: a direct-representation address and a punctuation token are
+    // likewise not identifiers.
+    EXPECT_THROW(pp("{#if defined(%IX0)}1{#endif}e"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+    EXPECT_THROW(pp("{#if defined +}1{#endif}e"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
     EXPECT_TRUE(empty());
 }

@@ -111,6 +111,14 @@ public:
         return dynamic_cast<const DefinedOperator*>(&other) != nullptr;
     }
     std::string str() const override { return "defined"; }
+
+    // C3: set by expand()'s 'defined' branch the first time an operand is
+    // missing/non-identifier or an opened '(' has no matching ')' within one
+    // #if/#elif condition, so only the first such error in that condition is
+    // reported (like clang) and eval_cond() can short-circuit the rest of
+    // the expression without evaluating it. Not part of macro identity, so
+    // equal() (which only checks the dynamic type) intentionally ignores it.
+    bool operand_error = false;
 };
 
 // ---------------------------------------------------------------------------
