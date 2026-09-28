@@ -129,6 +129,7 @@ bool handle_define(const std::string& raw_arg, Env& env) {
     // is done, so they stay valid. Views into param_names would dangle when
     // the vector reallocates.
     std::unordered_set<std::string_view> seen_params;
+    bool named_variadic = false;
 
     // Like gcc/clang: the first duplicate parameter is reported once and the
     // whole {#define} is abandoned -- the macro is not defined and any
@@ -136,23 +137,29 @@ bool handle_define(const std::string& raw_arg, Env& env) {
     // A regular parameter named __VA_ARGS__/__VA_ARGC__ collides with the
     // implicit names a trailing '...' introduces (FunctionMacro's args_ map
     // would silently let the variadic entry win), so it is a duplicate too.
-    auto variadic_name_clash = [&]() -> bool {
-        for (const char* va : {FunctionMacro::VA_ARGS, FunctionMacro::VA_ARGC}) {
-            if (seen_params.count(va)) {
-                ISSUE(DUPLICATE_MACRO_PARAMETER, va);
-                return true;
-            }
+    // A GNU named variadic `args...` introduces only __VA_ARGC__ (`args`
+    // replaces __VA_ARGS__), so there __VA_ARGS__ is an ordinary name.
+    auto variadic_name_clash = [&](bool named) -> bool {
+        if (!named && seen_params.count(FunctionMacro::VA_ARGS)) {
+            ISSUE(DUPLICATE_MACRO_PARAMETER, FunctionMacro::VA_ARGS);
+            return true;
+        }
+        if (seen_params.count(FunctionMacro::VA_ARGC)) {
+            ISSUE(DUPLICATE_MACRO_PARAMETER, FunctionMacro::VA_ARGC);
+            return true;
         }
         return false;
     };
 
     if (is_function) {
         // Parameter list, following C17 6.10.3 / clang:
-        //   '(' ')'  |  '(' '...' ')'  |  '(' id (',' id)* [',' '...'] ')'
+        //   '(' ')'  |  '(' '...' ')'  |  '(' id (',' id)* [',' '...' | '...'] ')'
         // where id is an identifier as the lexer tokenizes it
-        // (iec3_is_identifier). Whitespace, newlines and comments may appear
-        // between any two items. The first error found left to right is
-        // reported once and the whole {#define} is abandoned, like PP33/PP36:
+        // (iec3_is_identifier). The last id may be followed directly by
+        // '...' (GNU named variadic, accepted by gcc/clang). Whitespace,
+        // newlines and comments may appear between any two items. The first
+        // error found left to right is reported once and the whole
+        // {#define} is abandoned, like PP33/PP36:
         // nothing is defined, an existing definition is kept, and -dD does
         // not echo it.
         auto skip_ws = [&]() {
@@ -175,7 +182,7 @@ bool handle_define(const std::string& raw_arg, Env& env) {
                     return false;
                 }
                 if (std::size_t n = ellipsis_at(ts, i)) {
-                    if (variadic_name_clash())
+                    if (variadic_name_clash(false))
                         return false;
                     param_names.push_back(FunctionMacro::VA_SYM);
                     i += n;
@@ -212,11 +219,28 @@ bool handle_define(const std::string& raw_arg, Env& env) {
                     break;
                 }
                 if (ts[i].type != Token::SEP) {
-                    if (ellipsis_at(ts, i))
-                        list_error("named variadic parameter '" + param_names.back() +
-                                   "...' (GNU extension) is not supported; use '...' and __VA_ARGS__");
-                    else
-                        list_error("expected ',' or ')'");
+                    if (std::size_t n = ellipsis_at(ts, i)) {
+                        // GNU named variadic `args...` (gcc/clang): `args`
+                        // takes the variable arguments instead of
+                        // __VA_ARGS__. As after a plain '...', only ')' may
+                        // follow.
+                        if (variadic_name_clash(true))
+                            return false;
+                        named_variadic = true;
+                        i += n;
+                        skip_ws();
+                        if (i >= ts.size()) {
+                            list_error("missing ')'");
+                            return false;
+                        }
+                        if (ts[i].type != Token::RP) {
+                            ISSUE(INVALID_VARIADIC_PLACEMENT, Util::escape_line_breaks(raw_arg));
+                            return false;
+                        }
+                        ++i; // ')'
+                        break;
+                    }
+                    list_error("expected ',' or ')'");
                     return false;
                 }
                 ++i; // ','
@@ -247,7 +271,7 @@ bool handle_define(const std::string& raw_arg, Env& env) {
 
     auto make_and_define = [&]() {
         if (is_function) {
-            auto nm = std::make_unique<FunctionMacro>(param_names, body);
+            auto nm = std::make_unique<FunctionMacro>(param_names, body, named_variadic);
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
                 if (!existing->equal(*nm))

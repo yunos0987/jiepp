@@ -694,3 +694,28 @@ TEST_F(DirectiveTest, LineCommentBraceIsLiteralEndToEnd) {
     ASSERT_EQ(1u, cs.size());
     EXPECT_EQ(Issue::Code::INVALID_PRAGMA_SYNTAX, cs[0]);
 }
+
+// -dM prints a GNU named variadic back as gcc/clang do -- the name directly
+// followed by '...', no space and no comma before it.
+TEST_F(DirectiveTest, DumpMacrosNamedVariadic) {
+    Env env = setup();
+    pp("{#define F(args...) [args]}{#define G(a, args ...) [a|args]}"
+       "{#define V(a, ...) [a|__VA_ARGS__]}", env);
+    std::ostringstream os;
+    dump_macros(env, os);
+    const std::string output = os.str();
+    EXPECT_NE(std::string::npos, output.find("{#define F(args...) [args]}\n")) << "output:\n" << output;
+    EXPECT_NE(std::string::npos, output.find("{#define G(a,args...) [a|args]}\n")) << "output:\n" << output;
+    EXPECT_NE(std::string::npos, output.find("{#define V(a,...) [a|__VA_ARGS__]}\n")) << "output:\n" << output;
+    EXPECT_TRUE(empty());
+}
+
+// -dD echoes the original source text of an accepted {#define}, so a named
+// variadic's own whitespace (e.g. the space before '...') survives.
+TEST_F(DirectiveTest, DdModeEchoesNamedVariadicDefine) {
+    Env env = setup();
+    env.set_dd_mode(true);
+    const std::string output = pp("{#define F(args ...) x}", env);
+    EXPECT_NE(std::string::npos, output.find("{#define F(args ...) x}")) << "output:\n" << output;
+    EXPECT_TRUE(empty());
+}

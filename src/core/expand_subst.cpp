@@ -131,11 +131,12 @@ Token stringize_tokens(const std::vector<Token>& ts) {
 
 // ── §Support functions: __VA_OPT__ helpers ────────────────────────
 
-// Returns true when __VA_ARGS__ actual is non-empty for the given macro call.
+// True when the macro is variadic (either form) and its variable arguments
+// are non-empty.
 static bool va_args_non_empty(
     const std::unordered_map<std::string, std::pair<int, bool>>& formal_params,
     const std::vector<std::vector<Token>>& actual_params) {
-    auto it = formal_params.find(FunctionMacro::VA_ARGS);
+    auto it = formal_params.find(FunctionMacro::VA_SYM);
     if (it == formal_params.end()) return false;
     auto [va_idx, is_va] = it->second;
     return !select_arg(va_idx, actual_params, is_va).empty();
@@ -320,7 +321,7 @@ std::vector<Token> subst(
             // Handle standalone __VA_OPT__(content)
             if (t.text == FunctionMacro::VA_OPT) {
                 pending_placemarker = false;
-                if (formal_params.find(FunctionMacro::VA_ARGS) == formal_params.end()) {
+                if (formal_params.find(FunctionMacro::VA_SYM) == formal_params.end()) {
                     ISSUE(INVALID_VA_OPT, "__VA_OPT__ used outside variadic macro");
                     result.push_back(t.clone());
                     continue;

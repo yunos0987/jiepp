@@ -3,6 +3,7 @@
 #include "../env/issue.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -102,9 +103,12 @@ std::string UserDefinedObjectMacro::str() const {
 // FunctionMacro
 // ---------------------------------------------------------------------------
 
-FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Token> body)
-    : args_list_(args_list) {
-    bool has_va = !args_list.empty() && args_list.back() == VA_SYM;
+FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Token> body,
+                             bool named_variadic)
+    : args_list_(args_list), named_variadic_(named_variadic) {
+    if (named_variadic && args_list.empty())
+        throw std::logic_error("FunctionMacro: named variadic without a parameter name");
+    bool has_va = named_variadic || (!args_list.empty() && args_list.back() == VA_SYM);
 
     int regular_count = static_cast<int>(args_list.size()) - (has_va ? 1 : 0);
 
@@ -114,7 +118,11 @@ FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Tok
 
     if (has_va) {
         int va_idx = regular_count;
-        args_[VA_ARGS] = {va_idx, true};
+        args_[VA_SYM] = {va_idx, true};
+        // '...' names the variable arguments __VA_ARGS__; `args...` names
+        // them `args` instead (gcc/clang).
+        args_[named_variadic ? args_list.back() : std::string(VA_ARGS)] = {va_idx, true};
+        // __VA_ARGC__ (jiepp extension) counts them in both forms.
         args_[VA_ARGC] = {va_idx, true};
         num_params_min_ = va_idx;
         num_params_max_ = NUM_OF_MAX_ARGS;
@@ -168,6 +176,10 @@ bool FunctionMacro::equal(const Macro& other) const {
         return false;
     if (num_params_max_ != p->num_params_max_)
         return false;
+    // A GNU named variadic and a C99 '...' are different definitions even when
+    // args_ coincides (F(__VA_ARGS__...) vs F(...)), as in clang.
+    if (named_variadic_ != p->named_variadic_)
+        return false;
     if (args_ != p->args_)
         return false;
     return token_lists_equal_ignoring_ws_amount(body_, p->body_);
@@ -180,6 +192,8 @@ std::string FunctionMacro::str() const {
             s += ",";
         s += args_list_[i];
     }
+    if (named_variadic_)
+        s += VA_SYM; // "args..." -- gcc/clang -dM print F(a,args...)
     s += ") ";
     for (const auto& t : body_)
         s += t.text;

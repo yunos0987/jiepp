@@ -531,16 +531,6 @@ TEST_F(FuncMacroTest, ParamListMissingCloseParen) {
     }
 }
 
-// R3, Q1 (design default): the GNU named-variadic-parameter extension
-// ('F(args...)', no comma before '...') is not supported; use 'F(...)' and
-// __VA_ARGS__ instead.
-TEST_F(FuncMacroTest, ParamListNamedVariadicNotSupported) {
-    Issue::ContinueMode guard({});
-    const char* reason = "named variadic parameter";
-    expect_param_list_error("F(a...) a", reason);
-    expect_param_list_error("F(a ...) a", reason);
-}
-
 // R3: only the first malformed-list error is reported, like the existing
 // duplicate-parameter and variadic-placement checks (O1-O4 in the design).
 TEST_F(FuncMacroTest, ParamListFirstErrorWins) {
@@ -743,6 +733,188 @@ TEST_F(FuncMacroTest, Replace) {
                             ts(" @  abcd   @@    efg     @@      hi       @        j         "))
                   .replacement(env));
     EXPECT_TRUE(empty());
+}
+
+// ---- function macro: GNU named variadic (args...) ----
+
+// The last parameter name followed directly by '...' (no comma) is a
+// GNU named variadic parameter, like gcc/clang: it receives the variable
+// arguments in place of __VA_ARGS__.
+TEST_F(FuncMacroTest, GnuNamedVariadicSubstitution) {
+    EXPECT_EQ(";[];[1];[1,2,3];",
+              pp("{#define F(args...) [args]};F();F(1);F(1,2, 3);"));
+    EXPECT_EQ(";[|];[1|];[1|];[1|2,3];",
+              pp("{#define G(a, args...) [a|args]};G();G(1);G(1,);G(1,2,3);"));
+    // Whitespace may separate the name from '...'; call-side whitespace
+    // around a variadic separator is not preserved (U1, pre-existing).
+    EXPECT_EQ(";<x,y>;",
+              pp("{#define H( args ... ) <args>};H(x , y);"));
+    EXPECT_EQ(";[1|2];",
+              pp("{#define I(a,args...) [a|args]};I(1,2);"));
+    EXPECT_TRUE(empty());
+}
+
+// Regression watchpoint: a comma inside a '[...]' array subscript is
+// protected from being read as an argument separator (Jiepp extension,
+// §17) exactly as for a plain '...' variadic -- each IEC multi-dimensional
+// array argument reaches the named variadic's own name intact.
+TEST_F(FuncMacroTest, GnuNamedVariadicPreservesArraySubscriptCommas) {
+    EXPECT_EQ(";[a[x,y],b[1,2]];",
+              pp("{#define F(args...) [args]};F(a[x,y], b[1,2]);"));
+    EXPECT_TRUE(empty());
+}
+
+// Stringizing (@args) and pasting (a @@ args) work with the named
+// variadic's own name exactly as they do with __VA_ARGS__.
+TEST_F(FuncMacroTest, GnuNamedVariadicStringizeAndPaste) {
+    EXPECT_EQ(";'';'a,b';",
+              pp("{#define S(args...) @args};S();S(a,b);"));
+    EXPECT_EQ(";'';'x y';",
+              pp("{#define S2(a, args...) @ args};S2(1);S2(1,x y);"));
+    EXPECT_EQ(";a;ab;ab,c;",
+              pp("{#define P(a, args...) a @@ args};P(a);P(a,b);P(a,b,c);"));
+    EXPECT_EQ(";_t;u_t;u,v_t;",
+              pp("{#define P2(args...) args @@ _t};P2();P2(u);P2(u,v);"));
+    EXPECT_TRUE(empty());
+}
+
+// Unlike '...', a named variadic does not make __VA_ARGS__ an implicit
+// name -- it is an ordinary identifier in the body (gcc/clang; gcc warns,
+// clang is silent, jiepp follows clang).
+TEST_F(FuncMacroTest, GnuNamedVariadicVaArgsIsOrdinaryIdentifier) {
+    EXPECT_EQ(";<__VA_ARGS__>;<__VA_ARGS__>;",
+              pp("{#define V(args...) <__VA_ARGS__>};V();V(1,2);"));
+    EXPECT_EQ(";<1|2>;",
+              pp("{#define V2(__VA_ARGS__, args...) <__VA_ARGS__|args>};V2(1,2);"));
+    EXPECT_EQ(";<1,2>;",
+              pp("{#define V3(__VA_ARGS__...) <__VA_ARGS__>};V3(1,2);"));
+    EXPECT_TRUE(empty());
+}
+
+// Since __VA_ARGS__ is an ordinary identifier for a named variadic,
+// stringizing it (which requires a formal parameter operand) is PP31, like
+// stringizing any other non-parameter identifier.
+TEST_F(FuncMacroTest, GnuNamedVariadicStringizeVaArgsIsError) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";@__VA_ARGS__;", pp("{#define V4(args...) @__VA_ARGS__};V4(1);"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_STRINGIZING, cs[0]);
+}
+
+// __VA_OPT__ recognizes a named variadic's variable arguments the same way
+// it recognizes __VA_ARGS__'s (gcc/clang warn about this; jiepp does not,
+// to keep the diagnostics for both variadic forms consistent).
+TEST_F(FuncMacroTest, GnuNamedVariadicVaOpt) {
+    EXPECT_EQ(";< >;<x 1>;",
+              pp("{#define O(args...) <__VA_OPT__(x) args>};O();O(1);"));
+    EXPECT_EQ(";<>;<>;<12>;",
+              pp("{#define O2(a, args...) <__VA_OPT__(a @@ args)>};O2();O2(1);O2(1,2);"));
+    EXPECT_EQ(";<''|x>;<'1,2'|x1,2>;",
+              pp("{#define O3(args...) <@__VA_OPT__(args)|x @@ __VA_OPT__(args)>};O3();O3(1,2);"));
+    EXPECT_TRUE(empty());
+}
+
+// __VA_ARGC__ (jiepp extension) still counts the variable arguments for a
+// named variadic.
+TEST_F(FuncMacroTest, GnuNamedVariadicVaArgc) {
+    EXPECT_EQ(";0;1;2;",
+              pp("{#define Q(args...) __VA_ARGC__};Q();Q(1);Q(1,2);"));
+    EXPECT_EQ(";<0>;<1>;<2>;",
+              pp("{#define Q2(a, args...) <__VA_ARGC__>};Q2(1);Q2(1,);Q2(1,2,3);"));
+    EXPECT_EQ(";X2|'2';",
+              pp("{#define Q3(args...) X @@ __VA_ARGC__|@__VA_ARGC__};Q3(a,b);"));
+    EXPECT_TRUE(empty());
+}
+
+// __VA_ARGC__ stays an implicit, reserved name for a named variadic too --
+// using it as a parameter name is PP36, exactly as for a plain '...'.
+TEST_F(FuncMacroTest, GnuNamedVariadicVaArgcIsReserved) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("F(__VA_ARGC__...)");
+        EXPECT_EQ("U", pp("{#define F(__VA_ARGC__...) x}{#ifdef F}D{#else}U{#endif}"));
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("__VA_ARGC__"));
+    }
+    {
+        SCOPED_TRACE("F(__VA_ARGC__, args...)");
+        EXPECT_EQ("U", pp("{#define F(__VA_ARGC__, args...) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    }
+}
+
+// A named variadic must still be the last parameter, with nothing but ')'
+// after its own '...' -- same placement rule as plain '...' (PP33), and the
+// same duplicate-name (PP36) / malformed-list (PP30) checks apply.
+TEST_F(FuncMacroTest, GnuNamedVariadicMustBeLast) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("F(args..., b) x");
+        EXPECT_EQ("U", pp("{#define F(args..., b) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(args... x) x");
+        EXPECT_EQ("U", pp("{#define F(args... x) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(args......) x");
+        EXPECT_EQ("U", pp("{#define F(args......) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    expect_param_list_error("F(args...", "missing ')'");
+    {
+        SCOPED_TRACE("F(a, a...) x");
+        EXPECT_EQ("U", pp("{#define F(a, a...) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    }
+    expect_param_list_error("F(args. ..) x", "expected ',' or ')'");
+}
+
+// jiepp does not delete the comma before an omitted named variadic's
+// arguments (the GNU `, ## args` idiom) -- same deviation as for '...',
+// documented in SPECIFICATION.md.
+TEST_F(FuncMacroTest, GnuNamedVariadicCommaPasteKeepsComma) {
+    EXPECT_EQ(";g(x,);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x);"));
+    EXPECT_TRUE(empty());
+}
+
+// A named variadic and a C99 '...' are different definitions (clang warns
+// on this too), but two named-variadic (or two '...') definitions that only
+// differ in inconsequential whitespace are the same definition.
+TEST_F(FuncMacroTest, GnuNamedVariadicRedefinition) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("", pp("{#define F(args...) args}{#define F(args ...) args}"));
+    EXPECT_TRUE(codes().empty());
+
+    pp("{#define G(args...) x}{#define G(...) x}");
+    auto cs1 = codes();
+    ASSERT_EQ(1u, cs1.size());
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, cs1[0]);
+
+    pp("{#define W(__VA_ARGS__...) x}{#define W(...) x}");
+    auto cs2 = codes();
+    ASSERT_EQ(1u, cs2.size());
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, cs2[0]);
+
+    pp("{#define K(a, ...) a}{#define K(a, b...) a}");
+    auto cs3 = codes();
+    ASSERT_EQ(1u, cs3.size());
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, cs3[0]);
 }
 
 

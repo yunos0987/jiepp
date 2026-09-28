@@ -133,15 +133,23 @@ public:
     static constexpr const char* VA_OPT  = "__VA_OPT__";
     static constexpr const char* VA_SYM  = "...";
 
-    // args_list: parameter names in order; last may be "..."
-    FunctionMacro(std::vector<std::string> args_list, std::vector<Token> body);
+    // args_list: parameter names in order. The last may be "..." (C99
+    // variadic: the variable arguments are __VA_ARGS__). With
+    // named_variadic, the last name is instead a GNU named variadic
+    // parameter (`args...`): it takes the variable arguments, and
+    // __VA_ARGS__ is an ordinary identifier in the body (gcc/clang).
+    FunctionMacro(std::vector<std::string> args_list, std::vector<Token> body,
+                  bool named_variadic = false);
 
     std::vector<Token> replacement(Env& env) const override;
     bool equal(const Macro& other) const override;
     std::string str() const override;
     bool is_function_macro() const override { return true; }
 
-    // {name -> (index, is_va_arg)}
+    // {name -> (index, is_va_arg)}. A variadic macro (either form) also has
+    // the key VA_SYM ("...") -> (index of the first variable argument, true);
+    // no body token can spell it (the lexer emits each '.' separately), so
+    // subst() uses it to ask "is this macro variadic" (__VA_OPT__).
     const std::unordered_map<std::string, std::pair<int, bool>>& args() const { return args_; }
     int num_of_params_min() const { return num_params_min_; }
     int num_of_params_max() const { return num_params_max_; }
@@ -153,6 +161,7 @@ private:
     int num_params_max_ = 0;
     std::vector<Token> body_;
     std::vector<std::string> args_list_; // original ordered parameter names
+    bool named_variadic_ = false;
 
     static std::vector<Token> normalize(
         std::vector<Token> ts,
