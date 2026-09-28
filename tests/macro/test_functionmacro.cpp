@@ -519,17 +519,15 @@ TEST_F(FuncMacroTest, ParamListMissingCloseParen) {
     expect_param_list_error("F(", reason);
     expect_param_list_error("F(...", reason);
     expect_param_list_error("F(a, ...", reason);
-    // A real newline inside the '// c' comment (D6: '//' swallows the rest
-    // of the line up to that newline) is consumed by the directive and
-    // echoed as a leading blank line, like any other raw newline inside a
-    // directive (test_directive.cpp NewlineInDirectiveLineCountUnchanged).
+    // A raw newline inside the '// c' comment now ends the comment at that
+    // newline, like a C '//' comment ending at the end of a line, so the
+    // rest of the parameter list ('b) [a|b]') is not swallowed and the
+    // {#define} succeeds instead of running out of tokens before ')'
+    // (test_directive.cpp LineCommentInMultiLineDirective and friends).
     {
-        SCOPED_TRACE("F(a, // c\\n b) x");
-        EXPECT_EQ("\nU", pp("{#define F(a, // c\n b) x}{#ifdef F}D{#else}U{#endif}"));
-        auto msgs = messages();
-        ASSERT_EQ(1u, msgs.size());
-        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, PlainTextMessage::parse_code(msgs[0]));
-        EXPECT_NE(std::string::npos, msgs[0].find(reason)) << msgs[0];
+        SCOPED_TRACE("F(a, // c\\n b) [a|b]");
+        EXPECT_EQ("\n[1|2]", pp("{#define F(a, // c\n b) [a|b]}F(1,2)"));
+        EXPECT_TRUE(empty());
     }
 }
 

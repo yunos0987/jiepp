@@ -564,3 +564,133 @@ TEST_F(DirectiveTest, NewlineInCommentFormDirectives) {
     EXPECT_EQ("\n\n[a b]", pp("//{#define X a\nb}\n[X]"));
     EXPECT_TRUE(empty());
 }
+
+// ---- '//' inside a directive body ends at a raw newline, like C ----
+//
+// Before this fix, read_pragma_body() folded a raw newline into whitespace
+// before the body was lexed, so a '//' comment spanning that newline kept
+// eating characters past it and silently swallowed the rest of the
+// directive (see LexerPragmaTest.DirectiveLineCommentEndsAtRawNewline for
+// the lexer-level check of the folded text). These check the effect
+// end-to-end, through each directive handler that re-lexes the decoded
+// body.
+
+TEST_F(DirectiveTest, LineCommentInMultiLineDirective) {
+    // B1: {#define} - the rest of the directive after the comment is no
+    // longer lost.
+    for (const std::string& nl : {"\n", "\r\n"}) {
+        SCOPED_TRACE(nl);
+        EXPECT_EQ("\n[1 +2]", pp("{#define X 1 // c" + nl + "+2}[X]"));
+        EXPECT_TRUE(empty());
+    }
+}
+
+TEST_F(DirectiveTest, LineCommentInIfDirective) {
+    // B2: {#if} - the comment no longer swallows the operand's continuation
+    // ('+1'), nor the directives that follow it.
+    EXPECT_EQ("\ny", pp("{#if 0 // c\n+1}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, LineCommentInLineDirective) {
+    // B3: {#line} - a trailing '//' comment across a raw newline does not
+    // swallow the directive's closing '}' and the following text.
+    const std::string plain = pp("{#line 100 \n}\n__LINE__");
+    const std::string commented = pp("{#line 100 // c\n}\n__LINE__");
+    EXPECT_EQ(plain, commented);
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, LineCommentInMessageDirective) {
+    // B4: {#warning} - the comment ends at the raw newline, so 'more' is
+    // no longer part of the comment and reaches the message text. This is
+    // unaffected by -nC (env.set_remove_comments): the truncation happens
+    // in the lexer, before {#warning}'s own remove_comments handling would
+    // ever see the comment.
+    EXPECT_EQ("\n", pp("{#warning abc // x\nmore}"));
+    {
+        auto msg = message();
+        EXPECT_EQ(Issue::Code::WARNING_MESSAGE, PlainTextMessage::parse_code(msg));
+        EXPECT_NE(std::string::npos, msg.find("abc more")) << msg;
+    }
+
+    {
+        Env env = setup();
+        env.set_remove_comments(true);
+        const std::string out = pp("{#warning abc // x\nmore}", env);
+        EXPECT_EQ("\n", out);
+        auto msg = message();
+        EXPECT_EQ(Issue::Code::WARNING_MESSAGE, PlainTextMessage::parse_code(msg));
+        EXPECT_NE(std::string::npos, msg.find("abc more")) << msg;
+    }
+}
+
+TEST_F(DirectiveTest, LineCommentInStringDirective) {
+    // B5: {#string}
+    EXPECT_EQ("'a b'\n", pp("{#string a // c\nb}"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, LineCommentInTokenDirective) {
+    // B6: {#token}
+    EXPECT_EQ(pp("{#token a \nb}"), pp("{#token a // c\nb}"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, LineCommentInDdModeEcho) {
+    // B7: -dD echoes the normalized body -- the comment is gone, not just
+    // hidden by the macro's own expansion.
+    Env env = setup();
+    env.set_dd_mode(true);
+    const std::string output = pp("{#define X 1 // c\n+2}", env);
+    EXPECT_NE(std::string::npos, output.find("{#define X 1 +2}")) << "output:\n" << output;
+}
+
+TEST_F(DirectiveTest, LineCommentInCommentFormDirectives) {
+    // B8: the annotated '(*{'/'/*{' and line-comment '//{' directive forms
+    // are fixed the same way as the brace form.
+    EXPECT_NE(std::string::npos, pp("(*{#define X 1 // c\n+2}*)[X]").find("[1 +2]"));
+    EXPECT_NE(std::string::npos, pp("//{#define X 1 // c\n+2}\n[X]").find("[1 +2]"));
+    EXPECT_NE(std::string::npos, pp("/*{#define X 1 // c\n+2}*/[X]").find("[1 +2]"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, LineCommentInDirectiveInsideMacroArgument) {
+    // B9: a directive nested inside another macro's argument list.
+    EXPECT_NE(std::string::npos,
+        pp("{#define ID(x) x}ID({#define Y 1 // c\n+2}[Y])").find("[1 +2]"));
+}
+
+TEST_F(DirectiveTest, LineCommentBeforeDirectiveKeyword) {
+    // B10: a '//' comment before the directive keyword is also truncated at
+    // the raw newline, so the keyword that follows is not swallowed.
+    EXPECT_EQ("\n[1]", pp("{#define // c\nX 1}[X]"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, LineCommentDoesNotAffectLineCounting) {
+    // B11: the raw newline that ends the comment is still counted for line
+    // numbering, same as any other raw newline folded inside a directive
+    // (NewlineInDirectiveLineCountUnchanged above).
+    EXPECT_EQ("\n2", pp("{#define X 1 // c\n+2}__LINE__"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, DollarNewlineInLineCommentJoinsParamList) {
+    // B12: '$'+newline extends a '//' comment to the next raw newline
+    // (like C's backslash-newline continuation), so a parameter list split
+    // across that continuation still parses.
+    EXPECT_EQ("1+2", pp("{#define F(a, // c$n b) a+b}F(1,2)"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, LineCommentBraceIsLiteralEndToEnd) {
+    // B13 (v2): a '{' inside a '//' comment is ordinary content (PP22, kept
+    // literal), not a nested pragma opener -- the comment still ends at the
+    // raw newline and the directive still expands correctly.
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("\n[1 +2]", pp("{#define X 1 // see {\n+2}[X]"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_PRAGMA_SYNTAX, cs[0]);
+}

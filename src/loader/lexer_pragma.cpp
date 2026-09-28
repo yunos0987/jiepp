@@ -1,8 +1,72 @@
 #include "lexer_helpers.hpp"
+#include "directive_parser.hpp"
 
+#include <cctype>
+#include <cstddef>
+#include <optional>
 #include <regex>
 
 namespace jiepp::detail {
+
+namespace {
+
+bool is_pragma_hex_digit(char c) {
+    return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+}
+
+unsigned char pragma_hex_value(char c) {
+    unsigned char u = static_cast<unsigned char>(c);
+    if (u >= '0' && u <= '9') return static_cast<unsigned char>(u - '0');
+    if (u >= 'a' && u <= 'f') return static_cast<unsigned char>(u - 'a' + 10);
+    return static_cast<unsigned char>(u - 'A' + 10);
+}
+
+// Raw newlines are folded to spaces here, before parse_directive() decodes
+// '$' escapes and the handlers re-lex the text. To end a '//' comment at a
+// raw newline like C does, track -- over the *decoded* character stream --
+// whether the scan is inside a '//' comment, using the same string/comment
+// rules as tokenize() (lexer.cpp). A '{' inside a directive body never
+// opens a nested pragma here (a raw '{' always raises PP22 below and stays
+// a literal character; only the next '}' closes the directive), so unlike
+// tokenize() this has no separate pragma-opener sub-state.
+class LineCommentTracker {
+public:
+    // c: decoded char; off: body offset where its raw spelling starts.
+    void feed(char c, std::size_t off) {
+        switch (state_) {
+        case State::Normal:
+            if (prev_ == '/' && c == '/') { state_ = State::Line; start_ = prev_off_; prev_ = 0; return; }
+            if ((prev_ == '/' || prev_ == '(') && c == '*') {
+                closer_ = (prev_ == '(') ? ')' : '/'; state_ = State::Block; star_ = false; prev_ = 0; return;
+            }
+            if (c == '\'' || c == '"') { quote_ = c; esc_ = false; state_ = State::Str; prev_ = 0; return; }
+            prev_ = c; prev_off_ = off; return;
+        case State::Str:                       // mirrors tokenize()'s string loop
+            if (esc_) { esc_ = false; return; } // '$'-escaped char, incl. '$'+newline
+            if (c == '$') { esc_ = true; return; }
+            if (c == quote_ || is_nl_char(c)) state_ = State::Normal;
+            return;
+        case State::Line:                      // a decoded $n/$r/$0A/$0D ends it
+            if (is_nl_char(c)) { state_ = State::Normal; prev_ = 0; }
+            return;
+        case State::Block:
+            if (star_ && c == closer_) { state_ = State::Normal; prev_ = 0; return; }
+            star_ = (c == '*');
+            return;
+        }
+    }
+    bool in_line_comment() const { return state_ == State::Line; }
+    std::size_t line_comment_start() const { return start_; }
+    void end_line_comment() { state_ = State::Normal; prev_ = 0; }
+private:
+    enum class State { Normal, Str, Line, Block };
+    State state_ = State::Normal;
+    char prev_ = 0, quote_ = 0, closer_ = 0;
+    bool esc_ = false, star_ = false;
+    std::size_t prev_off_ = 0, start_ = 0;
+};
+
+} // namespace
 
 Token read_pragma_body(const std::string& text,
                        std::size_t& pos,
@@ -39,6 +103,21 @@ Token read_pragma_body(const std::string& text,
     const bool needs_star = (opener_sign == '(' || opener_sign == '/');
     const char expected_end = (opener_sign == '(') ? ')' : '/';
 
+    // Directive-body-only '//' comment tracking (D6): lc scans the decoded
+    // character stream so a raw newline inside a '//' comment can truncate
+    // the comment out of body before it is folded to whitespace below,
+    // ending it at the newline the way C ends a '//' comment at end of
+    // line. pending_hex/pending_hex_off hold the first hex digit of a
+    // "$XX" escape (mirrors decode_directive_text's own mode==2 state)
+    // between the two ordinary-char iterations that see its two digits, so
+    // the decoded byte can be fed to lc once both are known. Neither is a
+    // second copy of body's content: they never suppress or reorder the
+    // unconditional raw appends below, only decide what (if anything) lc
+    // sees.
+    LineCommentTracker lc;
+    int pending_hex = -1;
+    std::size_t pending_hex_off = 0;
+
     while (pos < len) {
         char c = text[pos];
 
@@ -50,6 +129,12 @@ Token read_pragma_body(const std::string& text,
                 pos += 2;
                 ++lineno;
                 extra_nl.push_back(Token::newline(1));
+                // '$'+newline (line continuation) still joins with nothing;
+                // inside a '//' comment it extends the comment to the next
+                // raw newline (clang: '\'+newline continues a '//'
+                // comment), so lc sees nothing here.
+                if (is_directive)
+                    pending_hex = -1;
                 continue;
             case '\r':
                 pos += 2;
@@ -57,8 +142,23 @@ Token read_pragma_body(const std::string& text,
                     ++pos;
                 ++lineno;
                 extra_nl.push_back(Token::newline(1));
+                if (is_directive)
+                    pending_hex = -1;
                 continue;
             default:
+                if (is_directive) {
+                    std::size_t off = body.size();
+                    if (is_pragma_hex_digit(nc)) {
+                        pending_hex = static_cast<unsigned char>(nc);
+                        pending_hex_off = off;
+                    } else {
+                        pending_hex = -1;
+                        if (auto decoded = decode_directive_escape(nc))
+                            lc.feed(*decoded, off);
+                        // an invalid escape feeds nothing; decode_directive_text()
+                        // reports it later (PP21)
+                    }
+                }
                 body += c;
                 body += nc;
                 pos += 2;
@@ -68,8 +168,20 @@ Token read_pragma_body(const std::string& text,
 
         // Actual newline
         if (is_nl_char(c)) {
+            if (is_directive) {
+                pending_hex = -1;
+                if (lc.in_line_comment()) {
+                    // Like C, a '//' comment ends at the raw newline; drop it
+                    // so it cannot swallow the rest of the directive once the
+                    // newline has been folded into whitespace below.
+                    body.resize(lc.line_comment_start());
+                    lc.end_line_comment();
+                }
+            }
             if (body.empty() || !is_ws_char(body.back())) {
                 body += ' ';
+                if (is_directive)
+                    lc.feed(' ', body.size() - 1); // folded ws must reset "/" lookbehind
             }
             consume_one_nl(text, pos);
             ++lineno;
@@ -113,6 +225,20 @@ Token read_pragma_body(const std::string& text,
             break;
         }
 
+        if (is_directive) {
+            if (pending_hex >= 0) {
+                if (is_pragma_hex_digit(c)) {
+                    char decoded = static_cast<char>(
+                        (pragma_hex_value(static_cast<char>(pending_hex)) << 4) | pragma_hex_value(c));
+                    lc.feed(decoded, pending_hex_off);
+                } else {
+                    lc.feed(c, body.size());
+                }
+                pending_hex = -1;
+            } else {
+                lc.feed(c, body.size());
+            }
+        }
         body += c;
         ++pos;
     }

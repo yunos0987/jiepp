@@ -37,6 +37,24 @@ std::size_t skip_directive_ws(std::string_view text, std::size_t pos) {
 
 } // namespace
 
+std::optional<char> decode_directive_escape(char nc) {
+    switch (nc) {
+    case '$': return '$';
+    case '\'': return '\'';
+    case '"': return '"';
+    case 'l': case 'L': return '\x0a';
+    case 'n': case 'N': return '\n';
+    case 'p': case 'P': return '\x0c';
+    case 'r': case 'R': return '\r';
+    case 't': case 'T': return '\t';
+    case '{': return '{';
+    case '}': return '}';
+    case ':': return ':';
+    case ' ': return ' ';
+    default: return std::nullopt;
+    }
+}
+
 std::string decode_directive_text(std::string_view t) {
     std::string r;
     r.reserve(t.size());
@@ -54,28 +72,18 @@ std::string decode_directive_text(std::string_view t) {
         }
 
         if (mode == 1) {
-            switch (c) {
-            case '$': r += '$'; mode = 0; continue;
-            case '\'': r += '\''; mode = 0; continue;
-            case '"': r += '"'; mode = 0; continue;
-            case 'l': case 'L': r += '\x0a'; mode = 0; continue;
-            case 'n': case 'N': r += '\n'; mode = 0; continue;
-            case 'p': case 'P': r += '\x0c'; mode = 0; continue;
-            case 'r': case 'R': r += '\r'; mode = 0; continue;
-            case 't': case 'T': r += '\t'; mode = 0; continue;
-            case '{': r += '{'; mode = 0; continue;
-            case '}': r += '}'; mode = 0; continue;
-            case ':': r += ':'; mode = 0; continue;
-            case ' ': r += ' '; mode = 0; continue;
-            default:
-                if (is_hex_digit(c)) {
-                    hi = c;
-                    mode = 2;
-                    continue;
-                }
-                ISSUE(INVALID_ESCAPE_SEQUENCE, std::string(t));
-                return "";
+            if (auto decoded = decode_directive_escape(static_cast<char>(c))) {
+                r += *decoded;
+                mode = 0;
+                continue;
             }
+            if (is_hex_digit(c)) {
+                hi = c;
+                mode = 2;
+                continue;
+            }
+            ISSUE(INVALID_ESCAPE_SEQUENCE, std::string(t));
+            return "";
         }
 
         if (!is_hex_digit(c)) {

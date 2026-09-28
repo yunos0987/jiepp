@@ -1,9 +1,18 @@
 #pragma once
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "../env/issue.hpp"
+
+// Character a two-character "$<nc>" directive escape decodes to, or
+// std::nullopt when nc is a hex digit (first half of "$XX") or invalid.
+// Shared between decode_directive_text() (this file) and read_pragma_body()
+// (lexer_pragma.cpp), which needs the decoded character -- without
+// appending it to the body, since that decoding still happens later here --
+// to track '//' comments over the decoded character stream.
+std::optional<char> decode_directive_escape(char nc);
 
 // Decode $-escape sequences in directive text.
 std::string decode_directive_text(std::string_view t);
