@@ -198,10 +198,14 @@ bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env) {
         return false;
     }
     if (ts.size() > 1) {
-        // Extra tokens after NAME: pending user decision Q1; keep the
-        // pre-R4 path (macro-expand as "defined(...)"/"not defined(...)")
-        // unchanged until then.
-        return eval_cond((is_ifndef ? "\\not\\ defined(" : "defined(") + raw_arg + ")", env);
+        // Like gcc/clang ("extra tokens at end of #ifdef directive"), a
+        // warning; only NAME is tested. The extra tokens are never evaluated
+        // as an expression (formerly "{#ifdef X) \or\ (1}" was spliced into a
+        // defined(...) string and evaluated). Not reached in an inactive
+        // group (the caller only evaluates active {#ifdef}s).
+        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
+              std::string(is_ifndef ? "{#ifndef " : "{#ifdef ") +
+                  Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
     }
     Macro* m = env.lookup(ts[0].text);
     bool is_def = m && !dynamic_cast<DefinedOperator*>(m);

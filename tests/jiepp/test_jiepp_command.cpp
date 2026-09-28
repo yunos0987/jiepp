@@ -211,6 +211,42 @@ TEST_F(JieppCommandTest, DOptionLexerDiagnosticUsesCliLocation) {
     EXPECT_EQ("jiepp: error: PP20: Unclosed comment; '(* x'", message());
 }
 
+// ---- R4 follow-up Q1: -U NAME with extra tokens (PP49) ----------------
+
+// W11
+TEST_F(JieppCommandTest, UOptionExtraTokensWarns) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A=1"};
+    opts.undef_macros = {"A B"};
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: warning: PP49: Extra tokens at end of directive; '{#undef A B}'", message());
+}
+
+// W12
+TEST_F(JieppCommandTest, WerrorPromotesUOptionExtraTokensWarning) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A=1"};
+    opts.undef_macros = {"A B"};
+    opts.werror = true;
+    EXPECT_NE(0, jiepp_command(opts));
+}
+
+// W13
+TEST_F(JieppCommandTest, SuppressWarningsSuppressesUOptionExtraTokensWarning) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A=1"};
+    opts.undef_macros = {"A B"};
+    opts.suppress_warnings = true;
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(JieppCommandTest, Regular) {
     run_e2e("none");
     run_e2e("not_directive");

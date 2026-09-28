@@ -36,6 +36,7 @@ bool eval_cond(const std::string& raw_cond, Env& env);
 // is not macro-expanded; comments in raw_arg are whitespace. A missing or
 // non-identifier NAME is INVALID_DEFINED_OPERAND and the group is false
 // (even for {#ifndef}), so a later {#elif}/{#else} may still be taken.
+// Tokens after NAME are PP49 (warning) and ignored.
 bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env);
 
 // ── Prosser's algorithm support (expand_subst.cpp) ─────────────────

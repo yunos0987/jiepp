@@ -24,6 +24,7 @@ TEST_F(IssueTest, IsError) {
 TEST_F(IssueTest, IsWarning) {
     EXPECT_TRUE(Issue::is_warning(Issue::Code::WARNING_MESSAGE));
     EXPECT_TRUE(Issue::is_warning(Issue::Code::INVALID_PRAGMA_STYLE_OPERAND));
+    EXPECT_TRUE(Issue::is_warning(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE));
     EXPECT_FALSE(Issue::is_warning(Issue::Code::FILE_NOT_FOUND));
     EXPECT_FALSE(Issue::is_warning(Issue::Code::FATAL));
     EXPECT_FALSE(Issue::is_warning(Issue::Code::INFO_MESSAGE));

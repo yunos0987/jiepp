@@ -312,6 +312,7 @@ LOG('code=%d', 42);    (* → write_log('code=%d', 42) *)
 `NAME` の定義を解除する。未定義の名前への `{#undef}` はエラーにならない。
 `defined` の再定義・定義解除は `OPERATION_NOT_ALLOWED` エラーになる。
 名前がない・識別子でない `{#undef}` は `PP30` エラーになり、何もしない（`-dD` にも出ない）。
+`NAME` の後に余分なトークンがあると（`{#undef A B}`・`{#undef A(x)}` など）`EXTRA_TOKENS_AT_END_OF_DIRECTIVE` (`PP49`) 警告を出し、`NAME` だけを解除する（gcc/clang と同じ）。後ろのコメントは空白として扱うので警告にならないが、ドキュメントコメント `(*! … *)` はトークンとして数える。
 
 ### 3.6 マクロ再定義 / Redefinition
 
@@ -428,6 +429,8 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 ```
 
 `NAME` はマクロ展開しない。`NAME` がない、または識別子でない場合は `INVALID_DEFINED_OPERAND` (`PP40`) エラーになり、`{#ifndef}` の場合もその分岐は偽として扱う。後続の `{#elif}` / `{#else}` は通常どおり評価する（clang と同じ）。
+
+`NAME` の後に余分なトークンがある場合（`{#ifdef A B}`・`{#ifdef X) \or\ (1}` など）は `PP49` 警告を出し、`NAME` だけで判定する（gcc/clang と同じ）。余分なトークンは式として評価しない。無効な分岐（`{#if 0}` の中など）では検査しない。
 
 ### 5.2 `defined` 演算子 / `defined` Operator
 
@@ -883,7 +886,7 @@ jiepp [filepath] [options]
 |-----------|------|-----------|
 | `-o PATH` | 出力先ファイルパス。`-` は標準出力（gcc/clang と同様。`-` という名前のファイルは作成しない） | stdout |
 | `-D NAME[=VALUE]` | マクロ定義。gcc/clang と同じく、最初の `=` を空白に置き換えた `{#define}` として処理する（`=` がなければ値は `1`）。`-D NAME` は `{#define NAME 1}`、`-D NAME=` は空のマクロ、`-D 'F(x)=x+1'` は関数マクロ `F(x)` になる。名前が不正な場合などは `{#define}` と同じエラー（`PP30` など）になる。既存の定義（組み込みマクロや先の `-D` を含む）と内容が異なる場合は `MACRO_REDEFINED` (`PP35`) 警告になる。値・名前を丸ごと省略（末尾の裸の `-D`、または `-D ""`）すると `MISSING_OPTION_VALUE` エラー（`PP72`）。`-D=VALUE` のようにマクロ名だけが空だと `INVALID_MACRO_DEF` エラー（`PP73`） | — |
-| `-U NAME` | マクロ定義の取り消し（`-D` の後に適用）。`{#undef NAME}` と同じ検査を行う（名前が不正なら `PP30`、`defined` は `PP02`）。値省略（末尾の裸の `-U`、または `-U ""`）は `MISSING_OPTION_VALUE` エラー（`PP72`、`-D` の裸指定と同じコード） | — |
+| `-U NAME` | マクロ定義の取り消し（`-D` の後に適用）。`{#undef NAME}` と同じ検査を行う（名前が不正なら `PP30`、`defined` は `PP02`）。値省略（末尾の裸の `-U`、または `-U ""`）は `MISSING_OPTION_VALUE` エラー（`PP72`、`-D` の裸指定と同じコード）。`NAME` の後に余分なトークンがあると `PP49` 警告を出し（メッセージは `{#undef …}` の形）、`NAME` だけを取り消す | — |
 | `-I PATH` | インクルード検索パスの追加。`PATH` は宣言元ファイルでなく常に**プロセス起動時の CWD** を基準に解決する（`{#syspath}` とは異なる。§7.4、§7.9） | — |
 | `-include FILE` | 入力ファイルの前に強制インクルード | — |
 | `-P` | 行マーカー出力を抑制（`(*{#:...}*)` / `{#:...}` を出さない）。連続空行もすべて除去 | off |
@@ -1169,6 +1172,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP46 | `INVALID_DIRECTIVE_NAME` | ERROR | Invalid directive name | 英字または `_` で始まるが、識別子として使えない文字を含む名前（例: `{#foo.bar}`）。先頭が数字など識別子として始まれない名前は `PP45` になる |
 | PP47 | `INVALID_PATH` | ERROR | Invalid path | 不正なパス |
 | PP48 | `INVALID_PRAGMA_STYLE_OPERAND` | WARNING | Invalid operand for pragma style directive | `{#pp_output_pragma_style}` の不正なオペランド |
+| PP49 | `EXTRA_TOKENS_AT_END_OF_DIRECTIVE` | WARNING | Extra tokens at end of directive | `{#undef}` / `{#ifdef}` / `{#ifndef}` / `-U` でマクロ名の後に余分なトークンがある（その名前だけを使う。§3.5、§5.1） |
 | PP50 | `EXPR_TYPE_ERROR` | ERROR | Type error in expression | 式中の型エラー（ゼロ除算等） |
 | PP51 | `MISSING_EXPRESSION` | ERROR | Missing expression | `{#if}` に式がない |
 | PP52 | `INVALID_EXPRESSION` | ERROR | Invalid expression | 不正な式 |

@@ -313,12 +313,12 @@ bool handle_undef(const std::string& raw_arg, Env& env) {
         return false;
     }
     if (ts.size() > 1) {
-        // Extra tokens after NAME (e.g. "{#undef A B}"): pending user
-        // decision Q1 (a WARNING code for this); keep the pre-R4 behavior
-        // until then -- the whole trimmed operand is used as one name,
-        // which matches nothing already defined.
-        env.undef(std::string(Util::trim_view(raw_arg)));
-        return true;
+        // Tokens after NAME (e.g. "{#undef A B}", "{#undef A(x)}"): like
+        // gcc/clang ("extra tokens at end of #undef directive"), a warning,
+        // and NAME alone is still undefined. Comments were removed above
+        // (whitespace); a DOCUMENT comment (*! *) is a token and counts.
+        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
+              "{#undef " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
     }
     env.undef(ts[0].text);
     return true;

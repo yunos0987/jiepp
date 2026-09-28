@@ -98,7 +98,9 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
 }
 
 void apply_undef_option(const std::string& name, Env& env) {
-    // -U NAME is {#undef NAME}: same name validation and 'defined' guard.
+    // -U NAME is {#undef NAME}: same name validation, 'defined' guard, and
+    // extra-token warning (PP49, reported as "{#undef ...}", NAME alone is
+    // undefined), like gcc/clang.
     (void)jiepp::preprocessor_detail::handle_undef(name, env);
 }
 
