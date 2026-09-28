@@ -42,6 +42,27 @@ TEST_F(RobustnessTest, ExpansionDepthExceeded) {
     EXPECT_EQ(Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED, code());
 }
 
+TEST_F(RobustnessTest, ExpansionDepthGuardRestoresOnThrow) {
+    // U6/C6-2: ExpansionDepthGuard's constructor (expand.cpp) increments the
+    // depth counter, then throws PP60 when the new depth exceeds the limit.
+    // Since ISSUE() throws before the constructor body finishes, the guard
+    // object never completes construction, so its destructor -- the usual
+    // place the increment is undone -- never runs. Without the try/catch
+    // added around that ISSUE() call, the increment above would leak
+    // permanently into env's counter. Drive real recursive expand() calls
+    // (not a manual inc_expansion_depth() like ExpansionDepthExceeded above)
+    // so this exercises the actual guard, not just the Env accessors.
+    Env env = setup();
+    env.set_max_expansion_depth(3);
+
+    // I(I(I(I(0)))): subst()'s per-formal-param expand(actual, result, env)
+    // call recurses into expand() once per nesting level, driving
+    // expansion_depth() past the limit of 3 (level 1: top-level file expand;
+    // levels 2-4: one nested expand() per I(...) argument).
+    EXPECT_THROW(pp("{#define I(a) (a)}\nI(I(I(I(0))))", env), Issue::Exception);
+    EXPECT_EQ(0, env.expansion_depth());
+}
+
 // ---- Conditional nesting limit ----
 
 TEST_F(RobustnessTest, IfNestingDefault) {

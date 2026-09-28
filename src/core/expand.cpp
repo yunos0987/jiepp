@@ -318,7 +318,18 @@ struct ExpansionDepthGuard {
     explicit ExpansionDepthGuard(Env& e) : env(e) {
         env.inc_expansion_depth();
         if (env.expansion_depth() > env.get_max_expansion_depth()) {
-            ISSUE(MAX_EXPANSION_DEPTH_EXCEEDED);
+            // U6: ISSUE() throws before this constructor finishes, so this
+            // object never completes construction and its destructor never
+            // runs -- without this catch, the increment above would leak,
+            // permanently inflating expansion_depth() for the rest of the
+            // process (observable e.g. in a caller that catches the
+            // exception and keeps using the same Env).
+            try {
+                ISSUE(MAX_EXPANSION_DEPTH_EXCEEDED);
+            } catch (...) {
+                env.dec_expansion_depth();
+                throw;
+            }
         }
     }
     ~ExpansionDepthGuard() { env.dec_expansion_depth(); }
