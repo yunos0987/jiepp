@@ -199,6 +199,18 @@ TEST_F(JieppCommandTest, WerrorPromotesDOptionRedefineWarning) {
     EXPECT_NE(0, jiepp_command(opts));
 }
 
+// ---- R4/C5: a lexer diagnostic raised while processing -D/-U uses the
+// same "jiepp: ..." CLI-stage location as other -D/-U errors -----------
+
+TEST_F(JieppCommandTest, DOptionLexerDiagnosticUsesCliLocation) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A=(* x"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: error: PP20: Unclosed comment; '(* x'", message());
+}
+
 TEST_F(JieppCommandTest, Regular) {
     run_e2e("none");
     run_e2e("not_directive");

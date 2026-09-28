@@ -167,7 +167,16 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // (size() == 1); render those as CLI_LOCATION instead of the dummy's
         // "<unknown location>:N.0" form, which the string-input
         // preprocess()/preprocess_text() API keeps using unchanged.
-        std::string loc_file = (cli_mode_ && loc_stack_.size() == 1) ? CLI_LOCATION : filepath();
+        // C5/U2: also render as CLI_LOCATION when a real entry was pushed on
+        // top of the dummy but still carries the dummy's own placeholder
+        // filename -- e.g. with_fallback_line() (lexer_helpers.hpp), used by
+        // a lexer diagnostic (like UNCLOSED_COMMENT) raised while tokenizing
+        // a -D/-U operand at the CLI stage, pushes {ln, filepath()} which
+        // just copies that placeholder forward. Without this, such a
+        // diagnostic rendered as "<unknown location>:N.0: ..." instead of
+        // "jiepp: ...", because loc_stack_.size() was already 2 by then.
+        std::string loc_file = (cli_mode_ && (loc_stack_.size() == 1 ||
+                                filepath() == loc_stack_.front().second)) ? CLI_LOCATION : filepath();
         message_.message(*stream_, severity, code, context, loc_file, lineno(), 0, loc);
         *stream_ << '\n';
     }

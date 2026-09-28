@@ -69,12 +69,16 @@ public:
     // Sentinel `file` value for diagnostics raised by CLI-level code
     // (jiepp_command()/main()/parse_args(), guarded by CliMode below) before
     // any source file has been pushed -- CLI option errors, -o/-MF open
-    // failures, INVALID_COMMAND, and the top-level input's FILE_NOT_FOUND.
-    // PlainTextMessage::message() renders this exact value without a
-    // trailing ":line.column", i.e. "jiepp: error: PPxx: message". This is
-    // distinct from the "<unknown location>" bottom-of-stack dummy pushed by
-    // initialize(): the string-input preprocess()/preprocess_text() API
-    // keeps using that dummy's "<unknown location>:N.0" form unchanged.
+    // failures, INVALID_COMMAND, the top-level input's FILE_NOT_FOUND, and
+    // (C5/U2) a lexer diagnostic raised while tokenizing a -D/-U operand
+    // (e.g. UNCLOSED_COMMENT), even though that reaches happen() through a
+    // with_fallback_line()-pushed LineGuard copy of the dummy entry below,
+    // not through loc_stack_ still being exactly the dummy. PlainTextMessage
+    // ::message() renders this exact value without a trailing ":line.column",
+    // i.e. "jiepp: error: PPxx: message". This is distinct from the
+    // "<unknown location>" bottom-of-stack dummy pushed by initialize(): the
+    // string-input preprocess()/preprocess_text() API keeps using that
+    // dummy's "<unknown location>:N.0" form unchanged.
     static constexpr const char* CLI_LOCATION = "jiepp";
 
     // ---- Initialization ----
