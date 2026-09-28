@@ -14,6 +14,8 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -99,6 +101,11 @@ void handle_define(const std::string& raw_arg, Env& env) {
     std::size_t i = 1;
     bool is_function = (i < ts.size() && ts[i].type == Token::LP);
     std::vector<std::string> param_names;
+    // O(1) duplicate-parameter lookup (was an O(k^2) nested scan). The views
+    // point into ts[i].text: `ts` is not modified until the parameter loop
+    // is done, so they stay valid. Views into param_names would dangle when
+    // the vector reallocates.
+    std::unordered_set<std::string_view> seen_params;
 
     if (is_function) {
         ++i;
@@ -133,11 +140,9 @@ void handle_define(const std::string& raw_arg, Env& env) {
                     }
                     break;
                 }
+                if (!seen_params.insert(ts[i].text).second)
+                    ISSUE(DUPLICATE_MACRO_PARAMETER, ts[i].text);
                 param_names.push_back(ts[i].text);
-                // Check for duplicate parameter names
-                for (std::size_t k = 0; k + 1 < param_names.size(); ++k)
-                    if (param_names[k] == param_names.back())
-                        ISSUE(DUPLICATE_MACRO_PARAMETER, ts[i].text);
                 ++i;
             } else {
                 ISSUE(INVALID_DEFINE_SYNTAX, raw_arg);
