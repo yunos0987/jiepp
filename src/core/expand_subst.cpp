@@ -350,7 +350,22 @@ std::vector<Token> subst(
                     continue;
                 }
 
-                auto actual = select_arg(pidx, actual_params, is_va);
+                // O2b: select_arg() copies the actual's token vector even for
+                // the (overwhelmingly common) non-variadic case, where
+                // actual_params[pidx] already holds exactly the tokens
+                // select_arg() would build. Bind a const& straight into
+                // actual_params there instead; only the variadic path (which
+                // must concatenate multiple actuals with inserted SEP
+                // tokens) still needs select_arg()'s freshly-built vector,
+                // held alive in actual_va.
+                std::vector<Token> actual_va;
+                static const std::vector<Token> empty_actual;
+                const std::vector<Token>& actual =
+                    is_va
+                        ? (actual_va = select_arg(pidx, actual_params, is_va))
+                        : (pidx < static_cast<int>(actual_params.size())
+                               ? actual_params[pidx]
+                               : empty_actual);
 
                 if (glue_adjacent[i]) {
                     // A formal parameter directly adjacent to @@ that substitutes to
@@ -365,10 +380,11 @@ std::vector<Token> subst(
                         pending_placemarker = false;
                     }
                 } else {
-                    std::vector<Token> expanded;
-                    expand(actual, expanded, env);
-                    for (auto& et : expanded)
-                        result.push_back(et);
+                    // O3: expand() appends straight into `result` instead of
+                    // into a throwaway `expanded` vector that is then
+                    // copied token-by-token -- one fewer O(k) copy per
+                    // formal-parameter occurrence.
+                    expand(actual, result, env);
                     pending_placemarker = false;
                 }
                 continue;

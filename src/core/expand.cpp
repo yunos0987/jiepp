@@ -600,7 +600,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
         }
 
         // Prosser's fallthrough: T_HS • expand(TS')
-        ots.push_back(t);
+        // O2: `t` is a local by-value copy already popped off `work` above
+        // (its home in `work`/`its` is dead), so moving it into `ots`
+        // avoids a redundant Token copy (string + shared_ptr) for every
+        // non-macro token passed through unchanged -- the majority of
+        // tokens in most inputs.
+        ots.push_back(std::move(t));
     }
 
     if (ctrl.size() != 1)
