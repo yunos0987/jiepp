@@ -21,6 +21,19 @@ namespace jiepp::expand_detail {
 std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts) {
     if (!hs.empty()) {
         Token::HideSetPtr shared_hs;
+        // O1b: consecutive tokens in `ts` overwhelmingly share the same
+        // starting hide set (e.g. every token of a freshly-substituted macro
+        // body), so hs_add_all() would recompute the identical union once
+        // per token. Memoize the last (base pointer -> result) mapping and
+        // reuse it while the base pointer stays the same, skipping both the
+        // hs_add_all() call and, when the pointer is already correct, the
+        // assignment itself. memo_in is held as a strong reference (not a raw
+        // pointer): once t.hs is reassigned below, the old base HideSet may
+        // lose its last owner and be freed, and a later make_shared<HideSet>
+        // could reuse that address, making a raw-pointer memo key alias an
+        // unrelated hide set and silently mis-memoize a later token.
+        Token::HideSetPtr memo_in;
+        Token::HideSetPtr memo_out;
         for (auto& t : ts) {
             // Per Prosser's algorithm, hide-sets propagate to all tokens (including
             // LP/RP/SEP) so that the closing ')' correctly carries context hs for
@@ -34,8 +47,13 @@ std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts) {
                     if (!shared_hs)
                         shared_hs = std::make_shared<Token::HideSet>(hs);
                     t.hs = shared_hs;
+                } else if (t.hs == memo_in) {
+                    if (t.hs != memo_out)
+                        t.hs = memo_out;
                 } else {
+                    memo_in = t.hs;
                     t.hs = hs_add_all(t.hs, hs);
+                    memo_out = t.hs;
                 }
                 break;
             default:

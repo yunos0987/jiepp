@@ -331,3 +331,51 @@ TEST_F(SmokeTest, StdoutMatchesOutputFileBytes) {
         << "stdout must not contain CRLF on Windows";
 #endif
 }
+
+// ---- 10. Deeply nested function-macro expansion (U1/C1-6) ----
+//
+// n=100 nesting of a 1-arg function macro: I(I(...I(0)...)). Regression
+// coverage for the hide-set sharing optimization in hs_add_all()/hsadd()
+// (U1): every level's hide set differs only by the newly-added macro name,
+// so a bug that shared a hide set across the wrong tokens would corrupt the
+// output while still terminating (unlike a stack overflow, which a much
+// larger n would risk instead -- see AGENTS.md on Debug-build recursion
+// limits, so this stays well under that).
+
+TEST_F(SmokeTest, DeeplyNestedFunctionMacroExpansion) {
+    // Matches tools/perftest/cases/iterate_fmacros/iterate_fmacros.py's input
+    // shape (n=100, well under the ~161-level Debug-build recursion ceiling
+    // noted in AGENTS.md, so this passes in both Debug and Release).
+    fs::path input = tmp_dir_ / "nested_fmacro.iec";
+    constexpr int kDepth = 100;
+
+    std::string src = "{#define I(a) (a)+1}\nprogram Main\n{st}\n";
+    for (int i = 0; i < kDepth; ++i)
+        src += "I(";
+    src += "0";
+    for (int i = 0; i < kDepth; ++i)
+        src += ")";
+    src += ";\n{end}\nend_program\n";
+    write_file(input, src);
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+
+    std::string expected;
+    expected += std::string(kDepth, '(');
+    expected += "0";
+    for (int i = 0; i < kDepth; ++i)
+        expected += ")+1";
+    expected += ";";
+
+    std::istringstream lines(r.out);
+    std::string line;
+    bool found = false;
+    while (std::getline(lines, line)) {
+        if (line == expected) {
+            found = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "expected line: " << expected << "\nstdout: " << r.out;
+}

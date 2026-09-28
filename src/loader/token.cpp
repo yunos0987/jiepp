@@ -120,6 +120,13 @@ Token::HideSetPtr hs_empty() {
 Token::HideSetPtr hs_add_all(const Token::HideSetPtr& base, const Token::HideSet& names) {
     if (names.empty())
         return base ? base : hs_empty();
+    // O1: when every name is already in base, the union equals base itself --
+    // share the existing hide set instead of allocating (and copying) a new
+    // one. This is the common case for nested function-macro expansion,
+    // where the same hide set is re-added to many tokens as they propagate
+    // outward through nesting levels.
+    if (base && std::includes(base->begin(), base->end(), names.begin(), names.end()))
+        return base;
     if (!base || base->empty())
         return std::make_shared<Token::HideSet>(names);
     auto s = std::make_shared<Token::HideSet>(*base);
