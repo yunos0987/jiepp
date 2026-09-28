@@ -855,7 +855,7 @@ jiepp [filepath] [options]
 | `--pp-output-pragma-style STYLE` | プラグマ出力スタイル (`annotated` / `standard`)。不正な値は `INVALID_OPTION_VALUE` (`PP71`) エラー | `annotated` |
 | `--remove-comments` / `-nC` | コメントを除去 | off |
 | `-dM` | 定義されたマクロの一覧を出力（プリプロセス結果は出力しない） | off |
-| `-dD` | プリプロセス出力に `{#define}` / `{#undef}` 行をインライン挿入（`-dM` の処理中版） | off |
+| `-dD` | プリプロセス出力に `{#define}` / `{#undef}` 行をインライン挿入（`-dM` の処理中版）。エラーで定義されなかった `{#define}`（`PP33`・`PP36` 等）は挿入しない | off |
 | `--silent` | 全ての診断メッセージを抑制 | off |
 | `--recursion-limit N` | OS スタックサイズの設定 (N × 約 8KB フレーム)。上限 `65536`（超過は `RECURSION_LIMIT_RANGE`、`PP74`） | システムデフォルト |
 | `--disppath PATH` | 診断メッセージ・行番号プラグマに表示するパスを実際の入力ファイルパスと切り離して上書き（内部・テスト専用。`--help` に非表示） | 実際の入力ファイルパス（標準入力時は `<stdin>`。§13「基本構文」） |

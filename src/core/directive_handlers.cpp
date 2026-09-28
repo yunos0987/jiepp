@@ -84,18 +84,21 @@ std::string resolve_syspath_base(const std::string& raw_syspath, Env& env) {
 
 namespace jiepp::preprocessor_detail {
 
-void handle_define(const std::string& raw_arg, Env& env) {
+// Returns true iff a macro was actually (re)defined. Every rejection path
+// (ISSUE + early return in continue mode or under {#ignore}) returns false,
+// so the caller does not echo a directive that defined nothing (-dD).
+bool handle_define(const std::string& raw_arg, Env& env) {
     auto ts = iec3_tokens_from_string(raw_arg, false);
     ts = ts_ltrim(std::move(ts));
     if (ts.empty() || ts[0].type != Token::ANY) {
         ISSUE(INVALID_DEFINE_SYNTAX, raw_arg);
-        return;
+        return false;
     }
 
     std::string name = ts[0].text;
     if (name == "defined") {
         ISSUE(OPERATION_NOT_ALLOWED, "redefine 'defined'");
-        return;
+        return false;
     }
 
     std::size_t i = 1;
@@ -137,38 +140,38 @@ void handle_define(const std::string& raw_arg, Env& env) {
             if (ts[i].type == Token::ANY) {
                 if (ts[i].text == "...") {
                     if (variadic_name_clash())
-                        return;
+                        return false;
                     param_names.push_back(FunctionMacro::VA_SYM);
                     ++i;
                     while (i < ts.size() && (ts[i].type & Token::MASK_WS)) ++i;
                     if (i < ts.size() && ts[i].type != Token::RP) {
                         ISSUE(INVALID_VARIADIC_PLACEMENT, raw_arg);
-                        return;
+                        return false;
                     }
                     break;
                 }
                 if (ts[i].text == "." && i + 2 < ts.size() && ts[i + 1].text == "." &&
                     ts[i + 2].text == ".") {
                     if (variadic_name_clash())
-                        return;
+                        return false;
                     param_names.push_back(FunctionMacro::VA_SYM);
                     i += 3;
                     while (i < ts.size() && (ts[i].type & Token::MASK_WS)) ++i;
                     if (i < ts.size() && ts[i].type != Token::RP) {
                         ISSUE(INVALID_VARIADIC_PLACEMENT, raw_arg);
-                        return;
+                        return false;
                     }
                     break;
                 }
                 if (!seen_params.insert(ts[i].text).second) {
                     ISSUE(DUPLICATE_MACRO_PARAMETER, ts[i].text);
-                    return;
+                    return false;
                 }
                 param_names.push_back(ts[i].text);
                 ++i;
             } else {
                 ISSUE(INVALID_DEFINE_SYNTAX, raw_arg);
-                return;
+                return false;
             }
         }
         if (i < ts.size() && ts[i].type == Token::RP)
@@ -199,6 +202,7 @@ void handle_define(const std::string& raw_arg, Env& env) {
         }
     };
     make_and_define();
+    return true;
 }
 
 void handle_undef(const std::string& raw_arg, Env& env) {

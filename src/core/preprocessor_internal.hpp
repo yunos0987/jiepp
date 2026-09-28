@@ -10,7 +10,11 @@
 
 namespace jiepp::preprocessor_detail {
 
-void handle_define(const std::string& raw_arg, Env& env);
+// Returns true iff a macro was actually (re)defined; false if the
+// {#define} was rejected (e.g. a duplicate parameter name) and defined
+// nothing. See handle_define()'s definition (directive_handlers.cpp) for
+// details.
+bool handle_define(const std::string& raw_arg, Env& env);
 void handle_undef(const std::string& raw_arg, Env& env);
 void handle_tokenize(const std::string& raw_arg, Env& env, std::vector<Token>& ots);
 void handle_stringize(const std::string& raw_arg,

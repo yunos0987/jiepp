@@ -158,8 +158,10 @@ void dispatch_directive(const Token& t,
 
     switch (kind) {
     case DirectiveToken::DEFINE:
-        jiepp::preprocessor_detail::handle_define(raw_arg, env);
-        if (env.is_dd_mode()) {
+        // Echo under -dD only if a macro was actually defined: a {#define}
+        // rejected with an error (PP33/PP36/...) in continue mode or under
+        // {#ignore} defined nothing and must not appear in the -dD stream.
+        if (jiepp::preprocessor_detail::handle_define(raw_arg, env) && env.is_dd_mode()) {
             // Emit the original token text (already correctly encoded).
             // raw_arg is decoded; rebuilding from it would corrupt dollar-escape sequences.
             ots.push_back(Token::create(Token::DIRECTIVE, t.text));

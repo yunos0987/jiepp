@@ -410,6 +410,23 @@ TEST_F(DirectiveTest, NewlineInDirectiveDdModeReemitsSpace) {
     EXPECT_NE(std::string::npos, output.find("{#define X a b}")) << "output:\n" << output;
 }
 
+// D2/R2: -dD must not echo a {#define} that was rejected (defined nothing)
+// -- only defines that actually happened.
+TEST_F(DirectiveTest, DdModeDoesNotEchoRejectedDefine) {
+    Issue::ContinueMode guard({});
+    Env env = setup();
+    env.set_dd_mode(true);
+    const std::string output =
+        pp("{#define F(x,x) [x]}{#define V(..., a) a}{#define OK 1}", env);
+    EXPECT_EQ(std::string::npos, output.find("{#define F(")) << "output:\n" << output;
+    EXPECT_EQ(std::string::npos, output.find("{#define V(")) << "output:\n" << output;
+    EXPECT_NE(std::string::npos, output.find("{#define OK 1}")) << "output:\n" << output;
+    auto cs = codes();
+    ASSERT_EQ(2u, cs.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[1]);
+}
+
 TEST_F(DirectiveTest, NewlineInDirectiveRedefinitionNoWarning) {
     // Redefining X with a raw-newline body that normalizes to the same
     // text as its previous definition must not raise MACRO_REDEFINED.
