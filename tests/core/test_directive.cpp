@@ -392,6 +392,110 @@ TEST_F(DirectiveTest, NewlineSplitsDirectiveName) {
     EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
 }
 
+// Several other diagnostics embed a decoded directive operand (raw_arg, or
+// text derived from it downstream, such as a {#if}/{#elif} operand reaching
+// constfold's expression evaluator) the same way {#define} does
+// (FuncMacroTest.DefineDiagnosticStaysOnOneLine) -- verify each re-escapes a
+// $n escape (via Util::escape_line_breaks(), src/util/text.hpp) so the
+// diagnostic stays on one physical line instead of splitting messages() into
+// two entries. Message directives ({#error}/{#warning}/...) are deliberately
+// excluded: they print the user's own message verbatim (see
+// NewlineInStringAndMessageDirectives).
+TEST_F(DirectiveTest, OperandDiagnosticsStayOnOneLine) {
+    Issue::ContinueMode guard({});
+
+    {
+        SCOPED_TRACE("{#line abc$n}");
+        pp("{#line abc$n}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_SETLINE_OPERAND, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("$n")) << msgs[0];
+    }
+    {
+        SCOPED_TRACE("{#syspath abc$n}");
+        pp("{#syspath abc$n}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_PATH, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("$n")) << msgs[0];
+    }
+    {
+        // handle_include() shares the same INVALID_PATH ISSUE() site as
+        // handle_syspath() above (strip_path() failure), but is a distinct
+        // handler -- verify it separately.
+        SCOPED_TRACE("{#include abc$n}");
+        pp("{#include abc$n}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_PATH, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("$n")) << msgs[0];
+    }
+    {
+        SCOPED_TRACE("{#ignore XYZ$n}");
+        pp("{#ignore XYZ$n}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_IGNORE_OPERAND, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("$n")) << msgs[0];
+    }
+    {
+        SCOPED_TRACE("{#max_include_depth x$n}");
+        pp("{#max_include_depth x$n}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_LIMIT_OPERAND, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("$n")) << msgs[0];
+    }
+    {
+        SCOPED_TRACE("{#pp_output_pragma_style bogus$n}");
+        pp("{#pp_output_pragma_style bogus$n}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_PRAGMA_STYLE_OPERAND, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("$n")) << msgs[0];
+    }
+    {
+        // The unknown-directive dispatch site (expand.cpp) has the same
+        // defect for its decoded `key`.
+        SCOPED_TRACE("{#foo$nbar}");
+        pp("{#foo$nbar}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DIRECTIVE_NAME, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("$n")) << msgs[0];
+    }
+    {
+        // eval_const_expr()'s all-whitespace path (constfold.cpp): {#if}'s
+        // operand decodes to a lone real newline, which is entirely
+        // whitespace.
+        SCOPED_TRACE("{#if $n}");
+        pp("{#if $n}{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("$n")) << msgs[0];
+    }
+    {
+        // eval_const_expr()'s incomplete-parse path (constfold.cpp), reached
+        // via {#elif} instead of {#if}: the operand decodes to "1+" followed
+        // by a real newline, which is not all whitespace but still fails to
+        // parse as a complete expression. This legitimately reports two
+        // diagnostics -- the bison grammar's own "syntax error" (msg has no
+        // embedded operand text) via cf::CfParser::error(), then
+        // eval_const_expr()'s own MISSING_EXPRESSION carrying the operand
+        // text -- so unlike the other sub-cases above, a raw-newline defect
+        // here would silently grow msgs.size() further (one extra entry per
+        // embedded newline) rather than just splitting a single entry.
+        SCOPED_TRACE("{#if 0}{#elif 1+$n}{#endif}");
+        pp("{#if 0}{#elif 1+$n}{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(2u, msgs.size());
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, PlainTextMessage::parse_code(msgs[1]));
+        EXPECT_NE(std::string::npos, msgs[1].find("$n")) << msgs[1];
+    }
+}
+
 TEST_F(DirectiveTest, NewlineInDirectiveLineCountUnchanged) {
     // The newline consumed while folding it to whitespace is still counted
     // for line numbering, and is echoed as a blank line in the output --

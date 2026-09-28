@@ -24,3 +24,17 @@ std::string_view Util::rtrim_view(std::string_view s) {
 std::string_view Util::trim_view(std::string_view s) {
     return ltrim_view(rtrim_view(s));
 }
+
+std::string Util::escape_line_breaks(std::string_view s) {
+    std::string r;
+    r.reserve(s.size());
+    for (char c : s) {
+        if (c == '\n')
+            r += "$n";
+        else if (c == '\r')
+            r += "$r";
+        else
+            r += c;
+    }
+    return r;
+}

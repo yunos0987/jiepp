@@ -630,6 +630,18 @@ TEST_F(FuncMacroTest, ParamListValidFormsAccepted) {
     EXPECT_TRUE(empty());
 }
 
+// R3, D7: raw_arg is decoded before the diagnostic is built (a '$n' escape
+// in the source becomes a real newline), so the diagnostic text must be
+// re-escaped to stay on one line, like INVALID_PP_SYNTAX in
+// lexer_pragma.cpp.
+TEST_F(FuncMacroTest, DefineDiagnosticStaysOnOneLine) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("", pp("{#define F('s'$n) x}"));
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find("$n"));
+}
+
 // ---- function macro: redefinition ----
 
 TEST_F(FuncMacroTest, Redefine) {

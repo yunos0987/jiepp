@@ -10,6 +10,7 @@
 #include "preprocessor_internal.hpp"
 
 #include "../macro/macro.hpp"
+#include "../util/text.hpp"
 
 #include <algorithm>
 #include <optional>
@@ -73,7 +74,11 @@ void dispatch_directive(const Token& t,
         // suppresses the diagnostic for a directive inside an inactive
         // {#if 0} block, matching gcc (see classify_unknown_directive()).
         if (active)
-            Issue::happen(classify_unknown_directive(key), key);
+            // `key` is decoded, so a $n/$r escape in the source is a real
+            // line break here; re-escape it so the UNKNOWN_DIRECTIVE/
+            // INVALID_DIRECTIVE_NAME diagnostic stays on one line, like the
+            // directive-operand diagnostics in directive_handlers.cpp.
+            Issue::happen(classify_unknown_directive(key), Util::escape_line_breaks(key));
         return;
     }
 

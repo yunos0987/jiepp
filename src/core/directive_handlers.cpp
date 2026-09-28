@@ -102,7 +102,7 @@ bool handle_define(const std::string& raw_arg, Env& env) {
     auto ts = iec3_tokens_from_string(raw_arg, false);
     ts = ts_ltrim(std::move(ts));
     if (ts.empty() || ts[0].type != Token::ANY) {
-        ISSUE(INVALID_DEFINE_SYNTAX, raw_arg);
+        ISSUE(INVALID_DEFINE_SYNTAX, Util::escape_line_breaks(raw_arg));
         return false;
     }
 
@@ -152,7 +152,7 @@ bool handle_define(const std::string& raw_arg, Env& env) {
         };
         auto list_error = [&](const std::string& what) {
             ISSUE(INVALID_DEFINE_SYNTAX,
-                  what + " in macro parameter list: " + raw_arg);
+                  what + " in macro parameter list: " + Util::escape_line_breaks(raw_arg));
         };
         ++i; // '('
         skip_ws();
@@ -176,7 +176,7 @@ bool handle_define(const std::string& raw_arg, Env& env) {
                         return false;
                     }
                     if (ts[i].type != Token::RP) {
-                        ISSUE(INVALID_VARIADIC_PLACEMENT, raw_arg);
+                        ISSUE(INVALID_VARIADIC_PLACEMENT, Util::escape_line_breaks(raw_arg));
                         return false;
                     }
                     ++i; // ')'
@@ -339,7 +339,10 @@ void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, s
             }
         }
     }
-    ISSUE(INVALID_SETLINE_OPERAND, raw_arg);
+    // raw_arg is decoded, so re-escape it before it reaches the
+    // diagnostic, so a $n/$r escape in the source does not split the
+    // message onto multiple lines (same reasoning as {#define} above).
+    ISSUE(INVALID_SETLINE_OPERAND, Util::escape_line_breaks(raw_arg));
 }
 
 void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ots) {
@@ -351,7 +354,10 @@ void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ot
         ots.push_back(Token::pragma("syspath", Util::encode_iec_string(syspath, '\''), env.is_standard_pragma_style()));
         return;
     }
-    ISSUE(INVALID_PATH, raw_arg);
+    // raw_arg is decoded, so re-escape it before it reaches the
+    // diagnostic, so a $n/$r escape in the source does not split the
+    // message onto multiple lines (same reasoning as {#define} above).
+    ISSUE(INVALID_PATH, Util::escape_line_breaks(raw_arg));
 }
 
 void handle_include(const std::string& raw_arg,
@@ -368,10 +374,19 @@ void handle_include(const std::string& raw_arg,
         expand(include_path, loadtype, ots, env, disp_path);
         return;
     }
-    ISSUE(INVALID_PATH, raw_arg);
+    // raw_arg is decoded, so re-escape it before it reaches the
+    // diagnostic, so a $n/$r escape in the source does not split the
+    // message onto multiple lines (same reasoning as {#define} above).
+    ISSUE(INVALID_PATH, Util::escape_line_breaks(raw_arg));
 }
 
 void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
+    // Unlike the operand diagnostics above, this one is *not* re-escaped.
+    // {#error}/{#warning}/{#info}/{#severe} print the user's own message
+    // verbatim -- a raw newline (whether typed directly or via a $n/$r
+    // escape) is expected to stay a real line break here, per
+    // NewlineInStringAndMessageDirectives (test_directive.cpp), which
+    // already asserts this for a directly-typed newline.
     std::string msg = preprocess_text(raw_arg, env);
 #ifdef JIEPP_SANDBOX
     // Sandbox: strip control characters to prevent log injection
@@ -400,7 +415,10 @@ void handle_ignore(const std::string& raw_arg, Env& env) {
             return;
         }
     }
-    ISSUE(INVALID_IGNORE_OPERAND, raw_arg);
+    // raw_arg is decoded, so re-escape it before it reaches the
+    // diagnostic, so a $n/$r escape in the source does not split the
+    // message onto multiple lines (same reasoning as {#define} above).
+    ISSUE(INVALID_IGNORE_OPERAND, Util::escape_line_breaks(raw_arg));
 }
 
 namespace {
@@ -416,7 +434,10 @@ void handle_limit_directive(const std::string& raw_arg, Env& env,
     } catch (const Issue::Exception&) {
         throw; // re-throw ISSUE errors as-is
     } catch (...) {
-        ISSUE(INVALID_LIMIT_OPERAND, raw_arg);
+        // raw_arg is decoded, so re-escape it before it reaches the
+        // diagnostic, so a $n/$r escape in the source does not split the
+        // message onto multiple lines (same reasoning as {#define} above).
+        ISSUE(INVALID_LIMIT_OPERAND, Util::escape_line_breaks(raw_arg));
     }
 }
 
@@ -446,7 +467,10 @@ void handle_pragma_style(const std::string& raw_arg, Env& env) {
     auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
     if (ts.size() != 1 || ts[0].type != Token::ANY ||
         (ts[0].text != VAL_PRAGMA_STANDARD && ts[0].text != VAL_PRAGMA_ANNOTATED)) {
-        ISSUE(INVALID_PRAGMA_STYLE_OPERAND, raw_arg);
+        // raw_arg is decoded, so re-escape it before it reaches the
+        // diagnostic, so a $n/$r escape in the source does not split the
+        // message onto multiple lines (same reasoning as {#define} above).
+        ISSUE(INVALID_PRAGMA_STYLE_OPERAND, Util::escape_line_breaks(raw_arg));
         return;
     }
     env.set_pragma_style(ts[0].text);

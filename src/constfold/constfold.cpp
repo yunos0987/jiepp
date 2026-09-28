@@ -2,6 +2,7 @@
 #include "constfold_internal.hpp"
 #include "constfold_parser.hpp"   // bison generated
 #include "../env/issue.hpp"
+#include "../util/text.hpp"
 
 #include <cctype>
 #include <cstdint>
@@ -20,7 +21,11 @@ int64_t eval_const_expr(const std::string& expr) {
         if (!std::isspace(static_cast<unsigned char>(ch))) { all_ws = false; break; }
     }
     if (all_ws) {
-        ISSUE(MISSING_EXPRESSION, expr);
+        // expr comes from a directive operand (e.g. {#if}/{#elif}), which is
+        // decoded, so a $n/$r escape in the source is a real line break
+        // here; re-escape it so the diagnostic stays on one line, like the
+        // directive-operand diagnostics in directive_handlers.cpp.
+        ISSUE(MISSING_EXPRESSION, Util::escape_line_breaks(expr));
         return 0;
     }
 
@@ -43,6 +48,8 @@ int64_t eval_const_expr(const std::string& expr) {
         throw;
     }
     if (rc != 0)
-        ISSUE(MISSING_EXPRESSION, expr);
+        // Same reasoning as the all_ws case above: expr is decoded, so
+        // re-escape it before it reaches the diagnostic.
+        ISSUE(MISSING_EXPRESSION, Util::escape_line_breaks(expr));
     return result;
 }
