@@ -2,6 +2,7 @@
 #include "../loader/directive_parser.hpp"
 #include "../env/param_constants.hpp"
 #include "line_compaction.hpp"
+#include "preprocessor_internal.hpp"
 
 #include "../loader/lexer.hpp"
 
@@ -83,12 +84,22 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
         define_str("_JIEPP_VERSION",  "'" JIEPP_VERSION "'");
     }
 
-    for (auto& [k, v] : predefine_macros) {
-        auto ts = iec3_tokens_from_string(v, false, 0);
-        env.define(k, std::make_unique<UserDefinedObjectMacro>(ts));
-    }
+    // C4: -D NAME[=VALUE] is {k, v} split at its first '=' (v == "1" if
+    // none, see define_macro_option()). Like gcc's cpp_define()/clang's
+    // DefineBuiltinMacro(), process it as "{#define k v}" instead of
+    // defining an object macro unconditionally: k may be a function-like
+    // head such as "F(x)", is validated the same as any {#define} name, and
+    // redefining an existing macro (including a builtin one already
+    // installed above) with a different body is MACRO_REDEFINED (PP35).
+    for (auto& [k, v] : predefine_macros)
+        jiepp::preprocessor_detail::handle_define(k + " " + v, env);
 
     return env;
+}
+
+void apply_undef_option(const std::string& name, Env& env) {
+    // -U NAME is {#undef NAME}: same name validation and 'defined' guard.
+    (void)jiepp::preprocessor_detail::handle_undef(name, env);
 }
 
 // ---------------------------------------------------------------------------

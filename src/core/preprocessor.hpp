@@ -9,6 +9,10 @@
 
 Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macros = {});
 
+// -U NAME: same as {#undef NAME} (see handle_undef()'s comment in
+// directive_handlers.cpp for the name validation and 'defined' rejection).
+void apply_undef_option(const std::string& name, Env& env);
+
 std::vector<Token>& expand(const std::vector<Token>& its,
                            std::vector<Token>& ots,
                            Env& env);

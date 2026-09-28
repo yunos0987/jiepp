@@ -229,6 +229,19 @@ int jiepp_command(const JieppOptions& opts)
             }
         };
 
+        // U4: --silent/-w/-Werror must be in effect before -D/-U are
+        // processed below (setup()'s predefine_macros loop and
+        // apply_undef_option() can both raise diagnostics -- a malformed
+        // -D/-U name, a redefinition warning, ...), not only for the main
+        // input's own expansion. Previously these three were set after the
+        // -D/-U block, so e.g. `--silent -D=1` still printed its PP73.
+        if (opts.silent)
+            Issue::silent_ = true;
+        if (opts.suppress_warnings)
+            Issue::suppress_warnings_ = true;
+        if (opts.werror)
+            Issue::werror_ = true;
+
         std::vector<std::pair<std::string,std::string>> predefine_macros;
         for (const auto& dm : opts.define_macros)
             predefine_macros.push_back(define_macro_option(dm));
@@ -236,7 +249,7 @@ int jiepp_command(const JieppOptions& opts)
         Env env = setup(predefine_macros);
 
         for (const auto& name : opts.undef_macros) // -U: undefine macros (applied after -D)
-            env.undef(name);
+            apply_undef_option(name, env);
 
         if (opts.remove_comments)
             env.fix_remove_comments(true);
@@ -252,12 +265,6 @@ int jiepp_command(const JieppOptions& opts)
             env.fix_max_blank_lines(*opts.max_blank_lines);
         if (opts.pp_output_pragma_style)
             env.fix_pragma_style(*opts.pp_output_pragma_style);
-        if (opts.silent)
-            Issue::silent_ = true;
-        if (opts.suppress_warnings)
-            Issue::suppress_warnings_ = true;
-        if (opts.werror)
-            Issue::werror_ = true;
 
         for (const auto& sp : opts.syspaths)
             env.add_syspath(sp);

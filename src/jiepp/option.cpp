@@ -102,6 +102,10 @@ void display_help_and_exit(int exit_code = 0) {
 
 } // namespace
 
+// Splits -D ARG at its first '=' into {name, value} (value "1" if none).
+// `name` is not validated here -- it may be a function-like head such as
+// "F(x)"; setup() (C4) processes {name, value} as "{#define name value}",
+// which validates it the same as any {#define} name.
 std::pair<std::string, std::string> define_macro_option(const std::string& arg) {
     // Not tied to a source file; see Issue::CLI_LOCATION. Guarded here too
     // (not only by jiepp_command(), its only non-test caller) so this

@@ -69,7 +69,8 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 `preprocessor.hpp/cpp` が主要 API を提供する。
 
-- `setup()` — 組み込みマクロ・型範囲/マスクマクロ・バージョンマクロを登録した `Env` を作る。CLI (`jiepp_command()`) の呼び出しエントリポイント
+- `setup()` — 組み込みマクロ・型範囲/マスクマクロ・バージョンマクロを登録した `Env` を作る。CLI (`jiepp_command()`) の呼び出しエントリポイント。`predefine_macros`（`-D`）は `preprocessor_detail::handle_define()` を通して `{#define NAME VALUE}` と同じ検証・再定義警告付きで登録する（§3, R4/C4）
+- `apply_undef_option()` — `-U NAME` を `preprocessor_detail::handle_undef()` を通して `{#undef NAME}` と同じ検証で処理する（R4/C4）
 - `expand()`（ファイルパス版オーバーロード） — `Loader::fullpath()`/`Loader::tokens()` で対象ファイルを解決・読み込み、トークン版 `expand()` に委譲（利用元は「データフロー」参照）
 - `expand()`（トークン列版オーバーロード） — Prosser のアルゴリズムに基づく展開の主ループ。トークン列を受けマクロ展開・ディレクティブ処理して出力トークン列を返す
 - `preprocess()` — ストリーム/ファイルパス向け簡易 API。CLI は使わず、主に `tests/test_helper.hpp` が利用

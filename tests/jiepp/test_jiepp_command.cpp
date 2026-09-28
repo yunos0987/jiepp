@@ -135,6 +135,70 @@ TEST_F(JieppCommandTest, MultipleInputFilesRejected) {
     EXPECT_EQ("jiepp: error: PP13: Invalid command; 'multiple input files not supported'", message());
 }
 
+// ---- R4/C4: -D/-U are processed like {#define}/{#undef} ---------------
+
+TEST_F(JieppCommandTest, DOptionRejectsNonIdentifierName) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"1=2"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: error: PP30: Invalid define syntax; "
+              "'macro name must be an identifier: 1 2'",
+              message());
+}
+
+TEST_F(JieppCommandTest, UOptionRejectsNonIdentifierName) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.undef_macros = {"1"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: error: PP30: Invalid define syntax; "
+              "'macro name must be an identifier: 1'",
+              message());
+}
+
+TEST_F(JieppCommandTest, UOptionRejectsDefined) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.undef_macros = {"defined"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+}
+
+// U4: --silent must already be in effect for a diagnostic raised while
+// processing -D/-U, not only for the main input's own expansion.
+TEST_F(JieppCommandTest, SilentSuppressesDOptionDiagnostic) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.silent = true;
+    opts.define_macros = {"=1"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(JieppCommandTest, SuppressWarningsSuppressesDOptionRedefineWarning) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.suppress_warnings = true;
+    opts.define_macros = {"A=1", "A=2"};
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(JieppCommandTest, WerrorPromotesDOptionRedefineWarning) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.werror = true;
+    opts.define_macros = {"A=1", "A=2"};
+    EXPECT_NE(0, jiepp_command(opts));
+}
+
 TEST_F(JieppCommandTest, Regular) {
     run_e2e("none");
     run_e2e("not_directive");

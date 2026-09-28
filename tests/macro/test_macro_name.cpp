@@ -166,3 +166,51 @@ TEST_F(MacroNameTest, DefinedOperatorNotLeakedAfterException) {
     EXPECT_THROW(pp("{#if defined 1}{#endif}", env), Issue::Exception);
     EXPECT_NE(std::string::npos, pp("{#define X}{#if defined(X)}y{#endif}", env).find("y"));
 }
+
+// ---- C4: -D/-U processed like {#define}/{#undef} ----------------------
+
+TEST_F(MacroNameTest, SetupProcessesPredefineMacrosLikeDefine) {
+    {
+        Env env = setup({{"F(x)", "x+1"}});
+        EXPECT_EQ("3+1;", pp("F(3);", env));
+    }
+    {
+        Env env = setup({{"F(x)", "1"}});
+        EXPECT_EQ("1;F;", pp("F(3);F;", env));
+    }
+    {
+        Env env = setup({{"A B", "2"}});
+        EXPECT_EQ("[B 2];", pp("[A];", env));
+    }
+    {
+        Env env = setup({{" A ", "1"}});
+        EXPECT_EQ("[1];", pp("[A];", env));
+    }
+    {
+        // Regression: an empty value still defines an empty object macro.
+        Env env = setup({{"F", ""}});
+        EXPECT_EQ("[];", pp("[F];", env));
+    }
+    for (const auto& kv : std::vector<std::pair<std::string, std::string>>{
+             {"1", "2"},
+             {"\xE5\xA4\x89\xE6\x95\xB0", "2"},
+             {"F(a a)", "a"},
+         }) {
+        SCOPED_TRACE(kv.first);
+        EXPECT_THROW(setup({kv}), Issue::Exception);
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+    }
+    {
+        EXPECT_THROW(setup({{"defined", "1"}}), Issue::Exception);
+        EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    }
+    {
+        Env env = setup({{"A", "1"}, {"A", "2"}});
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::MACRO_REDEFINED, cs[0]);
+        EXPECT_EQ("[2];", pp("[A];", env));
+    }
+}
+
+// ---- C4/C5: jiepp_command()-level checks live in test_jiepp_command.cpp ---
