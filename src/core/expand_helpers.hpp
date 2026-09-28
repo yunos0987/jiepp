@@ -29,6 +29,12 @@ bool ctrl_parent_active(const std::vector<CtrlState>& stack);
 std::string eval_cond_str(const std::string& raw_cond, Env& env);
 bool eval_cond(const std::string& raw_cond, Env& env);
 
+// C2: {#ifdef NAME}/{#ifndef NAME}, like clang's HandleIfdefDirective. NAME
+// is not macro-expanded; comments in raw_arg are whitespace. A missing or
+// non-identifier NAME is INVALID_DEFINED_OPERAND and the group is false
+// (even for {#ifndef}), so a later {#elif}/{#else} may still be taken.
+bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env);
+
 // ── Prosser's algorithm support (expand_subst.cpp) ─────────────────
 // Corresponds to cpp.algo.md: §hsadd, §glue, §Support functions, §subst.
 

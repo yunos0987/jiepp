@@ -397,6 +397,8 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 {#ifndef NAME}    (* NAME が未定義なら真 *)
 ```
 
+`NAME` はマクロ展開しない。`NAME` がない、または識別子でない場合は `INVALID_DEFINED_OPERAND` (`PP40`) エラーになり、`{#ifndef}` の場合もその分岐は偽として扱う。後続の `{#elif}` / `{#else}` は通常どおり評価する（clang と同じ）。
+
 ### 5.2 `defined` 演算子 / `defined` Operator
 
 ```
@@ -1122,7 +1124,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP35 | `MACRO_REDEFINED` | WARNING | Macro redefined | マクロの再定義警告 |
 | PP36 | `DUPLICATE_MACRO_PARAMETER` | ERROR | Duplicate macro parameter name | マクロパラメータ名の重複。最初の重複で 1 回だけ報告し、その `{#define}` は無視する（§3.2） |
 | PP37 | `INVALID_VA_OPT` | ERROR | Invalid __VA_OPT__ | `__VA_OPT__` の不正な使用（非可変長マクロ内での使用・ネスト） |
-| PP40 | `INVALID_DEFINED_OPERAND` | ERROR | Invalid operand for 'defined' | `defined` の不正なオペランド |
+| PP40 | `INVALID_DEFINED_OPERAND` | ERROR | Invalid operand for 'defined' | `defined` / `{#ifdef}` / `{#ifndef}` の不正なオペランド（マクロ名がない、または識別子でない。§5） |
 | PP41 | `INVALID_SETLINE_OPERAND` | ERROR | Invalid operand for 'set_line' | `{#set_line}` の不正なオペランド |
 | PP42 | `INVALID_IGNORE_OPERAND` | ERROR | Invalid operand for 'ignore' | `{#ignore}` の不正なオペランド |
 | PP43 | `INVALID_LIMIT_OPERAND` | ERROR | Invalid operand for limit directive | 制限ディレクティブの不正なオペランド |

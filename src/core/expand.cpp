@@ -6,6 +6,7 @@
 #include "expand_helpers.hpp"
 #include "preprocessor.hpp"
 #include "../loader/loader.hpp"
+#include "../loader/lexer.hpp"
 #include "../loader/directive_parser.hpp"
 #include "preprocessor_internal.hpp"
 
@@ -82,12 +83,14 @@ void dispatch_directive(const Token& t,
         return;
     }
 
+    // C2: {#ifdef}/{#ifndef} are evaluated directly (eval_ifdef below), like
+    // clang's HandleIfdefDirective -- NAME is not macro-expanded and a
+    // missing/non-identifier NAME is diagnosed without ever building a
+    // "defined(...)" string and round-tripping it through eval_cond.
+    bool ifdef_form = false, ifndef_form = false;
     if (kind & DirectiveToken::MASK_CTRLEX) {
-        if (kind == DirectiveToken::IFDEF) {
-            raw_arg = "defined(" + raw_arg + ")";
-        } else if (kind == DirectiveToken::IFNDEF) {
-            raw_arg = "\\not\\ defined(" + raw_arg + ")";
-        }
+        ifdef_form = true;
+        ifndef_form = (kind == DirectiveToken::IFNDEF);
         kind = DirectiveToken::IF;
     }
 
@@ -98,7 +101,7 @@ void dispatch_directive(const Token& t,
                 ISSUE(MAX_IF_NESTING_EXCEEDED);
             }
             if (active) {
-                bool cond = eval_cond(raw_arg, env);
+                bool cond = ifdef_form ? eval_ifdef(raw_arg, ifndef_form, env) : eval_cond(raw_arg, env);
                 ctrl.push_back({false, cond ? std::optional<bool>(true) : std::nullopt});
             } else {
                 ctrl.push_back({false, false});

@@ -80,3 +80,43 @@ TEST_F(MacroNameTest, RejectedUndefNotEchoedUnderDD) {
     EXPECT_EQ(std::string::npos, out.find("{#undef 1}"));
     EXPECT_NE(std::string::npos, out.find("{#undef A}"));
 }
+
+// ---- C2: {#ifdef}/{#ifndef} name validation ---------------------------
+
+TEST_F(MacroNameTest, IfdefIfndefRejectNonIdentifierName) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("n", pp("{#ifdef 1}y{#else}n{#endif}"));
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+    EXPECT_EQ("n", pp("{#ifndef 1}y{#else}n{#endif}"));
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+    // {#ifndef}'s branch is false on an error too, so a later {#elif} can
+    // still run.
+    EXPECT_EQ("e", pp("{#ifdef 1}y{#elif 1}e{#else}n{#endif}"));
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+    EXPECT_EQ("n", pp("{#ifdef}y{#else}n{#endif}"));
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+    EXPECT_EQ("n", pp("{#ifndef}y{#else}n{#endif}"));
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+}
+
+TEST_F(MacroNameTest, IfdefRejectsNonIdentifierNameLibraryMode) {
+    EXPECT_THROW(pp("{#ifdef %IX0}y{#endif}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINED_OPERAND, code());
+}
+
+TEST_F(MacroNameTest, IfdefIfndefRegressionCasesUnaffected) {
+    // A trailing comment is whitespace.
+    EXPECT_EQ("y", pp("{#define A}{#ifdef A (* c *)}y{#endif}"));
+    // 'defined' is not itself a macro outside of a {#if}/{#elif} condition.
+    EXPECT_EQ("n", pp("{#ifdef defined}y{#else}n{#endif}"));
+    EXPECT_EQ("y", pp("{#ifdef __LINE__}y{#endif}"));
+    // Not checked inside an inactive block.
+    EXPECT_EQ("ok", pp("{#if 0}{#ifdef 1 2 3}{#endif}{#endif}ok"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(MacroNameTest, IfdefIfndefDoNotDisturbLineNumbering) {
+    std::string out = pp("{#ifdef\nA\n}y{#endif}\n__LINE__\n{#ifndef $nA$n}y{#endif}\n__LINE__");
+    EXPECT_NE(std::string::npos, out.find("4"));
+    EXPECT_NE(std::string::npos, out.find("6"));
+}

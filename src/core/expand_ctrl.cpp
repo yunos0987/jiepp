@@ -6,7 +6,9 @@
 
 #include "../constfold/constfold.hpp"
 #include "../loader/loader.hpp"
+#include "../loader/lexer.hpp"
 #include "../macro/macro.hpp"
+#include "../util/text.hpp"
 
 #include <cctype>
 #include <string>
@@ -153,6 +155,29 @@ bool eval_cond(const std::string& raw_cond, Env& env) {
     std::string expanded = eval_cond_str(raw_cond, env);
     int64_t val = eval_const_expr(expanded);
     return val != 0;
+}
+
+// C2: {#ifdef NAME}/{#ifndef NAME}. See expand_helpers.hpp for the contract.
+bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env) {
+    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    if (ts.empty()) {
+        ISSUE(INVALID_DEFINED_OPERAND, "macro name missing");
+        return false;
+    }
+    if (ts[0].type != Token::ANY || !iec3_is_identifier(ts[0].text)) {
+        ISSUE(INVALID_DEFINED_OPERAND,
+              "macro name must be an identifier: " + Util::escape_line_breaks(raw_arg));
+        return false;
+    }
+    if (ts.size() > 1) {
+        // Extra tokens after NAME: pending user decision Q1; keep the
+        // pre-R4 path (macro-expand as "defined(...)"/"not defined(...)")
+        // unchanged until then.
+        return eval_cond((is_ifndef ? "\\not\\ defined(" : "defined(") + raw_arg + ")", env);
+    }
+    Macro* m = env.lookup(ts[0].text);
+    bool is_def = m && !dynamic_cast<DefinedOperator*>(m);
+    return is_ifndef ? !is_def : is_def;
 }
 
 } // namespace jiepp::expand_detail
