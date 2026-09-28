@@ -86,7 +86,7 @@ void display_help_and_exit(int exit_code = 0) {
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
         "  --max-if-nesting N       Maximum if/elif nesting depth (default: 256)\n"
         "  --max-blank-lines N      Max consecutive blank lines before compaction (default: 7; 0 disables)\n"
-        "  --recursion-limit N      Set OS stack size (N * ~8KB frames)\n"
+        "  --recursion-limit N      Stack size: N x 8 KiB (default: 8 MiB)\n"
         "  --pp-output-pragma-style STYLE\n"
         "                           Pragma output style: annotated or standard (default: annotated)\n"
         "  -P                       Suppress line markers in output\n"

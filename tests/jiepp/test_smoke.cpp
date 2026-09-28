@@ -39,6 +39,38 @@ protected:
         f << content;
     }
 
+    // Shared input/output shape for the deeply-nested function-macro tests
+    // below: I(I(...I(0)...)) at the given depth, inside a program body.
+    static std::string nested_macro_source(int depth) {
+        std::string src = "{#define I(a) (a)+1}\nprogram Main\n{st}\n";
+        for (int i = 0; i < depth; ++i)
+            src += "I(";
+        src += "0";
+        for (int i = 0; i < depth; ++i)
+            src += ")";
+        src += ";\n{end}\nend_program\n";
+        return src;
+    }
+
+    static std::string nested_macro_expected_line(int depth) {
+        std::string expected(static_cast<std::size_t>(depth), '(');
+        expected += "0";
+        for (int i = 0; i < depth; ++i)
+            expected += ")+1";
+        expected += ";";
+        return expected;
+    }
+
+    static bool output_has_line(const std::string& out, const std::string& expected) {
+        std::istringstream lines(out);
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (line == expected)
+                return true;
+        }
+        return false;
+    }
+
     struct RunResult {
         int exit_code;
         std::string out;
@@ -344,8 +376,9 @@ TEST_F(SmokeTest, StdoutMatchesOutputFileBytes) {
 
 TEST_F(SmokeTest, DeeplyNestedFunctionMacroExpansion) {
     // Matches tools/perftest/cases/iterate_fmacros/iterate_fmacros.py's input
-    // shape (n=100, well under the ~161-level Debug-build recursion ceiling
-    // noted in AGENTS.md, so this passes in both Debug and Release).
+    // shape (n=100, well under the default stack's Debug-build recursion
+    // ceiling -- about 1240 levels with the 8 MiB default stack -- so this
+    // passes in both Debug and Release).
     fs::path input = tmp_dir_ / "nested_fmacro.iec";
     constexpr int kDepth = 100;
 
@@ -378,4 +411,37 @@ TEST_F(SmokeTest, DeeplyNestedFunctionMacroExpansion) {
         }
     }
     EXPECT_TRUE(found) << "expected line: " << expected << "\nstdout: " << r.out;
+}
+
+// ---- 11. Default stack size (8 MiB) and the PP63 stack guard ----
+//
+// n=1000 nesting exceeds the pre-U3 default Debug-build recursion ceiling
+// (~161 levels with the old 1 MiB stack), so with the 8 MiB default stack
+// this must complete instead of crashing.
+
+TEST_F(SmokeTest, DefaultStackHandlesDeepNesting) {
+    constexpr int kDepth = 1000;
+    fs::path input = tmp_dir_ / "nested_fmacro_1000.iec";
+    write_file(input, nested_macro_source(kDepth));
+
+    // --max-expansion-depth raised well above kDepth: only the stack size is
+    // under test here, not the expansion depth limit (see the next test).
+    auto r = run("--max-expansion-depth 2000 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_TRUE(output_has_line(r.out, nested_macro_expected_line(kDepth)))
+        << "expected line not found\nstdout: " << r.out;
+}
+
+// n=300 with the default --max-expansion-depth (256): before U3, a Debug
+// build crashed around 161 levels -- well short of the depth-256 check --
+// instead of ever reaching PP60. With the 8 MiB default stack, PP60 fires as
+// designed and the process exits cleanly (no crash).
+TEST_F(SmokeTest, DefaultDepthLimitReportsPP60NotCrash) {
+    constexpr int kDepth = 300;
+    fs::path input = tmp_dir_ / "nested_fmacro_300.iec";
+    write_file(input, nested_macro_source(kDepth));
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("PP60"), std::string::npos) << "stderr: " << r.err;
 }
