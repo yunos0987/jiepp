@@ -208,7 +208,13 @@ bool eval_cond(const std::string& raw_cond, Env& env) {
     // like clang.
     if (operand_error)
         return false;
-    int64_t val = eval_const_expr(expanded);
+    // Comments are whitespace in the expression, as in C: those written in
+    // the operand and those a macro body brought in (bodies keep comments
+    // unless -nC) both survive preprocess_text() as text, and constfold's
+    // scanner knows no comment syntax. Blanked only after
+    // resolve_has_include() ran on the raw text, so a
+    // __has_include(<a//b>) path is not mistaken for a comment.
+    int64_t val = eval_const_expr(iec3_blank_out_comments(expanded));
     return val != 0;
 }
 

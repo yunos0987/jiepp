@@ -282,6 +282,15 @@ TEST_F(IncludeTest, SyspathMacroArgumentUsesDirectiveFile) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(IncludeTest, HasIncludeWithComment) {
+    // __has_include() is resolved from the raw text before the expression
+    // is blanked of comments, so a comment after it does not break the
+    // rest of the {#if} expression.
+    fs::current_path(jiepp_root_dir());
+    EXPECT_EQ("y", pp("{#if __has_include('tests/core/test_include/a.iec') // c}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(IncludeTest, SyspathPragmaReemittedAsWritten) {
     // The re-emitted (*{syspath:'...'}*) pragma carries the operand exactly
     // as written (relative text), never the resolved absolute base path.

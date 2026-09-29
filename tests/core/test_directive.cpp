@@ -79,6 +79,32 @@ TEST_F(DirectiveTest, CommentAroundDirectiveName) {
     EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
 }
 
+TEST_F(DirectiveTest, CommentsInIfExpression) {
+    // Comments in a {#if}/{#elif} expression are whitespace, like in C.
+    EXPECT_EQ("y", pp("{#if 1 // c}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("y", pp("{#if 1 (* c *)}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("y", pp("{#if 1 /* c */}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("y", pp("{#if (* c *) 0 (* d *) + 1}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("n", pp("{#if 0 (* c *)}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("y", pp("{#if 0}n{#elif 1 // c}y{#endif}"));
+    EXPECT_TRUE(empty());
+    // A comment in a macro body used in the expression is whitespace too
+    // (macro bodies keep comments unless -nC).
+    EXPECT_EQ("y", pp("{#define A 1 (* c *) + 1}{#if A = 2}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("y", pp("{#define F(x) x (* c *) + 1}{#if F(1) = 2}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("y", pp("{#if 1 (* c *) \\and\\ (* d *) 1}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+    // A document comment is a token, not whitespace: a syntax error.
+    EXPECT_THROW(pp("{#if 1 (*! d *)}y{#endif}"), Issue::Exception);
+}
+
 TEST_F(DirectiveTest, InvalidDirectiveName) {
     // Identifier-like key with non-identifier chars → ERROR (not WARNING)
     // parse_directive keeps +, (, ) in the key since they're not separator chars

@@ -198,6 +198,27 @@ TEST_F(LexerTest, IsIdentifier) {
     EXPECT_FALSE(iec3_is_identifier("\xE5"));
 }
 
+TEST_F(LexerTest, BlankOutComments) {
+    // Each comment form becomes one space, like translation phase 3 in C.
+    EXPECT_EQ("1  ", iec3_blank_out_comments("1 // c"));
+    EXPECT_EQ("1 2", iec3_blank_out_comments("1(*c*)2"));
+    // Unclosed block comment: runs to the end of the string.
+    EXPECT_EQ("1  ", iec3_blank_out_comments("1 (* c"));
+    // A document comment is a token, kept verbatim.
+    EXPECT_EQ("1 (*! d *)", iec3_blank_out_comments("1 (*! d *)"));
+    // A comment opener inside a string literal is not a comment.
+    EXPECT_EQ("'a(*b*)c'  ", iec3_blank_out_comments("'a(*b*)c' (* x *)"));
+    // A $-escaped quote inside the literal does not end it early.
+    EXPECT_EQ("'it$'s'  ", iec3_blank_out_comments("'it$'s' // c"));
+    // A '//' comment runs only to the end of the line, not past it.
+    EXPECT_EQ("1  \n+1", iec3_blank_out_comments("1 // c\n+1"));
+    EXPECT_EQ(" ", iec3_blank_out_comments("(*)"));
+    // A pragma opener ("(*{ ... }") is kept, not blanked out.
+    EXPECT_EQ("1 (*{p}*)", iec3_blank_out_comments("1 (*{p}*)"));
+    // No comment opener at all: unchanged.
+    EXPECT_EQ("a */ b", iec3_blank_out_comments("a */ b"));
+}
+
 // ---- ellipsis tokenization ----
 
 // R3: '...' is three adjacent one-character Token::ANY "." tokens, not a
