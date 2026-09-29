@@ -291,6 +291,39 @@ TEST_F(IncludeTest, HasIncludeWithComment) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(IncludeTest, CommentsAroundIncludeOperand) {
+    // Comments around the {#include}/{#sinclude}/{#syspath} operand are
+    // whitespace, like in C; the quoted path (or <...> path) itself is
+    // unaffected.
+    fs::current_path(jiepp_root_dir());
+    std::string plain = pp("{#include 'tests/core/test_include/a.iec'}");
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(plain, pp("{#include 'tests/core/test_include/a.iec' // c}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(plain, pp("{#include 'tests/core/test_include/a.iec' (* c *)}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(plain, pp("{#include 'tests/core/test_include/a.iec' /* c */}"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(plain, pp("{#include (* c *) 'tests/core/test_include/a.iec'}"));
+    EXPECT_TRUE(empty());
+
+    // <...> path is copied verbatim: a "//" inside it stays part of the
+    // path, not a comment.
+    std::string angle = pp("{#syspath '.'}{#include <tests/core//test_include/a.iec>}");
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(angle, pp("{#syspath '.'}{#include <tests/core//test_include/a.iec> (* c *)}"));
+    EXPECT_TRUE(empty());
+
+    std::string sinc = pp("{#syspath 'tests/core/test_include'}{#sinclude 'a.iec'}");
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(sinc, pp("{#syspath 'tests/core/test_include' // c}{#sinclude 'a.iec' (* c *)}"));
+    EXPECT_TRUE(empty());
+
+    // A document comment is a token, not whitespace: still an error.
+    EXPECT_THROW(pp("{#include 'tests/core/test_include/a.iec' (*! d *)}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_PATH, code());
+}
+
 TEST_F(IncludeTest, SyspathPragmaReemittedAsWritten) {
     // The re-emitted (*{syspath:'...'}*) pragma carries the operand exactly
     // as written (relative text), never the resolved absolute base path.

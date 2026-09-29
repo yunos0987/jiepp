@@ -678,6 +678,32 @@ TEST_F(DirectiveTest, LineCommentInLineDirective) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(DirectiveTest, CommentsAroundLineOperand) {
+    // Comments around the {#line}/{#:N} operand are whitespace, like in C.
+    std::string plain = pp("{#line 100}\n__LINE__");
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(plain, pp("{#line 100 // c}\n__LINE__"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(plain, pp("{#line 100 (* c *)}\n__LINE__"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(plain, pp("{#line (* c *) 100}\n__LINE__"));
+    EXPECT_TRUE(empty());
+
+    // A comment between the line number and the file path is also
+    // whitespace.
+    std::string with_file = pp("{#line 100 'f.st'}\n__LINE__ __FILE__");
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(with_file, pp("{#line 100 (* a *) 'f.st' // b}\n__LINE__ __FILE__"));
+    EXPECT_TRUE(empty());
+
+    EXPECT_EQ(pp("{#:100}\n__LINE__"), pp("{#:100 (* c *)}\n__LINE__"));
+    EXPECT_TRUE(empty());
+
+    // Comments as such are not recognized inside the quoted file path.
+    EXPECT_NE(std::string::npos, pp("{#line 100 'f(*x*).st'}\n__FILE__").find("f(*x*).st"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(DirectiveTest, LineCommentInMessageDirective) {
     // B4: {#warning} - the comment ends at the raw newline, so 'more' is
     // no longer part of the comment and reaches the message text. This is

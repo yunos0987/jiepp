@@ -362,7 +362,9 @@ void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, s
     if (is_marker_form && raw_arg.empty())
         return;
 
-    std::string arg = preprocess_text(raw_arg, env);
+    // Comments around the operand are whitespace, as in C; preprocess_text()
+    // keeps them unless -nC.
+    std::string arg = iec3_blank_out_comments(preprocess_text(raw_arg, env));
     if (auto parsed = parse_lineno_operand(arg)) {
         auto [new_lineno, rest] = *parsed;
         // item a (rev2): both forms now accept the same range,
@@ -430,7 +432,9 @@ void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, s
 }
 
 void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ots) {
-    std::string raw_path = preprocess_text(raw_arg, env);
+    // Comments around the operand are whitespace, as in C; preprocess_text()
+    // keeps them unless -nC.
+    std::string raw_path = iec3_blank_out_comments(preprocess_text(raw_arg, env), /*header_name=*/true);
     std::string syspath;
     bool _;
     if (strip_path(raw_path, syspath, _)) {
@@ -448,7 +452,9 @@ void handle_include(const std::string& raw_arg,
                     Env& env,
                     std::vector<Token>& ots,
                     bool syspath_only) {
-    std::string raw_path = preprocess_text(raw_arg, env);
+    // Comments around the operand are whitespace, as in C; preprocess_text()
+    // keeps them unless -nC.
+    std::string raw_path = iec3_blank_out_comments(preprocess_text(raw_arg, env), /*header_name=*/true);
     std::string include_path;
     bool syspath_only_path;
     if (strip_path(raw_path, include_path, syspath_only_path)) {

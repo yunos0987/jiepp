@@ -25,4 +25,8 @@ bool iec3_is_identifier(std::string_view s);
 // verbatim; an opener followed by optional whitespace and '{' is a pragma
 // opener and is kept; an unclosed block comment runs to the end of s (the
 // lexer has already reported PP20).
-std::string iec3_blank_out_comments(std::string_view s);
+//
+// When header_name is true, a '<' that is the first character other than
+// whitespace and comments starts a <...> path that is copied verbatim up to
+// the first '>', so {#include <dir//a.iec>} keeps its path.
+std::string iec3_blank_out_comments(std::string_view s, bool header_name = false);
