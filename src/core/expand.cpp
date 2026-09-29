@@ -63,7 +63,14 @@ void dispatch_directive(const Token& t,
                         std::vector<CtrlState>& ctrl,
                         Env& env,
                         std::vector<Token>& ots) {
-    auto [key, raw_arg] = parse_directive(t.text);
+    // Decode without raising PP21 yet (the 2-arg overload): whether this
+    // directive's escape is worth reporting depends on whether the
+    // directive is active/reachable at all, which is only known below, and
+    // a directive is decoded here at most once (UD2/UD3: previously each of
+    // key/value decoding, and any earlier re-parse by the macro-argument
+    // collector in this file, could each raise its own PP21).
+    std::optional<std::string> invalid_escape;
+    auto [key, raw_arg] = parse_directive(t.text, invalid_escape);
     int kind = DirectiveToken::name_to_kind(key);
 
     bool active = ctrl_is_active(ctrl);
@@ -75,12 +82,15 @@ void dispatch_directive(const Token& t,
         // this). Dispatch time has the correct line number and correctly
         // suppresses the diagnostic for a directive inside an inactive
         // {#if 0} block, matching gcc (see classify_unknown_directive()).
-        if (active)
+        if (active) {
+            if (invalid_escape)
+                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
             // `key` is decoded, so a $n/$r escape in the source is a real
             // line break here; re-escape it so the UNKNOWN_DIRECTIVE/
             // INVALID_DIRECTIVE_NAME diagnostic stays on one line, like the
             // directive-operand diagnostics in directive_handlers.cpp.
             Issue::happen(classify_unknown_directive(key), Util::escape_line_breaks(key));
+        }
         return;
     }
 
@@ -102,6 +112,8 @@ void dispatch_directive(const Token& t,
                 ISSUE(MAX_IF_NESTING_EXCEEDED);
             }
             if (active) {
+                if (invalid_escape)
+                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
                 bool cond = ifdef_form ? eval_ifdef(raw_arg, ifndef_form, env) : eval_cond(raw_arg, env);
                 ctrl.push_back({false, cond ? std::optional<bool>(true) : std::nullopt});
             } else {
@@ -110,9 +122,15 @@ void dispatch_directive(const Token& t,
             break;
         case DirectiveToken::ELIF:
             if (ctrl.size() <= 1) {
+                // Edge case: an unmatched {#elif} already errors below, so
+                // an invalid escape in its operand is not itself reported
+                // -- the ctrl_parent_active() gate for that report is never
+                // reached, since ELIF_ERROR returns first.
                 ISSUE(ELIF_ERROR, "elif without matching if");
                 return;
             }
+            if (ctrl_parent_active(ctrl) && invalid_escape)
+                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
             {
                 auto& last = ctrl.back();
                 if (last.seen_else) {
@@ -132,9 +150,12 @@ void dispatch_directive(const Token& t,
             break;
         case DirectiveToken::ELSE:
             if (ctrl.size() <= 1) {
+                // Same edge case as {#elif} above.
                 ISSUE(ELSE_ERROR, "else without matching if");
                 return;
             }
+            if (ctrl_parent_active(ctrl) && invalid_escape)
+                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
             {
                 auto& last = ctrl.back();
                 if (last.seen_else) {
@@ -151,9 +172,12 @@ void dispatch_directive(const Token& t,
             break;
         case DirectiveToken::ENDIF:
             if (ctrl.size() <= 1) {
+                // Same edge case as {#elif} above.
                 ISSUE(ENDIF_ERROR, "endif without matching if");
                 return;
             }
+            if (ctrl_parent_active(ctrl) && invalid_escape)
+                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
             ctrl.pop_back();
             break;
         default:
@@ -164,6 +188,9 @@ void dispatch_directive(const Token& t,
 
     if (!active)
         return;
+
+    if (invalid_escape)
+        ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
 
     switch (kind) {
     case DirectiveToken::DEFINE:
@@ -516,10 +543,20 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         // parameter in the macro body (see subst()'s formal-parameter
                         // substitution, which calls expand() per occurrence).
                         if (pt.type == Token::DIRECTIVE) {
-                            auto [dkey, draw_arg] = parse_directive(pt.text);
+                            // UD2: decode without raising PP21 yet (the 2-arg
+                            // overload) -- dispatch_directive() below decodes
+                            // this same text again and does raise it, so
+                            // raising it here too would report it twice for
+                            // the else-branch case. The two OPERATION_NOT_ALLOWED
+                            // branches never reach dispatch_directive(), so
+                            // they raise it themselves first, right here.
+                            std::optional<std::string> dinvalid_escape;
+                            auto [dkey, draw_arg] = parse_directive(pt.text, dinvalid_escape);
                             int dkind = DirectiveToken::name_to_kind(dkey);
                             if (dkind != -1 &&
                                 (dkind & (DirectiveToken::MASK_CTRL | DirectiveToken::MASK_CTRLEX))) {
+                                if (dinvalid_escape)
+                                    ISSUE(INVALID_ESCAPE_SEQUENCE, *dinvalid_escape);
                                 ISSUE(OPERATION_NOT_ALLOWED,
                                       "control directive inside macro argument");
                             } else if (dkind != -1 &&
@@ -534,6 +571,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                                 // dispatch_directive() below — the sole place that now
                                 // reports UNKNOWN_DIRECTIVE/INVALID_DIRECTIVE_NAME (B1) —
                                 // so it is still diagnosed exactly once, correctly.
+                                if (dinvalid_escape)
+                                    ISSUE(INVALID_ESCAPE_SEQUENCE, *dinvalid_escape);
                                 ISSUE(OPERATION_NOT_ALLOWED,
                                       "'" + dkey + "' inside macro argument: its output "
                                       "would be emitted before the enclosing macro call's "

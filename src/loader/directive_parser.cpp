@@ -126,7 +126,9 @@ std::string encode_directive_text(std::string_view t) {
     return r;
 }
 
-std::pair<std::string, std::string> parse_directive(std::string_view text) {
+std::pair<std::string, std::string> parse_directive(std::string_view text,
+                                                      std::optional<std::string>& invalid_escape) {
+    invalid_escape.reset();
     if (text.size() < 3 || text.front() != '{' || text.back() != '}') {
         ISSUE(INVALID_PP_SYNTAX, std::string(text));
         return {"", ""};
@@ -169,5 +171,25 @@ std::pair<std::string, std::string> parse_directive(std::string_view text) {
     }
     std::string_view raw_value = raw_rem.substr(value_pos);
 
-    return {decode_directive_text(raw_key), decode_directive_text(raw_value)};
+    // Decode key and value without raising PP21 (the flag overload); report
+    // at most one invalid escape for the whole directive to the caller, key
+    // preferred over value, so a caller that ends up raising PP21 does so
+    // exactly once no matter how many "$q"-style escapes the directive has.
+    bool key_invalid = false, value_invalid = false;
+    std::string key = decode_directive_text(raw_key, &key_invalid);
+    std::string value = decode_directive_text(raw_value, &value_invalid);
+    if (key_invalid)
+        invalid_escape = std::string(raw_key);
+    else if (value_invalid)
+        invalid_escape = std::string(raw_value);
+
+    return {std::move(key), std::move(value)};
+}
+
+std::pair<std::string, std::string> parse_directive(std::string_view text) {
+    std::optional<std::string> invalid_escape;
+    auto r = parse_directive(text, invalid_escape);
+    if (invalid_escape)
+        ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+    return r;
 }

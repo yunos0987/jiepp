@@ -64,6 +64,7 @@ Jiepp is a preprocessor for IEC 61131-3, providing C-preprocessor-equivalent mac
 - 16 進数字が 1 桁しかない場合（`$4G`、引数末尾の `$4`）は `$` とその 1 桁が残り、次の文字からデコードを続ける（`$4$n` は `$4` と改行になる）
 - 引数末尾の `$` はそのまま残る
 - 残った `$q` などは通常の文字として後続の処理に渡る。文字列リテラル内でも同じで、`{#define A 'a$qb'}` の値は `'a$qb'`
+- 処理されないディレクティブ（無効なグループ内）の不正なエスケープは報告しない（gcc/clang と同じ）。`{#if 0}` で無効になったグループの中の `{#define A x$q}` は `PP21` を出さない
 
 ### 通常のプラグマの正規化 / Ordinary Pragma Normalization
 

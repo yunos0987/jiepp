@@ -929,3 +929,44 @@ TEST_F(DirectiveTest, PendingHexEscapeSurvivesLineContinuation) {
     const std::string output = pp("{#define C x /$2$\nF y\n+2}C;");
     EXPECT_NE(std::string::npos, output.find("x +2;")) << "output:\n" << output;
 }
+
+// UD3: a directive inside a skipped ({#if 0}) group is never decoded for
+// diagnostic purposes -- dispatch_directive() (expand.cpp) now only raises
+// PP21 once it knows the directive is active/reachable, instead of eagerly
+// inside parse_directive() regardless of {#if} state.
+TEST_F(DirectiveTest, InvalidEscapeNotReportedInSkippedGroup) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("ok;",
+              pp("{#if 0}{#define A x$q}{#error a$q}{#if 1$q}{#endif}{#endif}ok;"));
+    EXPECT_TRUE(empty());
+}
+
+// UD2: a directive found while collecting a macro call's argument list is
+// parsed once by the macro-argument collector to classify it (control vs.
+// output vs. ordinary), then handed to dispatch_directive(), which parses
+// it again to actually run it. Before this fix both parses used the
+// PP21-raising 1-arg parse_directive(), so a single "$q" in the operand was
+// reported twice. Now the argument collector uses the 2-arg overload (no
+// diagnostic) and only dispatch_directive()'s own parse raises PP21, so the
+// whole directive is reported exactly once.
+TEST_F(DirectiveTest, InvalidEscapeReportedOnceThroughMacroArgument) {
+    Issue::ContinueMode guard({});
+    const std::string output =
+        pp("{#define F(x) x}F({#define A x$q y} 1);A;");
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    EXPECT_NE(std::string::npos, output.find("x$q y;")) << "output:\n" << output;
+}
+
+// Unchanged: a single directive with two invalid escapes in the same
+// operand still raises PP21 only once (key-preferred, first-invalid-part
+// reporting collapses multiple invalid escapes in one text into one
+// diagnostic; see DirectiveParserTest.DecodeTextInvalidEscapes).
+TEST_F(DirectiveTest, InvalidEscapeReportedOncePerOperand) {
+    Issue::ContinueMode guard({});
+    pp("{#define A x$q$q y}");
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+}

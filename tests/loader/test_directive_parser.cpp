@@ -179,4 +179,29 @@ TEST_F(DirectiveParserTest, EncodeText) {
     EXPECT_TRUE(empty());
 }
 
+// UD2/UD3: the 2-arg overload never raises PP21 itself; it just reports the
+// raw (undecoded) text of the first invalid escape -- key preferred over
+// value -- so a caller can raise it at most once, and only if/when the
+// directive turns out to matter.
+TEST_F(DirectiveParserTest, ParseDirectiveInvalidEscapeFlagOverload) {
+    std::optional<std::string> bad;
+    EXPECT_EQ(P("def$qine", "A$q"), parse_directive("{#def$qine A$q}", bad));
+    ASSERT_TRUE(bad.has_value());
+    EXPECT_EQ("def$qine", *bad);
+    EXPECT_TRUE(empty());
+
+    // Only the value is invalid: bad holds the value's raw text.
+    bad.reset();
+    EXPECT_EQ(P("define", "A x$q y"), parse_directive("{#define A x$q y}", bad));
+    ASSERT_TRUE(bad.has_value());
+    EXPECT_EQ("A x$q y", *bad);
+    EXPECT_TRUE(empty());
+
+    // No invalid escape at all: bad stays unset.
+    bad.reset();
+    EXPECT_EQ(P("id", "abc"), parse_directive("{#id abc}", bad));
+    EXPECT_FALSE(bad.has_value());
+    EXPECT_TRUE(empty());
+}
+
 
