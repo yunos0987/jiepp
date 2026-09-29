@@ -3,6 +3,7 @@
 
 #include "expand_helpers.hpp"
 #include "preprocessor.hpp"
+#include "preprocessor_internal.hpp"
 
 #include "../constfold/constfold.hpp"
 #include "../loader/loader.hpp"
@@ -171,9 +172,9 @@ std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_e
 #endif
     bool had_defined = env.exist("defined");
     // C3/U5: install the temporary 'defined' operator via an RAII guard so
-    // it is removed on scope exit even when preprocess_text() below throws
-    // (previously the matching env.undef("defined") was skipped on that
-    // path, leaking the operator into `env` for the rest of the run).
+    // it is removed on scope exit even when expand_operand_text() below
+    // throws (previously the matching env.undef("defined") was skipped on
+    // that path, leaking the operator into `env` for the rest of the run).
     struct DefinedGuard {
         Env& env;
         bool owns;
@@ -194,7 +195,7 @@ std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_e
         if (defop)
             defop->operand_error = false;
     }
-    std::string result = preprocess_text(cond, env);
+    std::string result = jiepp::preprocessor_detail::expand_operand_text(cond, env);
     if (operand_error)
         *operand_error = defop && defop->operand_error;
     return result;
@@ -210,7 +211,7 @@ bool eval_cond(const std::string& raw_cond, Env& env) {
         return false;
     // Comments are whitespace in the expression, as in C: those written in
     // the operand and those a macro body brought in (bodies keep comments
-    // unless -nC) both survive preprocess_text() as text, and constfold's
+    // unless -nC) both survive expand_operand_text() as text, and constfold's
     // scanner knows no comment syntax. Blanked only after
     // resolve_has_include() ran on the raw text, so a
     // __has_include(<a//b>) path is not mistaken for a comment.

@@ -74,7 +74,8 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `expand()`（ファイルパス版オーバーロード） — `Loader::fullpath()`/`Loader::tokens()` で対象ファイルを解決・読み込み、トークン版 `expand()` に委譲（利用元は「データフロー」参照）
 - `expand()`（トークン列版オーバーロード） — Prosser のアルゴリズムに基づく展開の主ループ。トークン列を受けマクロ展開・ディレクティブ処理して出力トークン列を返す
 - `preprocess()` — ストリーム/ファイルパス向け簡易 API。CLI は使わず、主に `tests/test_helper.hpp` が利用
-- `preprocess_text()` — 文字列を `preprocess()` に通してマクロ展開後の文字列を返す。ディレクティブのオペランド再展開に使う（詳細は「データフロー」）
+- `preprocess_text()` — 文字列を `preprocess()` に通してマクロ展開後の文字列を返す公開 API。空行圧縮（`compact_blank_lines()`）込みで、ディレクティブのオペランド再展開には使わない
+- `preprocessor_detail::expand_operand_tokens()`/`expand_operand_text()` — ディレクティブのオペランド（`{#if}`/`{#elif}` の条件式、`{#string}`/`{#wstring}`/`{#line}`/`{#include}`/`{#sinclude}`/`{#syspath}` のオペランド、メッセージ本文）と通常のプラグマ本体をマクロ展開する。空行圧縮を一切行わない点が `preprocess_text()` との違いで、圧縮は最終出力に対する後処理であり、オペランドのテキスト自体に行マーカーが混入するのを防ぐ（詳細は「データフロー」）
 - `dump_macros()` — `env` のユーザー定義マクロを `{#define ...}` 形式で書き出す。`-dM` の実体
 
 ### macro/ の内部構成
@@ -152,7 +153,7 @@ GCC/cpp 同様、組み込みマクロの定義責務をプリプロセッサと
 
 1. `jiepp/main.cpp` が `parse_args()` で引数を解析して `jiepp_command()` を呼ぶ（スタック確保・標準出力のバイナリモード化は「jiepp/」節参照）
 2. `jiepp_command()` が `Env` を構築し、`Issue::ContinueMode` ガードの下で `-include` の展開とトップレベル入力の `expand()`（ファイルパス版。標準入力ならトークン列版）を呼ぶ
-3. `core/expand.cpp` がトークン列を走査する。ディレクティブは `directive_parser` → `directive_handlers` が、`#include`/`#sinclude` は `handle_include()`（`directive_handlers.cpp`。再帰的に `expand()` を呼ぶ）が、`#if` 条件式は `constfold` が（`__has_include` は事前解決）処理する。ディレクティブのオペランド（`#include` のパス、`#if` の条件式文字列、`{#error}`/`{#warning}` のメッセージ文字列）は `preprocess_text()` が 1 往復再展開する（内部で `expand()` を呼ぶ。使用元: `directive_handlers.cpp`/`expand.cpp`/`expand_ctrl.cpp`）。マクロ参照は `Env` のシンボルテーブルで展開する
+3. `core/expand.cpp` がトークン列を走査する。ディレクティブは `directive_parser` → `directive_handlers` が、`#include`/`#sinclude` は `handle_include()`（`directive_handlers.cpp`。再帰的に `expand()` を呼ぶ）が、`#if` 条件式は `constfold` が（`__has_include` は事前解決）処理する。ディレクティブのオペランド（`#include` のパス、`#if` の条件式文字列、`{#error}`/`{#warning}` のメッセージ文字列）は `preprocessor_detail::expand_operand_text()` が 1 往復再展開する（内部で `expand()` を呼ぶだけで空行圧縮はしない。使用元: `directive_handlers.cpp`/`expand.cpp`/`expand_ctrl.cpp`）。マクロ参照は `Env` のシンボルテーブルで展開する
 4. `-include`/トップレベル入力の展開が中断コード（`SEVERE` または PP10〜14, 60, 61）で止まった場合、および中断せず終えても `Issue::error_count_ >= 1` の場合の、標準出力・`-o`・依存ファイルの出し分けと終了コードは [SPECIFICATION.md §16](SPECIFICATION.md#16-エラーコード一覧--issue-code-reference) を参照（`jiepp_command()`/`src/jiepp/jiepp.cpp` が実施。中断時はそれまでの `ots` に空行圧縮をかけたうえで判定する）
 5. 中断も未処理エラーもなければ `jiepp::compact_blank_lines()`（`core/line_compaction.cpp`）が `ots` 全体に後処理として 1 回走り、8 行以上連続する空行を行マーカー 1 行に圧縮する（`-P` 指定時は空行を全除去。上限は `--max-blank-lines`、既定 7）
 6. 出力トークン列をテキスト化して書き出す（`output_filepath` 指定時はファイルへ、なければ stdout へ）。依存ファイル（`-MF`/`-MD`/`-MMD` 自動命名）は `-o` を開く前に書く

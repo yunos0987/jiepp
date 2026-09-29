@@ -20,6 +20,24 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
         output << t.text;
 }
 
+namespace jiepp::preprocessor_detail {
+
+std::vector<Token> expand_operand_tokens(const std::string& text, Env& env) {
+    auto its = iec3_tokens_from_string(text, env.get_remove_comments(), 1);
+    std::vector<Token> ots;
+    expand(its, ots, env);
+    return ots;
+}
+
+std::string expand_operand_text(const std::string& text, Env& env) {
+    std::string r;
+    for (const auto& t : expand_operand_tokens(text, env))
+        r += t.text;
+    return r;
+}
+
+} // namespace jiepp::preprocessor_detail
+
 std::string preprocess_text(const std::string& input, Env& env) {
     std::istringstream input_stream(input);
     std::ostringstream output_stream;

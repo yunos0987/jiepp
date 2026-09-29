@@ -342,7 +342,7 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
         ISSUE(WHITESPACE_BEFORE_DIRECTIVE);
     }
 
-    std::string expanded_body = preprocess_text(body, env);
+    std::string expanded_body = jiepp::preprocessor_detail::expand_operand_text(body, env);
     Token out = t;
     if (env.is_standard_pragma_style()) {
         out.text = "{" + expanded_body + "}";

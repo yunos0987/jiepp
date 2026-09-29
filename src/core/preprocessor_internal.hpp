@@ -56,4 +56,14 @@ void handle_max_blank_lines(const std::string& raw_arg, Env& env);
 void handle_pragma_style(const std::string& raw_arg, Env& env);
 void handle_pragma_once(const std::string& raw_arg, Env& env);
 
+// Lexes text -- a decoded directive operand ({#if}/{#elif} condition,
+// {#string}/{#wstring}/{#line}/{#include}/{#sinclude}/{#syspath} operand,
+// message text) or an ordinary pragma body -- and macro-expands it with
+// env. Unlike preprocess()/preprocess_text(), no blank-line compaction
+// runs: compaction is a post-pass over the final output stream, and running
+// it here spliced a line marker into the operand text itself.
+std::vector<Token> expand_operand_tokens(const std::string& text, Env& env);
+// Concatenated text of expand_operand_tokens().
+std::string expand_operand_text(const std::string& text, Env& env);
+
 } // namespace jiepp::preprocessor_detail

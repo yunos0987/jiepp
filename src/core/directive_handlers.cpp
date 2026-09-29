@@ -372,7 +372,7 @@ void handle_stringize(const std::string& raw_arg,
                       Env& env,
                       std::vector<Token>& ots,
                       bool wide) {
-    std::string raw_text = preprocess_text(raw_arg, env);
+    std::string raw_text = expand_operand_text(raw_arg, env);
     if (wide) {
         ots.push_back(Token::create(Token::WSTRING, Util::encode_iec_string(raw_text, '"')));
     } else {
@@ -389,9 +389,9 @@ void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, s
     if (is_marker_form && raw_arg.empty())
         return;
 
-    // Comments around the operand are whitespace, as in C; preprocess_text()
+    // Comments around the operand are whitespace, as in C; expand_operand_text()
     // keeps them unless -nC.
-    std::string arg = iec3_blank_out_comments(preprocess_text(raw_arg, env));
+    std::string arg = iec3_blank_out_comments(expand_operand_text(raw_arg, env));
     if (auto parsed = parse_lineno_operand(arg)) {
         auto [new_lineno, rest] = *parsed;
         // item a (rev2): both forms now accept the same range,
@@ -459,9 +459,9 @@ void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, s
 }
 
 void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ots) {
-    // Comments around the operand are whitespace, as in C; preprocess_text()
+    // Comments around the operand are whitespace, as in C; expand_operand_text()
     // keeps them unless -nC.
-    std::string raw_path = iec3_blank_out_comments(preprocess_text(raw_arg, env), /*header_name=*/true);
+    std::string raw_path = iec3_blank_out_comments(expand_operand_text(raw_arg, env), /*header_name=*/true);
     std::string syspath;
     bool _;
     if (strip_path(raw_path, syspath, _)) {
@@ -479,9 +479,9 @@ void handle_include(const std::string& raw_arg,
                     Env& env,
                     std::vector<Token>& ots,
                     bool syspath_only) {
-    // Comments around the operand are whitespace, as in C; preprocess_text()
+    // Comments around the operand are whitespace, as in C; expand_operand_text()
     // keeps them unless -nC.
-    std::string raw_path = iec3_blank_out_comments(preprocess_text(raw_arg, env), /*header_name=*/true);
+    std::string raw_path = iec3_blank_out_comments(expand_operand_text(raw_arg, env), /*header_name=*/true);
     std::string include_path;
     bool syspath_only_path;
     if (strip_path(raw_path, include_path, syspath_only_path)) {
@@ -504,7 +504,7 @@ void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
     // folded into one space by the lexer (read_pragma_body()), like in any
     // multi-line directive; a $n/$r escape decodes to a real line break and
     // is printed as one. NewlineInStringAndMessageDirectives checks both.
-    std::string msg = preprocess_text(raw_arg, env);
+    std::string msg = expand_operand_text(raw_arg, env);
 #ifdef JIEPP_SANDBOX
     // Sandbox: strip control characters to prevent log injection
     std::erase_if(msg, [](unsigned char c) {
