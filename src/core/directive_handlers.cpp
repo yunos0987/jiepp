@@ -573,9 +573,16 @@ void handle_pragma_style(const std::string& raw_arg, Env& env) {
 }
 
 void handle_pragma_once(const std::string& raw_arg, Env& env) {
-    // Only "once" is recognised; all other pragma names are silently ignored.
-    if (Util::trim_view(raw_arg) == "once")
-        env.record_pragma_once(env.current_file());
+    // Only "once" is recognised; other pragma names are silently ignored.
+    // Comments are whitespace; tokens after "once" are a warning and the
+    // pragma still applies, like clang. A document comment is a token.
+    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    if (ts.empty() || ts[0].type != Token::ANY || ts[0].text != "once")
+        return;
+    if (ts.size() > 1)
+        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
+              "{#pragma " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
+    env.record_pragma_once(env.current_file());
 }
 
 } // namespace jiepp::preprocessor_detail

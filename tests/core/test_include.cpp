@@ -324,6 +324,38 @@ TEST_F(IncludeTest, CommentsAroundIncludeOperand) {
     EXPECT_EQ(Issue::Code::INVALID_PATH, code());
 }
 
+TEST_F(IncludeTest, PragmaOnceWithCommentOrExtraTokens) {
+    // A comment after "once" is whitespace, and extra tokens after "once"
+    // are a warning but the pragma still applies (like clang), so a
+    // self-including file still stops recursing instead of hitting
+    // MAX_INCLUDE_DEPTH_EXCEEDED (PP12).
+    fs::current_path(jiepp_root_dir());
+    {
+        std::string o;
+        EXPECT_NO_THROW({ o = pp_file(DIR / "pragma_once_comment.iec"); });
+        static const std::string needle = "X;";
+        std::size_t count = 0;
+        for (std::size_t pos = 0; (pos = o.find(needle, pos)) != std::string::npos;
+             pos += needle.size())
+            ++count;
+        EXPECT_EQ(1u, count);
+        EXPECT_TRUE(empty());
+    }
+    {
+        std::string o;
+        EXPECT_NO_THROW({ o = pp_file(DIR / "pragma_once_extra.iec"); });
+        static const std::string needle = "Y;";
+        std::size_t count = 0;
+        for (std::size_t pos = 0; (pos = o.find(needle, pos)) != std::string::npos;
+             pos += needle.size())
+            ++count;
+        EXPECT_EQ(1u, count);
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, cs[0]);
+    }
+}
+
 TEST_F(IncludeTest, SyspathPragmaReemittedAsWritten) {
     // The re-emitted (*{syspath:'...'}*) pragma carries the operand exactly
     // as written (relative text), never the resolved absolute base path.

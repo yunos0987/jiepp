@@ -1,0 +1,3 @@
+{#pragma once // c}
+{#include 'pragma_once_comment.iec'}
+X;
