@@ -13,9 +13,13 @@
 void preprocess(std::istream& input, std::ostream& output, Env& env) {
     auto its = iec3_tokens(input, env.get_remove_comments(), 1);
     std::vector<Token> ots;
+    // No leading line marker here (unlike the jiepp command line), so tell
+    // the compaction which line the stream starts on.
+    const LineNo first_lineno = env.get_lineno();
     expand(its, ots, env);
     jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
-                               jiepp::BlankLineMode::Markers, env.is_standard_pragma_style());
+                               jiepp::BlankLineMode::Markers, env.is_standard_pragma_style(),
+                               first_lineno);
     for (auto& t : ots)
         output << t.text;
 }

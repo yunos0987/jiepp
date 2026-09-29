@@ -335,3 +335,17 @@ TEST_F(PreprocessTest, FileName) {
     EXPECT_EQ("'<unknown location>'", pp("__FILE_NAME__"));
     EXPECT_TRUE(empty());
 }
+
+// ---- blank-line compaction start line (X1) ----
+
+// The string API (pp()/preprocess_text()) has no leading line marker, unlike
+// a jiepp command-line stream, so blank-line compaction must start counting
+// from the stream's own first line (1) instead of 0: a synthetic marker N
+// means "the next line is N + 1" (SPECIFICATION.md §9), which must equal
+// that line's __LINE__.
+TEST_F(PreprocessTest, BlankLineCompactionStartsAtFirstLine) {
+    EXPECT_EQ("(*{#:10}*)\nx 11;", pp(std::string(10, '\n') + "x __LINE__;"));      // before: (*{#:9}*)
+    EXPECT_EQ("a;\n(*{#:11}*)\nx 12;",
+              pp("a;" + std::string(11, '\n') + "x __LINE__;"));                    // before: (*{#:10}*)
+    EXPECT_TRUE(empty());
+}

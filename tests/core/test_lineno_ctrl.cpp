@@ -17,8 +17,8 @@ TEST_F(LinenoTest, IfDirective) {
             "if-true-branch",
             "{#if $\n$\n0$\n$\n+$\n$\n1$\n$\n}\n\n{#info}__LINE__\n\n+\n\n{#info}__LINE__;{#endif}",
             // 10 leading blank lines exceed the default 7-line compaction
-            // threshold; N = cur_before_run(0) + nl(10) - 1 = 9.
-            "(*{#:9}*)\n11\n\n+\n\n15;",
+            // threshold; N = cur_before_run(1) + nl(10) - 1 = 10.
+            "(*{#:10}*)\n11\n\n+\n\n15;",
             {
                 "<unknown location>:11.0: info: PP93: ''",
                 "<unknown location>:15.0: info: PP93: ''",
@@ -29,8 +29,8 @@ TEST_F(LinenoTest, IfDirective) {
             "if-else-branch",
             "{#if $\n$\n0$\n$\n+$\n$\n0$\n$\n}\n\n{#else}\n\n{#info}__LINE__\n\n+\n\n{#info}__LINE__;{#endif}",
             // 12 leading blank lines exceed the default 7-line compaction
-            // threshold; N = cur_before_run(0) + nl(12) - 1 = 11.
-            "(*{#:11}*)\n13\n\n+\n\n17;",
+            // threshold; N = cur_before_run(1) + nl(12) - 1 = 12.
+            "(*{#:12}*)\n13\n\n+\n\n17;",
             {
                 "<unknown location>:13.0: info: PP93: ''",
                 "<unknown location>:17.0: info: PP93: ''",

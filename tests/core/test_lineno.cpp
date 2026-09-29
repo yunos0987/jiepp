@@ -69,8 +69,10 @@ TEST_F(LinenoTest, DefinedOperator) {
         "defined-operator",
         "{#if $\n$\ndefined$\n$\n($\n$\na$\n$\n)$\n$\n}{#endif};{#info}__LINE__",
         // 10 leading blank lines exceed the default 7-line compaction
-        // threshold; N = cur_before_run(0) + nl(10) - 1 = 9.
-        "(*{#:9}*)\n;11",
+        // threshold; N = cur_before_run(1) + nl(10) - 1 = 10 (the string
+        // API starts counting at line 1, like the command line's leading
+        // marker does).
+        "(*{#:10}*)\n;11",
         {"<unknown location>:11.0: info: PP93: ''"},
         true,
     };
@@ -95,8 +97,8 @@ TEST_F(LinenoTest, Omacro) {
         "object-macro",
         "{#define A $\n$\na$\n$\n+$\n$\nb$\n$\n};A;{#info}__LINE__",
         // 8 leading blank lines exceed the default 7-line compaction
-        // threshold; N = cur_before_run(0) + nl(8) - 1 = 7.
-        "(*{#:7}*)\n;a+b;9",
+        // threshold; N = cur_before_run(1) + nl(8) - 1 = 8.
+        "(*{#:8}*)\n;a+b;9",
         {"<unknown location>:9.0: info: PP93: ''"},
         // U4: raw newlines fold to whitespace, so a plain-newline rewrite
         // of the '$\n$\n' joins here would produce "a + b" instead of the

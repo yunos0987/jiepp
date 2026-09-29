@@ -67,14 +67,15 @@ Token make_line_marker(LineNo lineno, std::string_view enc_file, bool standard) 
 }
 
 bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
-                          BlankLineMode mode, bool default_standard_style) {
+                          BlankLineMode mode, bool default_standard_style,
+                          LineNo first_lineno) {
     if (ots.empty())
         return false;
 
     std::vector<Token> out;
     out.reserve(ots.size());
 
-    LineNo      cur             = 0; // item a: wrapped after every advance, see wrap_lineno()
+    LineNo      cur             = wrap_lineno(first_lineno); // item a: wrapped after every advance, see wrap_lineno()
     bool        line_has_content = false;
     std::string enc_file;
     bool        standard        = default_standard_style;

@@ -32,8 +32,12 @@ enum class BlankLineMode { Markers, CollapseAll };
 // real marker in the stream has been observed (subsequent synthetic markers
 // use the style of the most recently observed real marker, per D2 in the
 // design plan). Returns true if the stream was modified.
+// `first_lineno` is the line number of the first line of `ots`, used only
+// until the first line marker in the stream (a jiepp command-line stream
+// always starts with one; the preprocess() string API does not).
 bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
-                          BlankLineMode mode, bool default_standard_style);
+                          BlankLineMode mode, bool default_standard_style,
+                          LineNo first_lineno = 0);
 
 // True for a preprocessor-injected line marker token: (*{#:N 'file'}*)
 // (annotated) or {#:N 'file'} (standard). User IEC pragmas with '#' are

@@ -219,11 +219,11 @@ d
 )
 ;{#info}__LINE__)",
             // trailing run: 10 blank lines exceed the default 7-line
-            // compaction threshold; N = cur_before_run(6) + nl(10) - 1 = 15.
+            // compaction threshold; N = cur_before_run(7) + nl(10) - 1 = 16.
             // U4: the embedded '*$\ny$' segment above would gain a space
             // ("* c") under plain-newline substitution; equivalence no
             // longer holds (see dollar-newline-in-body-middle above).
-            "\n\n\n\n\n;\na + b*c + d\n(*{#:15}*)\n;17",
+            "\n\n\n\n\n;\na + b*c + d\n(*{#:16}*)\n;17",
             {"<unknown location>:17.0: info: PP93: ''"},
             false,
         },
@@ -260,11 +260,11 @@ d
 )
 
 ;{#info}__LINE__)",
-            // leading run: 8 blank lines -> N = 0 + 8 - 1 = 7.
-            // trailing run: 20 blank lines -> N = cur_before_run(10) + nl(20) - 1 = 29.
+            // leading run: 8 blank lines -> N = 1 + 8 - 1 = 8.
+            // trailing run: 20 blank lines -> N = cur_before_run(11) + nl(20) - 1 = 30.
             // U4: same '*$\n$\ny$$' middle segment as above; equivalence no
             // longer holds.
-            "(*{#:7}*)\n;\n\na  +  b*c  +  d\n(*{#:29}*)\n;31",
+            "(*{#:8}*)\n;\n\na  +  b*c  +  d\n(*{#:30}*)\n;31",
             {"<unknown location>:31.0: info: PP93: ''"},
             false,
         },
