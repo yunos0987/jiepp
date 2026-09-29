@@ -80,13 +80,56 @@ std::optional<char> decode_directive_escape(char nc) {
     }
 }
 
+std::optional<char> decode_directive_only_escape(char nc) {
+    switch (nc) {
+    case '{': return '{';
+    case '}': return '}';
+    case ':': return ':';
+    case ' ': return ' ';
+    default: return std::nullopt;
+    }
+}
+
+void DirectiveLexState::feed(char c, bool raw, std::size_t off) {
+    const bool nl = (c == '\n' || c == '\r');
+    switch (state_) {
+    case State::Normal:
+        if (prev_ == '/' && c == '/') { state_ = State::Line; start_ = prev_off_; prev_ = 0; return; }
+        if ((prev_ == '/' || prev_ == '(') && c == '*') {
+            closer_ = (prev_ == '(') ? ')' : '/'; state_ = State::Block; star_ = false; prev_ = 0; return;
+        }
+        if (c == '\'' || c == '"') {
+            quote_ = c; raw_str_ = raw; esc_ = false; state_ = State::Str; prev_ = 0; return;
+        }
+        prev_ = c; prev_off_ = off; return;
+    case State::Str:                       // mirrors tokenize()'s string loop
+        if (esc_) { esc_ = false; return; } // '$'-escaped char
+        if (c == '$') { esc_ = true; return; }
+        if (c == quote_ || nl) state_ = State::Normal;
+        return;
+    case State::Line:                      // a decoded $n/$r/$0A/$0D ends it
+        if (nl) { state_ = State::Normal; prev_ = 0; }
+        return;
+    case State::Block:
+        if (star_ && c == closer_) { state_ = State::Normal; prev_ = 0; return; }
+        star_ = (c == '*');
+        return;
+    }
+}
+
 std::string decode_directive_text(std::string_view t, bool* has_invalid) {
     std::string r;
     r.reserve(t.size());
+    DirectiveLexState lex;
     std::size_t i = 0;
+    auto put = [&](char c, bool raw) {
+        r += c;
+        lex.feed(c, raw);
+    };
     // Keep the n raw characters of an invalid escape as they are.
     auto keep_invalid = [&](std::size_t n) {
-        r.append(t.substr(i, n));
+        for (std::size_t k = 0; k < n; ++k)
+            put(t[i + k], true);
         i += n;
         if (has_invalid)
             *has_invalid = true;
@@ -94,8 +137,28 @@ std::string decode_directive_text(std::string_view t, bool* has_invalid) {
     while (i < t.size()) {
         const char c = t[i];
         if (c != '$') {
-            r += c;
+            // A raw quote opens a raw string only if its literal closes
+            // within t; an unclosed one is decoded like the text around it.
+            put(c, !lex.opens_string(c) || string_literal_end(t, i) != std::string_view::npos);
             ++i;
+            continue;
+        }
+        if (lex.in_raw_string()) {
+            // An IEC 61131-3 string escape ("$'", "$n", "$$", "$41", ...)
+            // stays as written for the compiler; only "${" "$}" "$:" "$ "
+            // are decoded, since they cannot be written otherwise.
+            if (i + 1 < t.size()) {
+                if (auto decoded = decode_directive_only_escape(t[i + 1])) {
+                    put(*decoded, false);
+                } else {
+                    put('$', true);
+                    put(t[i + 1], true);
+                }
+                i += 2;
+            } else {
+                put('$', true);            // unterminated string; not ours to report
+                ++i;
+            }
             continue;
         }
         if (i + 1 >= t.size()) {   // trailing "$"
@@ -104,14 +167,14 @@ std::string decode_directive_text(std::string_view t, bool* has_invalid) {
         }
         const unsigned char nc = static_cast<unsigned char>(t[i + 1]);
         if (auto decoded = decode_directive_escape(static_cast<char>(nc))) {
-            r += *decoded;
+            put(*decoded, false);
             i += 2;
             continue;
         }
         if (is_hex_digit(nc) && i + 2 < t.size()
             && is_hex_digit(static_cast<unsigned char>(t[i + 2]))) {
-            r += static_cast<char>((hex_code(nc) << 4)
-                                   | hex_code(static_cast<unsigned char>(t[i + 2])));
+            put(static_cast<char>((hex_code(nc) << 4)
+                                  | hex_code(static_cast<unsigned char>(t[i + 2]))), false);
             i += 3;
             continue;
         }
@@ -127,6 +190,31 @@ std::string decode_directive_text(std::string_view t) {
     std::string r = decode_directive_text(t, &has_invalid);
     if (has_invalid)
         ISSUE(INVALID_ESCAPE_SEQUENCE, std::string(t));
+    return r;
+}
+
+std::size_t string_literal_end(std::string_view s, std::size_t pos) {
+    const char quote = s[pos];
+    for (std::size_t i = pos + 1; i < s.size(); ++i) {
+        if (s[i] == '\n' || s[i] == '\r')
+            break;
+        if (s[i] == '$') {
+            ++i;                       // skip the escaped character
+            if (i < s.size() && (s[i] == '\n' || s[i] == '\r'))
+                break;
+            continue;
+        }
+        if (s[i] == quote)
+            return i + 1;
+    }
+    return std::string_view::npos;
+}
+
+std::string decode_path_literal(std::string_view lit) {
+    bool has_invalid = false;
+    std::string r = decode_directive_text(lit.substr(1, lit.size() - 2), &has_invalid);
+    if (has_invalid)
+        ISSUE(INVALID_ESCAPE_SEQUENCE, std::string(lit));
     return r;
 }
 

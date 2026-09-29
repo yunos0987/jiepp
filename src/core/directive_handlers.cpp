@@ -23,15 +23,28 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// A path operand is '...' / "..." (a string literal, which the directive
+// decoding left with its IEC 61131-3 escapes as written -- SPEC §2 -- so
+// they are decoded here by decode_path_literal(), keeping the meaning
+// {#include 'a$$b.iec'} always had) or <...> (copied as is; its escapes
+// were decoded with the rest of the operand). The literal must be the
+// whole operand: 'a$' (the quote is escaped, so the literal never closes)
+// is not a path.
 bool strip_path(const std::string_view raw_path, std::string& path, bool& syspath_only) {
     auto p = Util::trim_view(raw_path);
-    if(p.size() >= 2) {
-        auto c0 = p.front(), c1 = p.back();
-        syspath_only = (c0 == '<') && (c1 == '>');
-        if ((c0 == '\'' && c1 == '\'') || (c0 == '"' && c1 == '"') || syspath_only) {
-            path = std::string(p.substr(1, p.size() - 2));
-            return true;
-        }
+    syspath_only = false;
+    if (p.size() < 2)
+        return false;
+    if (p.front() == '\'' || p.front() == '"') {
+        if (string_literal_end(p, 0) != p.size())
+            return false;
+        path = decode_path_literal(p);
+        return true;
+    }
+    if (p.front() == '<' && p.back() == '>') {
+        syspath_only = true;
+        path = std::string(p.substr(1, p.size() - 2));
+        return true;
     }
     return false;
 }

@@ -972,11 +972,12 @@ TEST_F(DirectiveTest, InvalidEscapeKeptLiterally) {
         EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
     }
     {
+        // Inside a string literal "$q" is an IEC 61131-3 string escape
+        // (valid or not is the compiler's business), kept as written
+        // without PP21 (U8, B').
         SCOPED_TRACE("{#define A 'a$qb'}A;");
         EXPECT_EQ("'a$qb';", pp("{#define A 'a$qb'}A;"));
-        auto cs = codes();
-        ASSERT_EQ(1u, cs.size());
-        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_TRUE(codes().empty());
     }
     {
         SCOPED_TRACE("{#define A x$4G y}A;");
@@ -1197,4 +1198,69 @@ TEST_F(DirectiveTest, InvalidEscapeReportedOncePerOperand) {
     auto cs = codes();
     ASSERT_EQ(1u, cs.size());
     EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+}
+
+// U8 (B'): IEC escapes inside a string literal in a directive operand are
+// kept as written, like gcc/clang keep "\'" and "\n" in a macro body.
+TEST_F(DirectiveTest, IecEscapesInDirectiveStringsKeptAsWritten) {
+    EXPECT_EQ(R"('it$'s';)", pp(R"({#define X 'it$'s'}X;)"));
+    EXPECT_EQ(R"('a$nb';)", pp(R"({#define X 'a$nb'}X;)"));
+    EXPECT_EQ(R"('a$$b', 'a$41b';)", pp(R"({#define X 'a$$b', 'a$41b'}X;)"));
+    EXPECT_EQ(R"("it's $"q$" $0041";)", pp(R"({#define X "it's $"q$" $0041"}X;)"));
+    EXPECT_EQ(R"('a}b{c:d e';)", pp(R"({#define X 'a$}b${c$:d$ e'}X;)"));
+    EXPECT_EQ("a\nb 'a$nb';", pp(R"({#define X a$nb 'a$nb'}X;)"));
+    EXPECT_EQ(R"(1 'it$'s' 1;)", pp(R"({#define F(a) a 'it$'s' a}F(1);)"));
+    EXPECT_EQ(R"('it$'s')", pp(R"({#token 'it$'s'})"));
+    EXPECT_EQ(R"('$27it$$$27s$27')", pp(R"({#string 'it$'s'})"));
+    EXPECT_EQ(R"("$27a$$nb$27")", pp(R"({#wstring 'a$nb'})"));
+    EXPECT_EQ(R"('a$qb';)", pp(R"({#define X 'a$qb'}X;)"));
+    EXPECT_TRUE(empty());
+    pp(R"({#warning 'can$'t'})");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find(R"('can$'t')")) << msgs[0];
+}
+
+// A string in a directive hides '//' from the '//'-at-raw-newline tracking
+// in read_pragma_body() exactly where tokenize() will.
+TEST_F(DirectiveTest, LineCommentTrackingFollowsRawStrings) {
+    EXPECT_EQ("\n'a$'b' +2;", pp("{#define B 'a$'b' // c\n+2}B;"));
+    EXPECT_EQ("\n'x$'//y' +2;", pp("{#define B 'x$'//y'\n+2}B;"));
+    EXPECT_EQ("\n'x$ny' +1;", pp("{#define B (* it's *) 'x$ny' // c\n+1}B;"));
+    EXPECT_TRUE(empty());
+}
+
+// Text written with escaped quotes -- the form -dM prints -- decodes as
+// before B': a quote from $' / $27 does not start a raw string.
+TEST_F(DirectiveTest, EscapedQuoteFormUnchanged) {
+    EXPECT_EQ(R"('it$'s';)", pp(R"({#define W $'it$$$'s$'}W;)"));
+    EXPECT_EQ("\n'a//b' +1;", pp("{#define B $'a//b$'\n+1}B;"));
+    EXPECT_EQ("\n'a' +1;", pp("{#define B $'a$' // c\n+1}B;"));
+    // An apostrophe that never closes is not a string literal.
+    EXPECT_EQ("don't\nstop;", pp("{#define X don't$nstop}X;"));
+    EXPECT_EQ("\ndon't // c +2;", pp("{#define B don't // c\n+2}B;"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, DumpMacrosRoundTripsRawStrings) {
+    Env env = setup();
+    pp(R"({#define X 'it$'s'}{#define Y 'a$nb' c$nd}{#define F(a) 'a$'b' a})", env);
+    std::ostringstream os;
+    dump_macros(env, os);
+    const std::string dumped = os.str();
+    EXPECT_NE(std::string::npos, dumped.find("{#define X $'it$$$'s$'}\n")) << dumped;
+    EXPECT_NE(std::string::npos, dumped.find("{#define Y $'a$$nb$' c$nd}\n")) << dumped;
+    EXPECT_NE(std::string::npos, dumped.find("{#define F(a) $'a$$$'b$' a}\n")) << dumped;
+    // What -dM printed reads back as the same definitions.
+    EXPECT_EQ("'it$'s' 'a$nb' c\nd 'a$'b' 1;",
+              pp(R"({#define X $'it$$$'s$'}{#define Y $'a$$nb$' c$nd})"
+                 R"({#define F(a) $'a$$$'b$' a}X Y F(1);)"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, RawStringRegressionWatchpoints) {
+    EXPECT_EQ(R"('it$'s';)", pp(R"({#define X 'it$'s'}{#define X 'it$'s'}X;)"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("[a[x,y][x,y]];", pp("{#define F(a) [a[x,y]]}F(a[x,y]);"));
+    EXPECT_TRUE(empty());
 }

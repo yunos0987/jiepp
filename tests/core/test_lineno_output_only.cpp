@@ -61,7 +61,9 @@ TEST_F(OutputOnlyLinesTest, AllNewlineEscapes) {
 }
 
 TEST_F(OutputOnlyLinesTest, StringLiteralAndDocCommentInBody) {
-    EXPECT_EQ("\n'a\nb';\n(*{#:2}*)\n3;", pp("{#define Z 'a$nb'}\nZ;\n__LINE__;"));       // before: 4
+    // Inside a string literal, "$n" is an IEC 61131-3 string escape kept as
+    // written (U8), not an output-only newline, so no line-marker resync.
+    EXPECT_EQ("\n'a$nb';\n3;", pp("{#define Z 'a$nb'}\nZ;\n__LINE__;"));
     EXPECT_EQ("\n(*!a\nb*);\n(*{#:2}*)\n3;", pp("{#define Z (*!a$nb*)}\nZ;\n__LINE__;"));  // before: 4
 }
 

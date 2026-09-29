@@ -17,6 +17,12 @@ in read_pragma_body() ever sees them), $41/$42 (hex A/B), and a $'...$' run
 enclosing a "//" that must stay inside LineCommentTracker's String state
 (lexer_pragma.cpp) -- i.e. not be mistaken for a comment start, the same
 string-vs-comment distinction tokenize() makes for ordinary source text.
+
+Also carries a raw-quoted string literal ('it$'s a$nb $$') so that
+DirectiveLexState's raw-string tracking (directive_parser.hpp) -- which
+keeps IEC 61131-3 string escapes as written inside '...'/"..." instead of
+decoding them -- is exercised at the same volume, not just the escapes
+that stay outside of quotes.
 """
 import io
 
@@ -31,6 +37,7 @@ def file(o: io.IOBase, n: int) -> None:
             "$" + "{" + "e$" + "}" + "f"
             " $'g//h$'"
             " $41$42"
+            " 'it$'s a$nb $$'"
             " // trailing comment " + str(i)
         )
         o.write("{#define E" + str(i) + " " + body + "}\n")

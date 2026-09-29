@@ -7,6 +7,7 @@
 
 #include "../constfold/constfold.hpp"
 #include "../loader/loader.hpp"
+#include "../loader/directive_parser.hpp"
 #include "../loader/lexer.hpp"
 #include "../macro/macro.hpp"
 #include "../util/text.hpp"
@@ -80,14 +81,16 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
         Loader::LoadType load_type;
         bool valid = false;
 
-        if (i < raw_cond.size() && raw_cond[i] == '"') {
-            // "path" form
-            ++i;
-            std::size_t end = raw_cond.find('"', i);
-            if (end != std::string::npos) {
-                path = raw_cond.substr(i, end - i);
+        if (i < raw_cond.size() && (raw_cond[i] == '"' || raw_cond[i] == '\'')) {
+            // "path" / 'path' form: a string literal, which the directive
+            // decoding left with its IEC escapes as written (SPEC §2), so
+            // find its end past "$'"-style escapes and decode it the way
+            // {#include} decodes its path (strip_path()).
+            std::size_t end = string_literal_end(raw_cond, i);
+            if (end != std::string_view::npos) {
+                path = decode_path_literal(std::string_view(raw_cond).substr(i, end - i));
                 load_type = Loader::LoadType::INCLUDE;
-                i = end + 1;
+                i = end;
                 valid = true;
             }
         } else if (i < raw_cond.size() && raw_cond[i] == '<') {
@@ -97,16 +100,6 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
             if (end != std::string::npos) {
                 path = raw_cond.substr(i, end - i);
                 load_type = Loader::LoadType::SINCLUDE;
-                i = end + 1;
-                valid = true;
-            }
-        } else if (i < raw_cond.size() && raw_cond[i] == '\'') {
-            // 'path' form (IEC string style)
-            ++i;
-            std::size_t end = raw_cond.find('\'', i);
-            if (end != std::string::npos) {
-                path = raw_cond.substr(i, end - i);
-                load_type = Loader::LoadType::INCLUDE;
                 i = end + 1;
                 valid = true;
             }

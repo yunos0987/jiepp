@@ -23,48 +23,30 @@ unsigned char pragma_hex_value(char c) {
 
 // Raw newlines are folded to spaces here, before parse_directive() decodes
 // '$' escapes and the handlers re-lex the text. To end a '//' comment at a
-// raw newline like C does, track -- over the *decoded* character stream --
-// whether the scan is inside a '//' comment, using the same string/comment
-// rules as tokenize() (lexer.cpp). A '{' inside a directive body never
-// opens a nested pragma here (a raw '{' always raises PP22 below and stays
-// a literal character; only the next '}' closes the directive), so unlike
-// tokenize() this has no separate pragma-opener sub-state.
-class LineCommentTracker {
-public:
-    // c: decoded char; off: body offset where its raw spelling starts.
-    void feed(char c, std::size_t off) {
-        switch (state_) {
-        case State::Normal:
-            if (prev_ == '/' && c == '/') { state_ = State::Line; start_ = prev_off_; prev_ = 0; return; }
-            if ((prev_ == '/' || prev_ == '(') && c == '*') {
-                closer_ = (prev_ == '(') ? ')' : '/'; state_ = State::Block; star_ = false; prev_ = 0; return;
-            }
-            if (c == '\'' || c == '"') { quote_ = c; esc_ = false; state_ = State::Str; prev_ = 0; return; }
-            prev_ = c; prev_off_ = off; return;
-        case State::Str:                       // mirrors tokenize()'s string loop
-            if (esc_) { esc_ = false; return; } // '$'-escaped char, incl. '$'+newline
-            if (c == '$') { esc_ = true; return; }
-            if (c == quote_ || is_nl_char(c)) state_ = State::Normal;
-            return;
-        case State::Line:                      // a decoded $n/$r/$0A/$0D ends it
-            if (is_nl_char(c)) { state_ = State::Normal; prev_ = 0; }
-            return;
-        case State::Block:
-            if (star_ && c == closer_) { state_ = State::Normal; prev_ = 0; return; }
-            star_ = (c == '*');
-            return;
+// raw newline like C does, read_pragma_body() tracks -- over the *decoded*
+// character stream, with DirectiveLexState (directive_parser.hpp), the same
+// state decode_directive_text() uses -- whether the scan is inside a '//'
+// comment.
+
+// Whether the string literal opened by the raw quote text[pos] in a
+// directive body closes before the directive does -- what
+// string_literal_end() (directive_parser.hpp) will find in the operand,
+// where raw newlines are spaces and a "$"+newline is gone. Decides whether
+// the literal is a raw string (see DirectiveLexState).
+bool directive_string_closes(const std::string& text, std::size_t pos) {
+    const char quote = text[pos];
+    for (std::size_t i = pos + 1; i < text.size(); ++i) {
+        if (text[i] == '$') {
+            ++i;                       // an escaped character, even '}'
+            continue;
         }
+        if (text[i] == '}')
+            return false;
+        if (text[i] == quote)
+            return true;
     }
-    bool in_line_comment() const { return state_ == State::Line; }
-    std::size_t line_comment_start() const { return start_; }
-    void end_line_comment() { state_ = State::Normal; prev_ = 0; }
-private:
-    enum class State { Normal, Str, Line, Block };
-    State state_ = State::Normal;
-    char prev_ = 0, quote_ = 0, closer_ = 0;
-    bool esc_ = false, star_ = false;
-    std::size_t prev_off_ = 0, start_ = 0;
-};
+    return false;
+}
 
 } // namespace
 
@@ -117,7 +99,7 @@ Token read_pragma_body(const std::string& text,
     // copy of body's content: they never suppress or reorder the
     // unconditional raw appends below, only decide what (if anything) lc
     // sees.
-    LineCommentTracker lc;
+    DirectiveLexState lc;
     int pending_hex = -1;
     std::size_t pending_hex_off = 0;
 
@@ -125,8 +107,8 @@ Token read_pragma_body(const std::string& text,
     // literally by decode_directive_text(), so lc must see '$' and X too.
     auto flush_pending_hex = [&] {
         if (pending_hex >= 0) {
-            lc.feed('$', pending_hex_off);
-            lc.feed(static_cast<char>(pending_hex), pending_hex_off + 1);
+            lc.feed('$', true, pending_hex_off);
+            lc.feed(static_cast<char>(pending_hex), true, pending_hex_off + 1);
             pending_hex = -1;
         }
     };
@@ -163,16 +145,28 @@ Token read_pragma_body(const std::string& text,
                 if (is_directive) {
                     std::size_t off = body.size();
                     flush_pending_hex();                 // "$X$..": "$X" was invalid
-                    if (is_pragma_hex_digit(nc)) {
+                    if (lc.in_raw_string()) {
+                        // Inside a string written with raw quotes,
+                        // decode_directive_text() decodes only "${" "$}"
+                        // "$:" "$ " and keeps any other "$X" (an IEC
+                        // string escape) as written, so lc sees both
+                        // characters, as tokenize() will.
+                        if (auto decoded = decode_directive_only_escape(nc)) {
+                            lc.feed(*decoded, false, off);
+                        } else {
+                            lc.feed('$', true, off);
+                            lc.feed(nc, true, off + 1);
+                        }
+                    } else if (is_pragma_hex_digit(nc)) {
                         pending_hex = static_cast<unsigned char>(nc);
                         pending_hex_off = off;
                     } else if (auto decoded = decode_directive_escape(nc)) {
-                        lc.feed(*decoded, off);
+                        lc.feed(*decoded, false, off);
                     } else {
                         // An invalid escape is kept literally by
                         // decode_directive_text(), so lc sees both chars.
-                        lc.feed('$', off);
-                        lc.feed(nc, off + 1);
+                        lc.feed('$', true, off);
+                        lc.feed(nc, true, off + 1);
                     }
                 }
                 body += c;
@@ -197,7 +191,7 @@ Token read_pragma_body(const std::string& text,
             if (body.empty() || !is_ws_char(body.back())) {
                 body += ' ';
                 if (is_directive)
-                    lc.feed(' ', body.size() - 1); // folded ws must reset "/" lookbehind
+                    lc.feed(' ', true, body.size() - 1); // folded ws must reset "/" lookbehind
             }
             consume_one_nl(text, pos);
             ++lineno;
@@ -245,11 +239,11 @@ Token read_pragma_body(const std::string& text,
             if (pending_hex >= 0 && is_pragma_hex_digit(c)) {
                 char decoded = static_cast<char>(
                     (pragma_hex_value(static_cast<char>(pending_hex)) << 4) | pragma_hex_value(c));
-                lc.feed(decoded, pending_hex_off);
+                lc.feed(decoded, false, pending_hex_off);
                 pending_hex = -1;
             } else {
                 flush_pending_hex();
-                lc.feed(c, body.size());
+                lc.feed(c, !lc.opens_string(c) || directive_string_closes(text, pos), body.size());
             }
         }
         body += c;
