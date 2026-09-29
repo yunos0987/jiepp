@@ -728,3 +728,189 @@ TEST_F(DirectiveTest, DdModeEchoesNamedVariadicDefine) {
     EXPECT_NE(std::string::npos, output.find("{#define F(args ...) x}")) << "output:\n" << output;
     EXPECT_TRUE(empty());
 }
+
+// An invalid '$' escape in a directive operand (e.g. "$q") is kept literally
+// instead of emptying the operand, and processing of the directive
+// continues normally after the single PP21 -- see decode_directive_text()
+// (directive_parser.cpp). ContinueMode is needed because PP21 is ERROR and
+// would otherwise stop processing at the first row.
+TEST_F(DirectiveTest, InvalidEscapeKeptLiterally) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("{#define A x$q y}A;");
+        EXPECT_EQ("x$q y;", pp("{#define A x$q y}A;"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    }
+    {
+        SCOPED_TRACE("{#define A 'a$qb'}A;");
+        EXPECT_EQ("'a$qb';", pp("{#define A 'a$qb'}A;"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    }
+    {
+        SCOPED_TRACE("{#define A x$4G y}A;");
+        EXPECT_EQ("x$4G y;", pp("{#define A x$4G y}A;"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    }
+    {
+        // The '$' breaks the macro name at "A"; the rest ("$q 1") becomes
+        // part of the macro body, and MISSING_WHITESPACE_AFTER_MACRO_NAME
+        // (PP38) also fires because "A" is not followed by whitespace.
+        SCOPED_TRACE("{#define A$q 1}A;");
+        EXPECT_EQ("$q 1;", pp("{#define A$q 1}A;"));
+        auto cs = codes();
+        ASSERT_EQ(2u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_EQ(Issue::Code::MISSING_WHITESPACE_AFTER_MACRO_NAME, cs[1]);
+    }
+    {
+        // Once-per-directive gating for PP21 is a later change; until then,
+        // the unmatched "$q" in the operand also causes an
+        // EXTRA_TOKENS_AT_END_OF_DIRECTIVE (PP49) warning here.
+        SCOPED_TRACE("{#define A 1}{#ifdef A$q}yes;{#endif}");
+        EXPECT_EQ("yes;", pp("{#define A 1}{#ifdef A$q}yes;{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(2u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, cs[1]);
+    }
+    {
+        SCOPED_TRACE("{#define A 1}{#undef A$q}A;");
+        EXPECT_EQ("A;", pp("{#define A 1}{#undef A$q}A;"));
+        auto cs = codes();
+        ASSERT_EQ(2u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, cs[1]);
+    }
+    {
+        SCOPED_TRACE("{#error x$q}");
+        pp("{#error x$q}");
+        auto msgs = messages();
+        ASSERT_EQ(2u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_EQ(Issue::Code::ERROR_MESSAGE, PlainTextMessage::parse_code(msgs[1]));
+        EXPECT_NE(std::string::npos, msgs[1].find("x$q")) << msgs[1];
+    }
+    {
+        SCOPED_TRACE("{#warning x$q y}");
+        pp("{#warning x$q y}");
+        auto msgs = messages();
+        ASSERT_EQ(2u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_EQ(Issue::Code::WARNING_MESSAGE, PlainTextMessage::parse_code(msgs[1]));
+        EXPECT_NE(std::string::npos, msgs[1].find("x$q y")) << msgs[1];
+    }
+    {
+        SCOPED_TRACE("{#string a$qb}");
+        EXPECT_EQ("'a$$qb'", pp("{#string a$qb}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    }
+    {
+        SCOPED_TRACE("{#wstring a$qb}");
+        EXPECT_EQ("\"a$$qb\"", pp("{#wstring a$qb}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    }
+    {
+        SCOPED_TRACE("{#token a$qb}c;");
+        EXPECT_EQ("a$qbc;", pp("{#token a$qb}c;"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    }
+    {
+        SCOPED_TRACE("{#line 10 'f$q.iec'}__FILE__;");
+        EXPECT_EQ("(*{#:9 'f$$q.iec'}*)'f$$q.iec';",
+                   pp("{#line 10 'f$q.iec'}__FILE__;"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    }
+    {
+        SCOPED_TRACE("{#line 10$q}");
+        pp("{#line 10$q}");
+        auto cs = codes();
+        ASSERT_EQ(2u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_EQ(Issue::Code::INVALID_SETLINE_OPERAND, cs[1]);
+    }
+    {
+        SCOPED_TRACE("{#include 'no_such$q.iec'}");
+        pp("{#include 'no_such$q.iec'}");
+        auto cs = codes();
+        ASSERT_EQ(2u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_EQ(Issue::Code::FILE_NOT_FOUND, cs[1]);
+    }
+    {
+        SCOPED_TRACE("{#nop x$q}ok;");
+        EXPECT_EQ("ok;", pp("{#nop x$q}ok;"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    }
+    {
+        SCOPED_TRACE("{#def$qine A 1}A;");
+        EXPECT_EQ("A;", pp("{#def$qine A 1}A;"));
+        auto cs = codes();
+        ASSERT_EQ(2u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_EQ(Issue::Code::INVALID_DIRECTIVE_NAME, cs[1]);
+    }
+    {
+        // Post-UD4, a syntax-error {#if} expression is false, so the group
+        // stays inactive and "yes;" is not printed; PP21 is still the first
+        // diagnostic since decoding the operand happens before evaluation.
+        SCOPED_TRACE("{#if 1$q}yes;{#endif}");
+        EXPECT_EQ("", pp("{#if 1$q}yes;{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(3u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+    }
+    {
+        // {#ignore PP21} is process-wide for the rest of the input (like
+        // every other {#ignore}), so this case runs last -- otherwise it
+        // would silence PP21 for the rows above too, since Issue's ignore
+        // set is not scoped per pp() call.
+        SCOPED_TRACE("{#ignore PP21}{#define A x$q y}A;");
+        EXPECT_EQ("x$q y;", pp("{#ignore PP21}{#define A x$q y}A;"));
+        EXPECT_TRUE(empty());
+    }
+}
+
+// A trailing invalid escape inside what would otherwise look like a '//'
+// comment must not make lexer_pragma.cpp's LineCommentTracker treat the
+// comment as still open: the tracker must see the raw '$' and the escape
+// character too, not just the characters decode_directive_text() would have
+// decoded. Before this fix, "$q"/"$4" (an unterminated hex escape) fed
+// nothing to the tracker, so the '/' immediately before and the '/' right
+// after "$q"/"$4" looked adjacent and started a real '//' comment that
+// swallowed the rest of the line, including the raw newline used to
+// terminate {#define}'s body.
+TEST_F(DirectiveTest, InvalidEscapeDoesNotFakeLineComment) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("{#define B x /$q/ y\\n+2}B;");
+        const std::string output = pp("{#define B x /$q/ y\n+2}B;");
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_NE(std::string::npos, output.find("x /$q/ y +2;")) << "output:\n" << output;
+    }
+    {
+        SCOPED_TRACE("{#define B x /$4/ y\\n+2}B;");
+        const std::string output = pp("{#define B x /$4/ y\n+2}B;");
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_NE(std::string::npos, output.find("x /$4/ y +2;")) << "output:\n" << output;
+    }
+}

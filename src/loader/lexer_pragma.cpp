@@ -108,15 +108,28 @@ Token read_pragma_body(const std::string& text,
     // the comment out of body before it is folded to whitespace below,
     // ending it at the newline the way C ends a '//' comment at end of
     // line. pending_hex/pending_hex_off hold the first hex digit of a
-    // "$XX" escape (mirrors decode_directive_text's own mode==2 state)
-    // between the two ordinary-char iterations that see its two digits, so
-    // the decoded byte can be fed to lc once both are known. Neither is a
-    // second copy of body's content: they never suppress or reorder the
+    // "$XX" escape (mirrors decode_directive_text()'s own lookahead for a
+    // second hex digit) between the two ordinary-char iterations that see
+    // its two digits, so the decoded byte can be fed to lc once both are
+    // known -- and flush_pending_hex() feeds the raw "$X" to lc instead
+    // when the second digit never comes, since decode_directive_text() then
+    // keeps "$X" literally rather than decoding it. Neither is a second
+    // copy of body's content: they never suppress or reorder the
     // unconditional raw appends below, only decide what (if anything) lc
     // sees.
     LineCommentTracker lc;
     int pending_hex = -1;
     std::size_t pending_hex_off = 0;
+
+    // A "$X" that turns out not to be a two-digit hex escape is kept
+    // literally by decode_directive_text(), so lc must see '$' and X too.
+    auto flush_pending_hex = [&] {
+        if (pending_hex >= 0) {
+            lc.feed('$', pending_hex_off);
+            lc.feed(static_cast<char>(pending_hex), pending_hex_off + 1);
+            pending_hex = -1;
+        }
+    };
 
     while (pos < len) {
         char c = text[pos];
@@ -148,15 +161,17 @@ Token read_pragma_body(const std::string& text,
             default:
                 if (is_directive) {
                     std::size_t off = body.size();
+                    flush_pending_hex();                 // "$X$..": "$X" was invalid
                     if (is_pragma_hex_digit(nc)) {
                         pending_hex = static_cast<unsigned char>(nc);
                         pending_hex_off = off;
+                    } else if (auto decoded = decode_directive_escape(nc)) {
+                        lc.feed(*decoded, off);
                     } else {
-                        pending_hex = -1;
-                        if (auto decoded = decode_directive_escape(nc))
-                            lc.feed(*decoded, off);
-                        // an invalid escape feeds nothing; decode_directive_text()
-                        // reports it later (PP21)
+                        // An invalid escape is kept literally by
+                        // decode_directive_text(), so lc sees both chars.
+                        lc.feed('$', off);
+                        lc.feed(nc, off + 1);
                     }
                 }
                 body += c;
@@ -169,7 +184,7 @@ Token read_pragma_body(const std::string& text,
         // Actual newline
         if (is_nl_char(c)) {
             if (is_directive) {
-                pending_hex = -1;
+                flush_pending_hex();
                 if (lc.in_line_comment()) {
                     // Like C, a '//' comment ends at the raw newline; drop it
                     // so it cannot swallow the rest of the directive once the
@@ -226,16 +241,13 @@ Token read_pragma_body(const std::string& text,
         }
 
         if (is_directive) {
-            if (pending_hex >= 0) {
-                if (is_pragma_hex_digit(c)) {
-                    char decoded = static_cast<char>(
-                        (pragma_hex_value(static_cast<char>(pending_hex)) << 4) | pragma_hex_value(c));
-                    lc.feed(decoded, pending_hex_off);
-                } else {
-                    lc.feed(c, body.size());
-                }
+            if (pending_hex >= 0 && is_pragma_hex_digit(c)) {
+                char decoded = static_cast<char>(
+                    (pragma_hex_value(static_cast<char>(pending_hex)) << 4) | pragma_hex_value(c));
+                lc.feed(decoded, pending_hex_off);
                 pending_hex = -1;
             } else {
+                flush_pending_hex();
                 lc.feed(c, body.size());
             }
         }

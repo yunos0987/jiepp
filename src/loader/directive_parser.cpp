@@ -55,50 +55,53 @@ std::optional<char> decode_directive_escape(char nc) {
     }
 }
 
-std::string decode_directive_text(std::string_view t) {
+std::string decode_directive_text(std::string_view t, bool* has_invalid) {
     std::string r;
     r.reserve(t.size());
-
-    int mode = 0;
-    unsigned char hi = 0;
-
-    for (unsigned char c : t) {
-        if (mode == 0) {
-            if (c == '$')
-                mode = 1;
-            else
-                r += static_cast<char>(c);
+    std::size_t i = 0;
+    // Keep the n raw characters of an invalid escape as they are.
+    auto keep_invalid = [&](std::size_t n) {
+        r.append(t.substr(i, n));
+        i += n;
+        if (has_invalid)
+            *has_invalid = true;
+    };
+    while (i < t.size()) {
+        const char c = t[i];
+        if (c != '$') {
+            r += c;
+            ++i;
             continue;
         }
-
-        if (mode == 1) {
-            if (auto decoded = decode_directive_escape(static_cast<char>(c))) {
-                r += *decoded;
-                mode = 0;
-                continue;
-            }
-            if (is_hex_digit(c)) {
-                hi = c;
-                mode = 2;
-                continue;
-            }
-            ISSUE(INVALID_ESCAPE_SEQUENCE, std::string(t));
-            return "";
+        if (i + 1 >= t.size()) {   // trailing "$"
+            keep_invalid(1);
+            continue;
         }
-
-        if (!is_hex_digit(c)) {
-            ISSUE(INVALID_ESCAPE_SEQUENCE, std::string(t));
-            return "";
+        const unsigned char nc = static_cast<unsigned char>(t[i + 1]);
+        if (auto decoded = decode_directive_escape(static_cast<char>(nc))) {
+            r += *decoded;
+            i += 2;
+            continue;
         }
-        r += static_cast<char>((hex_code(hi) << 4) | hex_code(c));
-        mode = 0;
+        if (is_hex_digit(nc) && i + 2 < t.size()
+            && is_hex_digit(static_cast<unsigned char>(t[i + 2]))) {
+            r += static_cast<char>((hex_code(nc) << 4)
+                                   | hex_code(static_cast<unsigned char>(t[i + 2])));
+            i += 3;
+            continue;
+        }
+        // "$q", or "$X" without a second hex digit: keep both characters;
+        // whatever follows (possibly another '$') is decoded afresh.
+        keep_invalid(2);
     }
+    return r;
+}
 
-    if (mode != 0) {
+std::string decode_directive_text(std::string_view t) {
+    bool has_invalid = false;
+    std::string r = decode_directive_text(t, &has_invalid);
+    if (has_invalid)
         ISSUE(INVALID_ESCAPE_SEQUENCE, std::string(t));
-        return "";
-    }
-
     return r;
 }
 

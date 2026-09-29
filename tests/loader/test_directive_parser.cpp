@@ -142,14 +142,29 @@ TEST_F(DirectiveParserTest, DecodeTextAllEscapes) {
 }
 
 TEST_F(DirectiveParserTest, DecodeTextInvalidEscapes) {
-    // Make INVALID_ESCAPE_SEQUENCE continuable so the returned value (an
-    // empty string) can be observed in addition to the diagnostic code.
+    // An invalid escape is kept literally, and PP21 is raised once per
+    // decoded text however many invalid escapes it has.
     Issue::remove_blocking(Issue::Code::INVALID_ESCAPE_SEQUENCE);
-    const char* cases[] = { "$x", "$4", "$4G", "$" };
-    for (const auto* input : cases) {
-        EXPECT_EQ("", decode_directive_text(input)) << input;
-        EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, code()) << input;
+    const std::pair<const char*, const char*> cases[] = {
+        {"$x", "$x"}, {"$4", "$4"}, {"$4G", "$4G"}, {"$", "$"},
+        {"a$qb$qc", "a$qb$qc"}, {"$4$n", "$4\n"}, {"$4$$", "$4$"},
+        {"$4$41", "$4A"}, {"x$q$3a", "x$q:"},
+    };
+    for (const auto& [input, expected] : cases) {
+        EXPECT_EQ(expected, decode_directive_text(input)) << input;
+        EXPECT_EQ(std::vector<Issue::Code>{Issue::Code::INVALID_ESCAPE_SEQUENCE}, codes()) << input;
     }
+}
+
+TEST_F(DirectiveParserTest, DecodeTextFlagOverload) {
+    // The 2-argument overload never raises a diagnostic; it just reports
+    // whether an invalid escape was kept via *has_invalid.
+    bool bad = false;
+    EXPECT_EQ("a$qb", decode_directive_text("a$qb", &bad));
+    EXPECT_TRUE(bad);
+    bad = false;
+    EXPECT_EQ("a:b", decode_directive_text("a$:b", &bad));
+    EXPECT_FALSE(bad);
     EXPECT_TRUE(empty());
 }
 

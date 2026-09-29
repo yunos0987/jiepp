@@ -14,7 +14,18 @@
 // to track '//' comments over the decoded character stream.
 std::optional<char> decode_directive_escape(char nc);
 
-// Decode $-escape sequences in directive text.
+// Decode $-escape sequences in directive text. An invalid escape is kept
+// literally: "$" + a character that is neither a known escape nor a hex
+// digit stays as those two characters ("$q" -> "$q"); "$X" (X a hex digit)
+// not followed by a second hex digit stays "$X" and decoding resumes at the
+// next character ("$4G" -> "$4G", "$4$n" -> "$4" + LF); a trailing "$" or
+// "$X" stays as is. No diagnostic is raised here; *has_invalid (when
+// non-null) is set to true if any escape was kept.
+std::string decode_directive_text(std::string_view t, bool* has_invalid);
+
+// As above, but raises INVALID_ESCAPE_SEQUENCE (PP21) once, with the raw
+// text `t`, when `t` contains an invalid escape; then (if PP21 did not
+// throw) returns the decoded text with the escape kept literally.
 std::string decode_directive_text(std::string_view t);
 
 // Encode special characters to $-escape sequences.
