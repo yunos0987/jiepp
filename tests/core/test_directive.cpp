@@ -825,6 +825,35 @@ TEST_F(DirectiveTest, LineCommentInTokenDirective) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(DirectiveTest, LineCommentFromDirectiveBecomesBlockComment) {
+    // U7: a '//' comment that ends up in the output with no newline after it
+    // (from a directive operand spliced into the output, or a macro body)
+    // is rewritten as a block comment so it does not swallow the rest of
+    // the output line, like gcc/clang -CC.
+    EXPECT_EQ("a /* c*/ b;", pp("{#token a // c} b;"));
+    EXPECT_TRUE(empty());
+    // A document comment ("//!") becomes "/*!...*/", the same way.
+    EXPECT_EQ("a /*! d*/ b;", pp("{#define X a //! d}X b;"));
+    EXPECT_TRUE(empty());
+
+    {
+        Env env = setup();
+        env.set_remove_comments(true);
+        // A document comment survives -nC (it is a token, not a comment)
+        // and is still rewritten to a block comment.
+        EXPECT_EQ("a /*! d*/ b;", pp("{#token a //! d} b;", env));
+        EXPECT_TRUE(empty());
+    }
+    {
+        Env env = setup();
+        env.set_remove_comments(true);
+        // -nC removes an ordinary '//' comment entirely (whitespace), so
+        // there is nothing left to rewrite.
+        EXPECT_EQ("a   b;", pp("{#token a // c} b;", env));
+        EXPECT_TRUE(empty());
+    }
+}
+
 TEST_F(DirectiveTest, LineCommentInDdModeEcho) {
     // B7: -dD echoes the normalized body -- the comment is gone, not just
     // hidden by the macro's own expansion.

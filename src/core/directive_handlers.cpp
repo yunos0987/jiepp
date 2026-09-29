@@ -36,6 +36,23 @@ bool strip_path(const std::string_view raw_path, std::string& path, bool& syspat
     return false;
 }
 
+// A '//' comment from a directive operand has no newline after it once it
+// is spliced into the output ({#token}, a macro body), so it would comment
+// out the rest of the output line ("{#token a // c} b;" gave "a // c b;").
+// Rewrite it as a block comment, like gcc/clang -CC do for a '//' comment in
+// a macro expansion: "//x" -> "/*x*/", "//!x" -> "/*!x*/". The text is kept
+// as is, like clang (a "*/" inside x ends the block comment early). A '//'
+// comment that already ends with its newline (num_of_lines != 0, from a
+// $n/$r escape) cannot swallow anything and is kept.
+void line_comments_to_block_comments(std::vector<Token>& ts) {
+    for (auto& t : ts) {
+        if ((t.type != Token::C && t.type != Token::DOCUMENT) || t.num_of_lines != 0 ||
+            t.text.compare(0, 2, "//") != 0)
+            continue;
+        t.text = "/*" + t.text.substr(2) + "*/";
+    }
+}
+
 // item a: the shared upper bound for both {#line}/{#set_line}/{#set-line}
 // and the marker form {#:N} -- 2^32 - 1, matching gcc/clang's unsigned
 // 32-bit line counter. A value above this is PP41 (clang; gcc instead
@@ -268,6 +285,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     while (i < ts.size() && (ts[i].type & Token::MASK_WS))
         ++i;
     std::vector<Token> body(ts.begin() + i, ts.end());
+    line_comments_to_block_comments(body);
 
     // C6/U1: '@@' (GLUE) at either end of the replacement list has nothing
     // to paste with, like gcc/clang ("'##' cannot appear at either end of
@@ -346,6 +364,7 @@ bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_n
 
 void handle_tokenize(const std::string& raw_arg, Env& env, std::vector<Token>& ots) {
     auto ts = iec3_tokens_from_string(raw_arg, env.get_remove_comments());
+    line_comments_to_block_comments(ts);
     expand(ts, ots, env);
 }
 
