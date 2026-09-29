@@ -471,8 +471,28 @@ TEST_F(DirectiveTest, NewlineInStringAndMessageDirectives) {
     EXPECT_EQ("'a b'\n", pp("{#string a\nb}"));
     EXPECT_TRUE(empty());
 
+    // A raw newline typed directly in the directive is folded to one space
+    // by the lexer, like in any multi-line directive: one message, with a
+    // real space where the newline was.
     EXPECT_EQ("\n", pp("{#warning a\nb}"));
-    EXPECT_EQ(Issue::Code::WARNING_MESSAGE, code());
+    {
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::WARNING_MESSAGE, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("'a b'")) << msgs[0];
+    }
+
+    // $n decodes to a real line break and is printed as one: the message
+    // itself now spans two physical lines, so messages() (which splits on
+    // std::getline) sees two entries.
+    pp("{#warning a$nb}");
+    {
+        auto msgs = messages();
+        ASSERT_EQ(2u, msgs.size());
+        EXPECT_EQ(Issue::Code::WARNING_MESSAGE, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("'a")) << msgs[0];
+        EXPECT_NE(std::string::npos, msgs[1].find("b'")) << msgs[1];
+    }
 
     EXPECT_THROW(pp("{#error a\nb}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::ERROR_MESSAGE, code());

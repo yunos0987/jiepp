@@ -499,11 +499,11 @@ void handle_include(const std::string& raw_arg,
 
 void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
     // Unlike the operand diagnostics above, this one is *not* re-escaped.
-    // {#error}/{#warning}/{#info}/{#severe} print the user's own message
-    // verbatim -- a raw newline (whether typed directly or via a $n/$r
-    // escape) is expected to stay a real line break here, per
-    // NewlineInStringAndMessageDirectives (test_directive.cpp), which
-    // already asserts this for a directly-typed newline.
+    // {#error}/{#warning}/{#info}/{#severe} print the user's message
+    // verbatim. A newline typed directly in the directive has already been
+    // folded into one space by the lexer (read_pragma_body()), like in any
+    // multi-line directive; a $n/$r escape decodes to a real line break and
+    // is printed as one. NewlineInStringAndMessageDirectives checks both.
     std::string msg = preprocess_text(raw_arg, env);
 #ifdef JIEPP_SANDBOX
     // Sandbox: strip control characters to prevent log injection
