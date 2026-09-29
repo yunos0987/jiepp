@@ -89,7 +89,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 `main.cpp` は `main()` 本体に加え次を担う。
 
-- スタック確保: 既定 8 MiB（clang の DesiredStackSize と同じ）、`--recursion-limit N` で N × 8 KiB（Windows では最小 1 MiB）。Windows は `CreateThread(..., STACK_SIZE_PARAM_IS_A_RESERVATION)` で予約したワーカースレッドで `jiepp_command()` を実行する。POSIX は `setrlimit(RLIMIT_STACK, ...)` でソフト上限だけを変えてから直接呼ぶ（指定なしのときは 8 MiB 未満の場合だけ引き上げる）
+- スタック確保: 既定 8 MiB（clang の DesiredStackSize と同じ）、`--recursion-limit N` で N × 8 KiB（最小 1 MiB）。Windows は `CreateThread(..., STACK_SIZE_PARAM_IS_A_RESERVATION)` で予約したワーカースレッドで `jiepp_command()` を実行する。POSIX は `setrlimit(RLIMIT_STACK, ...)` でソフト上限だけを変えてから直接呼ぶ（指定なしのときは 8 MiB 未満の場合だけ引き上げる）
 - Windows の標準出力バイナリモード化 (`_setmode(_fileno(stdout), _O_BINARY)`)。CRT 既定のテキストモード（`\n`→`\r\n`）を無効化し、リダイレクト出力を `-o FILE`（バイナリで開く）と一致させる
 - 最上位の例外処理: `Issue::Exception` は診断済みのため黙って終了コード 1、他の `std::exception`/`catch (...)` は `jiepp: error: PP01: ...` を出して終了コード 1。ワーカースレッド関数 `jiepp_thread_func` も同じ 3 段の catch を持つ（スレッド境界を越えて C++ 例外を伝播できないため）
 

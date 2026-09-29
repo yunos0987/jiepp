@@ -27,14 +27,14 @@ namespace {
 // measured at ~2 KiB (Release) and ~6.4 KiB (Debug).
 constexpr std::size_t STACK_BYTES_PER_RECURSION_UNIT = 8192;
 constexpr int         MAX_RECURSION_LIMIT = 65536;                 // 512 MiB
-#ifdef _WIN32
-// Floor for --recursion-limit on Windows, so a small N does not newly shrink
-// the stack: a CreateThread() commit size below the executable's 1 MiB
-// reserve had no effect, so Windows never ran on less than 1 MiB before this
-// floor existed. POSIX has no such floor -- an explicit --recursion-limit N
-// there keeps meaning exactly N x 8 KiB, like before.
+// Floor for --recursion-limit on every OS, so a small N does not newly
+// shrink the stack below what either OS ever ran on before this floor
+// existed: on Windows, a CreateThread() commit size below the executable's
+// 1 MiB reserve had no effect, so Windows never ran on less than 1 MiB; on
+// POSIX, N below 128 (1 MiB / 8 KiB) sets a soft RLIMIT_STACK too small for
+// even shallow nesting (N=16 used to set a 128 KiB stack and segfault around
+// 128 levels of nested function-macro expansion).
 constexpr std::size_t MIN_STACK_BYTES     = std::size_t{1} << 20;  // 1 MiB
-#endif
 // Stack used when --recursion-limit is absent, like clang's DesiredStackSize
 // (clang/include/clang/Basic/Stack.h).
 constexpr std::size_t DEFAULT_STACK_BYTES = std::size_t{8} << 20;  // 8 MiB
@@ -43,11 +43,7 @@ std::size_t requested_stack_bytes(const JieppOptions& opts) {
     if (!opts.recursion_limit)
         return DEFAULT_STACK_BYTES;
     const std::size_t bytes = static_cast<std::size_t>(*opts.recursion_limit) * STACK_BYTES_PER_RECURSION_UNIT;
-#ifdef _WIN32
     return std::max(bytes, MIN_STACK_BYTES);
-#else
-    return bytes;
-#endif
 }
 
 #ifndef _WIN32
@@ -171,8 +167,8 @@ int main(int argc, char* argv[]) {
         // *reserved* at stack_bytes (STACK_SIZE_PARAM_IS_A_RESERVATION);
         // pages are committed on demand. Without the flag the size is a
         // commit size: it charges memory up front, and a value below the
-        // executable's 1 MiB default reserve has no effect (why Windows
-        // additionally floors requested_stack_bytes() at 1 MiB).
+        // executable's 1 MiB default reserve has no effect (one reason
+        // requested_stack_bytes() floors at 1 MiB).
         const std::size_t stack_bytes = requested_stack_bytes(opts);
         JieppThreadArgs args{&opts, 1, stack_bytes};
         HANDLE thread = CreateThread(NULL, stack_bytes, jiepp_thread_func, &args,
@@ -198,7 +194,8 @@ int main(int argc, char* argv[]) {
         if (opts.recursion_limit) {
             // Explicit --recursion-limit: set the soft limit to exactly
             // requested_stack_bytes() (it may lower it), like before --
-            // POSIX has no 1 MiB floor (unlike Windows above).
+            // requested_stack_bytes() also floors it at 1 MiB, same as
+            // Windows above.
             const std::size_t stack_bytes = requested_stack_bytes(opts);
             struct rlimit rl;
             if (getrlimit(RLIMIT_STACK, &rl) != 0) {

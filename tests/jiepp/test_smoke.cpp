@@ -502,3 +502,21 @@ TEST_F(SmokeTest, IgnoredPP60ReportsPP63NotCrash) {
         EXPECT_NE(r.err.find("PP63"), std::string::npos) << "stderr: " << r.err;
     }
 }
+
+// requested_stack_bytes() floors --recursion-limit at 1 MiB on every OS, not
+// only Windows: --recursion-limit 16 alone requests 16 x 8 KiB = 128 KiB,
+// smaller than the PP63 guard's own 256 KiB headroom (util/stack_guard.hpp).
+// Before this floor existed, that made --recursion-limit 16 on POSIX report
+// PP63 immediately at expansion depth 0, before any macro nesting at all.
+// With the floor, 128 KiB is silently raised to 1 MiB and a moderately
+// nested program completes normally, on every OS.
+TEST_F(SmokeTest, SmallRecursionLimitHasOneMiBFloor) {
+    constexpr int kDepth = 100;
+    fs::path input = tmp_dir_ / "nested_fmacro_small_recursion_limit.iec";
+    write_file(input, nested_macro_source(kDepth));
+
+    auto r = run("--recursion-limit 16 --max-expansion-depth 1000 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_TRUE(output_has_line(r.out, nested_macro_expected_line(kDepth)))
+        << "expected line not found\nstdout: " << r.out;
+}
