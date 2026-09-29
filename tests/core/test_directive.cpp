@@ -914,3 +914,18 @@ TEST_F(DirectiveTest, InvalidEscapeDoesNotFakeLineComment) {
         EXPECT_NE(std::string::npos, output.find("x /$4/ y +2;")) << "output:\n" << output;
     }
 }
+
+// A pending "$X" (the first hex digit of a "$XX" escape) must survive a
+// "$"+newline line continuation, the same way it survives an ordinary
+// character: the continuation adds nothing to body, so "$X" still pairs
+// with whatever character follows it. Before this fix, the continuation
+// reset the pending state, so "$2" followed by "$<newline>F" was seen by
+// the LineCommentTracker as never completing its hex pair -- here "$2F"
+// decodes to 0x2F ('/'), so with the '/' just before it this opens a real
+// '//' comment through "F y" that is dropped at the next raw newline,
+// leaving "+2" as the rest of the directive body.
+TEST_F(DirectiveTest, PendingHexEscapeSurvivesLineContinuation) {
+    Issue::ContinueMode guard({});
+    const std::string output = pp("{#define C x /$2$\nF y\n+2}C;");
+    EXPECT_NE(std::string::npos, output.find("x +2;")) << "output:\n" << output;
+}

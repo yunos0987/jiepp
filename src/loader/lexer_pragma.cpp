@@ -145,9 +145,11 @@ Token read_pragma_body(const std::string& text,
                 // '$'+newline (line continuation) still joins with nothing;
                 // inside a '//' comment it extends the comment to the next
                 // raw newline (clang: '\'+newline continues a '//'
-                // comment), so lc sees nothing here.
-                if (is_directive)
-                    pending_hex = -1;
+                // comment), so lc sees nothing here. A pending "$X" (the
+                // first digit of a "$XX" hex escape) is left as is, not
+                // flushed: the continuation adds nothing to body, so "$X"
+                // still pairs with whatever character follows it, exactly
+                // as if the continuation were not there.
                 continue;
             case '\r':
                 pos += 2;
@@ -155,8 +157,7 @@ Token read_pragma_body(const std::string& text,
                     ++pos;
                 ++lineno;
                 extra_nl.push_back(Token::newline(1));
-                if (is_directive)
-                    pending_hex = -1;
+                // Same as the '\n' case above: a pending "$X" survives.
                 continue;
             default:
                 if (is_directive) {
