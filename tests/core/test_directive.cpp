@@ -1212,7 +1212,7 @@ TEST_F(DirectiveTest, IecEscapesInDirectiveStringsKeptAsWritten) {
     EXPECT_EQ(R"(1 'it$'s' 1;)", pp(R"({#define F(a) a 'it$'s' a}F(1);)"));
     EXPECT_EQ(R"('it$'s')", pp(R"({#token 'it$'s'})"));
     EXPECT_EQ(R"('$27it$$$27s$27')", pp(R"({#string 'it$'s'})"));
-    EXPECT_EQ(R"("$27a$$nb$27")", pp(R"({#wstring 'a$nb'})"));
+    EXPECT_EQ(R"("$0027a$$nb$0027")", pp(R"({#wstring 'a$nb'})"));
     EXPECT_EQ(R"('a$qb';)", pp(R"({#define X 'a$qb'}X;)"));
     EXPECT_TRUE(empty());
     pp(R"({#warning 'can$'t'})");
@@ -1262,5 +1262,14 @@ TEST_F(DirectiveTest, RawStringRegressionWatchpoints) {
     EXPECT_EQ(R"('it$'s';)", pp(R"({#define X 'it$'s'}{#define X 'it$'s'}X;)"));
     EXPECT_TRUE(empty());
     EXPECT_EQ("[a[x,y][x,y]];", pp("{#define F(a) [a[x,y]]}F(a[x,y]);"));
+    EXPECT_TRUE(empty());
+}
+
+// {#wstring} writes quotes as four-digit hex escapes: IEC 61131-3 reads
+// "$hhhh" in a double-byte string, so "$22ab" would be one character.
+TEST_F(DirectiveTest, WstringQuotesUseFourDigitHex) {
+    EXPECT_EQ(R"("$0022ab$0022")", pp(R"({#define Q "ab"}{#wstring Q})"));
+    EXPECT_EQ(R"("it$0027s")", pp("{#wstring it's}"));
+    EXPECT_EQ(R"('it$27s')", pp("{#string it's}"));
     EXPECT_TRUE(empty());
 }
