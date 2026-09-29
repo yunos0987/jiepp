@@ -654,6 +654,64 @@ TEST_F(DirectiveTest, DdModeDoesNotEchoMalformedParamList) {
     EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, cs[1]);
 }
 
+TEST_F(DirectiveTest, RemoveCommentsInMacroBodies) {
+    // U5: -nC (remove_comments) removes comments from macro bodies too,
+    // like gcc/clang without -C (the default, -CC, keeps them).
+    {
+        Env env = setup();
+        env.set_remove_comments(true);
+        EXPECT_EQ("\n[1   +2]", pp("{#define X 1 (* c *) +2}\n[X]", env));
+        EXPECT_TRUE(empty());
+    }
+    {
+        Env env = setup();
+        env.set_remove_comments(true);
+        EXPECT_EQ("[1   +1]", pp("{#define F(a) a (* c *) +a}[F(1)]", env));
+        EXPECT_TRUE(empty());
+    }
+    // A document comment is a token, not a comment: it survives -nC.
+    {
+        Env env = setup();
+        env.set_remove_comments(true);
+        EXPECT_EQ("[1 (*! d *) +2]", pp("{#define X 1 (*! d *) +2}[X]", env));
+        EXPECT_TRUE(empty());
+    }
+    // Default (-CC-like): the comment survives in the body, unchanged.
+    EXPECT_EQ("[1 (* c *) +2]", pp("{#define X 1 (* c *) +2}[X]"));
+    EXPECT_TRUE(empty());
+
+    // Watchpoint: an identical redefinition (same normalized body) still
+    // raises no MACRO_REDEFINED, in both modes.
+    {
+        Env env = setup();
+        env.set_remove_comments(true);
+        pp("{#define X 1 (* c *) +2}{#define X 1 +2}", env);
+        EXPECT_TRUE(empty());
+    }
+    EXPECT_EQ("", pp("{#define X 1 (* c *) +2}{#define X 1 +2}"));
+    EXPECT_TRUE(empty());
+
+    // -nC + -dD: the echoed {#define}/{#undef} use the normalized (-dM)
+    // form, with no comment, not the original source text.
+    {
+        Env env = setup();
+        env.set_remove_comments(true);
+        env.set_dd_mode(true);
+        const std::string out = pp("{#define X 1 (* c *) +2}{#undef X (* c *)}", env);
+        EXPECT_NE(std::string::npos, out.find("{#define X 1   +2}")) << "out:\n" << out;
+        EXPECT_EQ(std::string::npos, out.find("(* c")) << "out:\n" << out;
+        EXPECT_NE(std::string::npos, out.find("{#undef X}")) << "out:\n" << out;
+    }
+
+    // -D's body follows the same -nC policy (setup()'s remove_comments
+    // parameter is set before -D is processed).
+    {
+        Env env = setup({{"Y", "1(*c*)+2"}}, true);
+        EXPECT_EQ("[1 +2]", pp("[Y]", env));
+        EXPECT_TRUE(empty());
+    }
+}
+
 TEST_F(DirectiveTest, NewlineInDirectiveRedefinitionNoWarning) {
     // Redefining X with a raw-newline body that normalizes to the same
     // text as its previous definition must not raise MACRO_REDEFINED.

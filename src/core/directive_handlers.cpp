@@ -98,8 +98,12 @@ namespace jiepp::preprocessor_detail {
 // Returns true iff a macro was actually (re)defined. Every rejection path
 // (ISSUE + early return in continue mode or under {#ignore}) returns false,
 // so the caller does not echo a directive that defined nothing (-dD).
-bool handle_define(const std::string& raw_arg, Env& env) {
-    auto ts = iec3_tokens_from_string(raw_arg, false);
+bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_name) {
+    // Body comments follow the -nC policy like the rest of the input: kept
+    // by default (gcc/clang -CC keep them in macro bodies too), whitespace
+    // with -nC (gcc/clang without -C). Either way a comment is whitespace to
+    // the checks below (Token::C has MASK_WS), so the definition is the same.
+    auto ts = iec3_tokens_from_string(raw_arg, env.get_remove_comments());
     ts = ts_ltrim(std::move(ts));
     // C1: like gcc/clang, the macro name must be an identifier (comments
     // are whitespace, already stripped by ts_ltrim above). A missing name
@@ -301,6 +305,8 @@ bool handle_define(const std::string& raw_arg, Env& env) {
         }
     };
     make_and_define();
+    if (defined_name)
+        *defined_name = name;
     return true;
 }
 
@@ -308,7 +314,7 @@ bool handle_define(const std::string& raw_arg, Env& env) {
 // if it was never defined); false if it was rejected (missing/non-identifier
 // name) and nothing changed. See handle_define()'s matching comment: the
 // caller uses this to decide whether to echo the directive under -dD.
-bool handle_undef(const std::string& raw_arg, Env& env) {
+bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_name) {
     // C1: same name validation as {#define} (comments removed, as whitespace).
     auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
     if (ts.empty()) {
@@ -333,6 +339,8 @@ bool handle_undef(const std::string& raw_arg, Env& env) {
               "{#undef " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
     }
     env.undef(ts[0].text);
+    if (undefined_name)
+        *undefined_name = ts[0].text;
     return true;
 }
 

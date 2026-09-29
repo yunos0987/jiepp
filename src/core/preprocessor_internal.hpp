@@ -7,18 +7,31 @@
 #include "../env/env.hpp"
 #include "../loader/token.hpp"
 #include "../env/issue.hpp"
+#include "../macro/macro.hpp"
 
 namespace jiepp::preprocessor_detail {
 
 // Returns true iff a macro was actually (re)defined; false if the
 // {#define} was rejected (e.g. a duplicate parameter name) and defined
 // nothing. See handle_define()'s definition (directive_handlers.cpp) for
-// details.
-bool handle_define(const std::string& raw_arg, Env& env);
+// details. On success (only), *defined_name (when non-null) is set to the
+// macro's name, so the caller can look the just-defined macro back up
+// (e.g. for a -dD echo under -nC, see define_directive_text() below).
+bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_name = nullptr);
 // Returns true iff the {#undef} operand was accepted (a valid name, even
 // if it was never defined); see handle_undef()'s definition
-// (directive_handlers.cpp) for the rejection cases (C1).
-bool handle_undef(const std::string& raw_arg, Env& env);
+// (directive_handlers.cpp) for the rejection cases (C1). On success (only),
+// *undefined_name (when non-null) is set to the name.
+bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_name = nullptr);
+
+// Renders "{#define NAME body}" / "{#define NAME(params) body}" the way
+// -dM does, from the macro's current, already-tokenized definition rather
+// than from the directive's original source text: used for the -dD echo of
+// a {#define} under -nC, where the source text may still carry a comment
+// the definition itself dropped (U5). Returns "" for a macro that is not a
+// UserDefinedObjectMacro/FunctionMacro (a builtin like __LINE__), which
+// dump_macros() (preprocessor.cpp) never echoes either.
+std::string define_directive_text(const std::string& name, const Macro& macro);
 void handle_tokenize(const std::string& raw_arg, Env& env, std::vector<Token>& ots);
 void handle_stringize(const std::string& raw_arg,
                       Env& env,

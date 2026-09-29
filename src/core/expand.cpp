@@ -193,24 +193,36 @@ void dispatch_directive(const Token& t,
         ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
 
     switch (kind) {
-    case DirectiveToken::DEFINE:
+    case DirectiveToken::DEFINE: {
         // Echo under -dD only if a macro was actually defined: a {#define}
         // rejected with an error (PP33/PP36/...) in continue mode or under
         // {#ignore} defined nothing and must not appear in the -dD stream.
-        if (jiepp::preprocessor_detail::handle_define(raw_arg, env) && env.is_dd_mode()) {
-            // Emit the original token text (already correctly encoded).
-            // raw_arg is decoded; rebuilding from it would corrupt dollar-escape sequences.
-            ots.push_back(Token::create(Token::DIRECTIVE, t.text));
+        // Default: echo the original text (already correctly encoded). Under
+        // -nC the echo must not carry comments the definition dropped, so
+        // print the stored definition the way -dM does (gcc/clang -dD
+        // without -C print no comments either).
+        std::string name;
+        if (jiepp::preprocessor_detail::handle_define(raw_arg, env, &name) && env.is_dd_mode()) {
+            ots.push_back(Token::create(Token::DIRECTIVE, env.get_remove_comments()
+                ? jiepp::preprocessor_detail::define_directive_text(name, *env.lookup(name))
+                : t.text));
         }
         break;
-    case DirectiveToken::UNDEF:
+    }
+    case DirectiveToken::UNDEF: {
         // Echo under -dD only if a macro was actually undefined (C1): a
         // rejected {#undef} (missing/non-identifier name) changed nothing
         // and must not appear in the -dD stream, matching {#define} above.
-        if (jiepp::preprocessor_detail::handle_undef(raw_arg, env) && env.is_dd_mode()) {
-            ots.push_back(Token::create(Token::DIRECTIVE, t.text));
+        // Under -nC, echo the decoded name re-encoded, not raw_arg's
+        // original text, so a comment around the name does not appear.
+        std::string name;
+        if (jiepp::preprocessor_detail::handle_undef(raw_arg, env, &name) && env.is_dd_mode()) {
+            ots.push_back(Token::create(Token::DIRECTIVE, env.get_remove_comments()
+                ? "{#undef " + encode_directive_text(name) + "}"
+                : t.text));
         }
         break;
+    }
     case DirectiveToken::TOKENIZE:
         jiepp::preprocessor_detail::handle_tokenize(raw_arg, env, ots);
         break;

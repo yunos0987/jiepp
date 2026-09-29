@@ -7,7 +7,8 @@
 #include "../macro/macro.hpp"
 #include "../loader/loader.hpp"
 
-Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macros = {});
+Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macros = {},
+          bool remove_comments = false);
 
 // -U NAME: same as {#undef NAME} (see handle_undef()'s comment in
 // directive_handlers.cpp for the name validation and 'defined' rejection).

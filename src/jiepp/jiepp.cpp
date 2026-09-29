@@ -246,7 +246,9 @@ int jiepp_command(const JieppOptions& opts)
         for (const auto& dm : opts.define_macros)
             predefine_macros.push_back(define_macro_option(dm));
 
-        Env env = setup(predefine_macros);
+        // U5: -D's macro bodies follow the same -nC policy as {#define}
+        // (setup() sets Env's remove_comments before processing -D below).
+        Env env = setup(predefine_macros, opts.remove_comments);
 
         for (const auto& name : opts.undef_macros) // -U: undefine macros (applied after -D)
             apply_undef_option(name, env);

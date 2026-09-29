@@ -27,7 +27,8 @@ std::string preprocess_text(const std::string& input, Env& env) {
     return output_stream.str();
 }
 
-Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macros) {
+Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macros,
+          bool remove_comments) {
 #ifndef JIEPP_VERSION_MAJOR
 #define JIEPP_VERSION_MAJOR 0
 #endif
@@ -43,7 +44,10 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     Env env;
     env.set_max_include_depth(DEFAULT_MAX_INCLUDE_DEPTH);
     env.set_pragma_style("annotated");
-    env.set_remove_comments(false);
+    // Set before -D processing below (U5): -D's body follows the same
+    // comment policy as {#define} (handle_define() reads it via
+    // env.get_remove_comments()).
+    env.set_remove_comments(remove_comments);
 
     env.define("__COUNTER__",           std::make_unique<CounterMacro>());
     env.define("__LINE__",              std::make_unique<LineMacro>());
@@ -108,18 +112,29 @@ void apply_undef_option(const std::string& name, Env& env) {
 // dump_macros
 // ---------------------------------------------------------------------------
 
+namespace jiepp::preprocessor_detail {
+
+std::string define_directive_text(const std::string& name, const Macro& macro) {
+    if (auto* om = dynamic_cast<const UserDefinedObjectMacro*>(&macro)) {
+        std::string kv = encode_directive_text(name);
+        std::string vv = encode_directive_text(om->str());
+        return "{#define " + kv + " " + vv + "}";
+    }
+    if (auto* fm = dynamic_cast<const FunctionMacro*>(&macro)) {
+        std::string kv = encode_directive_text(name);
+        std::string vv = encode_directive_text(fm->str());
+        return "{#define " + kv + vv + "}";
+    }
+    return "";
+}
+
+} // namespace jiepp::preprocessor_detail
+
 void dump_macros(Env& env, std::ostream& output) {
     for (auto& [name, macro] : env.symbols()) {
         if (dynamic_cast<DefinedOperator*>(macro)) continue;
-
-        if (auto* om = dynamic_cast<UserDefinedObjectMacro*>(macro)) {
-            std::string kv = encode_directive_text(name);
-            std::string vv = encode_directive_text(om->str());
-            output << "{#define " << kv << " " << vv << "}\n";
-        } else if (auto* fm = dynamic_cast<FunctionMacro*>(macro)) {
-            std::string kv = encode_directive_text(name);
-            std::string vv = encode_directive_text(fm->str());
-            output << "{#define " << kv << vv << "}\n";
-        }
+        std::string line = jiepp::preprocessor_detail::define_directive_text(name, *macro);
+        if (!line.empty())
+            output << line << "\n";
     }
 }
