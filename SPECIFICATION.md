@@ -456,6 +456,8 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 
 ## 6. 式評価 / Expression Evaluation (`{#if}` / `{#elif}`)
 
+構文エラーになった条件式は偽として扱う（gcc/clang と同じ）。
+
 ### 6.1 サポートするリテラル / Supported Literals
 
 | 種別 | 例 | 説明 |

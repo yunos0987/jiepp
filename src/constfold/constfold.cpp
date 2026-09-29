@@ -47,9 +47,14 @@ int64_t eval_const_expr(const std::string& expr) {
         cf_delete_buffer(buf);
         throw;
     }
-    if (rc != 0)
+    if (rc != 0) {
         // Same reasoning as the all_ws case above: expr is decoded, so
-        // re-escape it before it reaches the diagnostic.
+        // re-escape it before it reaches the diagnostic. A syntax error can
+        // leave result holding a partial value from before the parser gave
+        // up (e.g. "1 x" parses "1" before failing on "x"); treat the whole
+        // expression as false, like gcc/clang do for a malformed {#if}.
         ISSUE(MISSING_EXPRESSION, Util::escape_line_breaks(expr));
+        return 0;
+    }
     return result;
 }

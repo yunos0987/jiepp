@@ -496,6 +496,15 @@ TEST_F(DirectiveTest, OperandDiagnosticsStayOnOneLine) {
     }
 }
 
+// A {#if} expression that fails to parse as a complete expression (as
+// opposed to being empty/all-whitespace) is treated as false, like gcc/clang
+// do for a malformed #if -- not as whatever partial value the constant-
+// folding parser had accumulated before it gave up.
+TEST_F(DirectiveTest, SyntaxErrorExpressionIsFalse) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("ok;", pp("{#if 1 x}yes;{#endif}ok;"));
+}
+
 TEST_F(DirectiveTest, NewlineInDirectiveLineCountUnchanged) {
     // The newline consumed while folding it to whitespace is still counted
     // for line numbering, and is echoed as a blank line in the output --
