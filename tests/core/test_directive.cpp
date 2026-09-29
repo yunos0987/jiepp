@@ -372,6 +372,33 @@ TEST_F(DirectiveTest, MaxBlankLinesDirectiveInvalidOperand) {
     EXPECT_EQ(Issue::Code::INVALID_PARAMETER_VALUE, code());
 }
 
+TEST_F(DirectiveTest, LimitDirectiveOperand) {
+    // Comments around the {#max_*} operand are whitespace (SPEC §11).
+    {
+        Env env = setup();
+        pp("{#max_blank_lines (* c *) 2 // d}", env);
+        EXPECT_EQ(2, env.get_max_blank_lines());
+        EXPECT_TRUE(empty());
+    }
+    // Trailing garbage after the integer is now rejected instead of being
+    // silently ignored by std::stoi().
+    EXPECT_THROW(pp("{#max_blank_lines 2x}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_LIMIT_OPERAND, code());
+    EXPECT_THROW(pp("{#max_blank_lines 2 3}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_LIMIT_OPERAND, code());
+    EXPECT_THROW(pp("{#max_blank_lines 2.9}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_LIMIT_OPERAND, code());
+    // A document comment is a token, not whitespace: still garbage.
+    EXPECT_THROW(pp("{#max_blank_lines 2 (*! d *)}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_LIMIT_OPERAND, code());
+
+    // Unchanged behavior.
+    EXPECT_THROW(pp("{#max_blank_lines abc}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_LIMIT_OPERAND, code());
+    EXPECT_THROW(pp("{#max_blank_lines -1}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_PARAMETER_VALUE, code());
+}
+
 TEST_F(DirectiveTest, Undef) {
     // Define, undef, redefine
     EXPECT_EQ(";2;;N;;3", pp("{#define N 2};N;{#undef N};N;{#define N 3};N"));

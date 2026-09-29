@@ -518,17 +518,23 @@ namespace {
 // Parse failure is reported here as INVALID_LIMIT_OPERAND.
 void handle_limit_directive(const std::string& raw_arg, Env& env,
                             bool (Env::*setter)(int)) {
+    // One decimal integer; comments around it are whitespace (SPEC §11).
+    // std::stoi() alone accepted any trailing text ("2x", "2 3", "2.9" all
+    // silently meant 2) and rejected a leading comment.
+    const std::string arg = iec3_blank_out_comments(raw_arg);
+    std::size_t used = 0;
+    int n = 0;
     try {
-        int n = std::stoi(raw_arg);
-        (env.*setter)(n);
-    } catch (const Issue::Exception&) {
-        throw; // re-throw ISSUE errors as-is
-    } catch (...) {
-        // raw_arg is decoded, so re-escape it before it reaches the
-        // diagnostic, so a $n/$r escape in the source does not split the
-        // message onto multiple lines (same reasoning as {#define} above).
-        ISSUE(INVALID_LIMIT_OPERAND, Util::escape_line_breaks(raw_arg));
+        n = std::stoi(arg, &used);
+    } catch (const std::exception&) {
+        used = 0;
     }
+    if (used == 0 || !Util::trim_view(std::string_view(arg).substr(used)).empty()) {
+        // raw_arg is decoded, so re-escape it (see {#define} above).
+        ISSUE(INVALID_LIMIT_OPERAND, Util::escape_line_breaks(raw_arg));
+        return;
+    }
+    (env.*setter)(n);
 }
 
 } // namespace
