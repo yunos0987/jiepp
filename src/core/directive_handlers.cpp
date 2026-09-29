@@ -364,6 +364,9 @@ bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_n
 
 void handle_tokenize(const std::string& raw_arg, Env& env, std::vector<Token>& ots) {
     auto ts = iec3_tokens_from_string(raw_arg, env.get_remove_comments());
+    // Operand newlines are decoded escapes, not source lines (see
+    // expand_operand_tokens()).
+    ts_mark_output_only(ts);
     line_comments_to_block_comments(ts);
     expand(ts, ots, env);
 }

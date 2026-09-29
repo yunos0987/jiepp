@@ -342,8 +342,20 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
         ISSUE(WHITESPACE_BEFORE_DIRECTIVE);
     }
 
-    std::string expanded_body = jiepp::preprocessor_detail::expand_operand_text(body, env);
+    std::string expanded_body;
+    int body_lines = 0;
+    for (const auto& et : jiepp::preprocessor_detail::expand_operand_tokens(body, env)) {
+        expanded_body += et.text;
+        body_lines += et.num_of_lines;
+    }
     Token out = t;
+    // A newline printed inside the pragma text comes from a macro
+    // replacement (the lexer already folded the raw newlines of the body),
+    // so it is not a source line (see Token::output_only_lines).
+    if (body_lines > 0) {
+        out.num_of_lines = body_lines;
+        out.mark_output_only();
+    }
     if (env.is_standard_pragma_style()) {
         out.text = "{" + expanded_body + "}";
     } else {
@@ -525,12 +537,18 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     // sum_uncounted: the subset not already applied to env's line
                     // counter by an earlier (outer) pass over these same tokens, used
                     // to advance the counter exactly once per physical newline.
+                    // sum_output_only: the subset that came from an earlier macro
+                    // replacement (Token::output_only_lines), e.g. {#define H F(a$nb}
+                    // then H): re-emitted as output-only lines, not source lines.
                     int sum_num_of_lines = 0;
                     int sum_uncounted = 0;
+                    int sum_output_only = 0;
                     for (auto& s : pre_lp) {
                         sum_num_of_lines += s.num_of_lines;
                         if (!s.lineno_counted)
                             sum_uncounted += s.num_of_lines;
+                        if (s.output_only_lines)
+                            sum_output_only += s.num_of_lines;
                     }
 
                     std::vector<std::vector<Token>> params;
@@ -543,6 +561,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         Token pt = std::move(work.back());
                         work.pop_back();
                         sum_num_of_lines += pt.num_of_lines;
+                        if (pt.output_only_lines)
+                            sum_output_only += pt.num_of_lines;
                         if (!pt.lineno_counted) {
                             sum_uncounted += pt.num_of_lines;
                             pt.lineno_counted = true;
@@ -662,9 +682,20 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     advance_lineno(sum_uncounted, env);
 
                     auto replaced = subst(fm->body(), fm->args(), params, new_hs, env);
+                    // A macro replacement never contributes source lines: a newline
+                    // in it is either a decoded $n in the body or a copy of an
+                    // argument newline, whose source line the call newline token
+                    // below already re-emits.
+                    ts_mark_output_only(replaced);
 
-                    if (sum_num_of_lines > 0) {
-                        Token nl = Token::newline(sum_num_of_lines);
+                    const int source_lines = sum_num_of_lines - sum_output_only;
+                    if (sum_output_only > 0) {
+                        Token nl = Token::newline(sum_output_only);
+                        nl.mark_output_only();
+                        replaced.push_back(std::move(nl));
+                    }
+                    if (source_lines > 0) {
+                        Token nl = Token::newline(source_lines);
                         // Already reflected in env's line counter above; prevent the
                         // main loop from advancing it a second time when this token is
                         // later popped.
@@ -690,6 +721,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 static const std::unordered_map<std::string, std::pair<int, bool>> no_params;
                 static const std::vector<std::vector<Token>> no_actuals;
                 repl = subst(repl, no_params, no_actuals, new_hs, env);
+                // See the function-macro case above: never source lines.
+                ts_mark_output_only(repl);
 
                 // Push replacement in reverse for re-scanning
                 for (auto rit = repl.rbegin(); rit != repl.rend(); ++rit) {

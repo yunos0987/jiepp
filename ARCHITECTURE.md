@@ -155,7 +155,7 @@ GCC/cpp 同様、組み込みマクロの定義責務をプリプロセッサと
 2. `jiepp_command()` が `Env` を構築し、`Issue::ContinueMode` ガードの下で `-include` の展開とトップレベル入力の `expand()`（ファイルパス版。標準入力ならトークン列版）を呼ぶ
 3. `core/expand.cpp` がトークン列を走査する。ディレクティブは `directive_parser` → `directive_handlers` が、`#include`/`#sinclude` は `handle_include()`（`directive_handlers.cpp`。再帰的に `expand()` を呼ぶ）が、`#if` 条件式は `constfold` が（`__has_include` は事前解決）処理する。ディレクティブのオペランド（`#include` のパス、`#if` の条件式文字列、`{#error}`/`{#warning}` のメッセージ文字列）は `preprocessor_detail::expand_operand_text()` が 1 往復再展開する（内部で `expand()` を呼ぶだけで空行圧縮はしない。使用元: `directive_handlers.cpp`/`expand.cpp`/`expand_ctrl.cpp`）。マクロ参照は `Env` のシンボルテーブルで展開する
 4. `-include`/トップレベル入力の展開が中断コード（`SEVERE` または PP10〜14, 60, 61）で止まった場合、および中断せず終えても `Issue::error_count_ >= 1` の場合の、標準出力・`-o`・依存ファイルの出し分けと終了コードは [SPECIFICATION.md §16](SPECIFICATION.md#16-エラーコード一覧--issue-code-reference) を参照（`jiepp_command()`/`src/jiepp/jiepp.cpp` が実施。中断時はそれまでの `ots` に空行圧縮をかけたうえで判定する）
-5. 中断も未処理エラーもなければ `jiepp::compact_blank_lines()`（`core/line_compaction.cpp`）が `ots` 全体に後処理として 1 回走り、8 行以上連続する空行を行マーカー 1 行に圧縮する（`-P` 指定時は空行を全除去。上限は `--max-blank-lines`、既定 7）
+5. 中断も未処理エラーもなければ `jiepp::compact_blank_lines()`（`core/line_compaction.cpp`）が `ots` 全体に後処理として 1 回走り、8 行以上連続する空行を行マーカー 1 行に圧縮する（`-P` 指定時は空行を全除去。上限は `--max-blank-lines`、既定 7）。`Token::output_only_lines`（マクロ展開が出力する `$n` 等の改行、`token.hpp`）が立った改行はソースの行として数えない。それにより出力がソースより先に進んだ場合、次のソース行の先頭に再同期用の行マーカーを 1 行挿入する（この再同期は空行圧縮とは独立で、`--max-blank-lines 0` でも行う。`-P` では行わない）
 6. 出力トークン列をテキスト化して書き出す（`output_filepath` 指定時はファイルへ、なければ stdout へ）。依存ファイル（`-MF`/`-MD`/`-MMD` 自動命名）は `-o` を開く前に書く
 
 ## サンドボックスモード (`JIEPP_SANDBOX`)

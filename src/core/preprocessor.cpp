@@ -28,6 +28,10 @@ namespace jiepp::preprocessor_detail {
 
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env) {
     auto its = iec3_tokens_from_string(text, env.get_remove_comments(), 1);
+    // Every newline in an operand is a decoded $n/$l/$r/$0A/$0D escape: the
+    // raw newlines of the directive are counted by the lexer separately
+    // (the extra newline tokens of read_pragma_body()), so none is a source line.
+    ts_mark_output_only(its);
     std::vector<Token> ots;
     expand(its, ots, env);
     return ots;

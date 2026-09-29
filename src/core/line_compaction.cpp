@@ -80,6 +80,13 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
     std::string enc_file;
     bool        standard        = default_standard_style;
     bool        modified        = false;
+    // Output-only newlines (Token::output_only_lines) printed since the last
+    // marker: the physical output is this many lines ahead of the source.
+    // In Markers mode the next source line break is followed by a resync
+    // marker, so a downstream consumer maps later lines back to the right
+    // source line (like gcc, which emits a linemarker after a multi-line
+    // macro expansion; jiepp puts it on a line of its own).
+    LineNo      ahead           = 0;
 
     std::vector<Token> run;
 
@@ -91,10 +98,19 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
         if (run.empty())
             return;
 
+        // nl: newlines the run prints (blank-line detection). src_nl: those
+        // that are source lines; an output-only newline (a decoded $n of a
+        // macro replacement, Token::output_only_lines) is printed but does
+        // not advance cur, so a synthetic marker still names the source
+        // line number (== __LINE__) of the next content line.
         int nl = 0;
-        for (const auto& t : run)
+        int src_nl = 0;
+        for (const auto& t : run) {
             nl += t.num_of_lines;
-        cur = wrap_lineno(cur + nl);
+            if (!t.output_only_lines)
+                src_nl += t.num_of_lines;
+        }
+        cur = wrap_lineno(cur + src_nl);
 
         int blank_lines = nl - (line_has_content ? 1 : 0);
 
@@ -105,8 +121,26 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
                          (mode == BlankLineMode::Markers && blank_lines <= max_blank_lines);
 
         if (verbatim) {
-            for (auto& t : run)
-                out.push_back(std::move(t));
+            ahead += nl - src_nl;
+            const bool resync = (mode == BlankLineMode::Markers) && ahead > 0 &&
+                                src_nl > 0 && !next_is_marker_or_eof;
+            // Resync marker at the start of the next content line: after the
+            // run's last newline token, before any trailing indentation.
+            std::size_t split = run.size();
+            if (resync) {
+                while (split > 0 && run[split - 1].num_of_lines == 0)
+                    --split;
+            }
+            for (std::size_t k = 0; k < split; ++k)
+                out.push_back(std::move(run[k]));
+            if (resync) {
+                modified = true;
+                out.push_back(make_line_marker(wrap_lineno(cur - 1), enc_file, standard));
+                out.push_back(Token::newline(1));
+                ahead = 0;
+            }
+            for (std::size_t k = split; k < run.size(); ++k)
+                out.push_back(std::move(run[k]));
         } else {
             modified = true;
             if (line_has_content)
@@ -114,6 +148,7 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
             if (mode == BlankLineMode::Markers && !next_is_marker_or_eof) {
                 out.push_back(make_line_marker(wrap_lineno(cur - 1), enc_file, standard));
                 out.push_back(Token::newline(1));
+                ahead = 0;
             }
             // Trailing inline whitespace (indentation of the next content
             // line), if the run ends with one or more non-newline tokens.
@@ -140,12 +175,15 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
         flush(marker.has_value());
 
         if (marker) {
+            ahead    = 0;
             cur      = marker->lineno;
             standard = marker->standard;
             if (!marker->enc_file.empty())
                 enc_file = std::string(marker->enc_file);
-        } else {
+        } else if (!t.output_only_lines) {
             cur = wrap_lineno(cur + t.num_of_lines);
+        } else {
+            ahead += t.num_of_lines;
         }
         // A marker token (num_of_lines == 0, always) is content-bearing:
         // it occupies its own printed line, so the run immediately

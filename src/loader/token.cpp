@@ -108,6 +108,11 @@ std::vector<Token> ts_flatten(std::vector<Token> ts) {
     return ts;
 }
 
+void ts_mark_output_only(std::vector<Token>& ts) noexcept {
+    for (auto& t : ts)
+        t.mark_output_only();
+}
+
 // ---------------------------------------------------------------------------
 // Hide-set helpers
 // ---------------------------------------------------------------------------

@@ -26,6 +26,16 @@ struct Token {
     // only: deliberately excluded from operator== so existing token-equality
     // callers (macro redefinition checks, tests) are unaffected.
     bool        lineno_counted = false;
+    // True if this token's num_of_lines are printed but are not source
+    // lines: the token is part of a macro replacement or of a re-lexed
+    // directive operand / pragma body, so its newlines come from a decoded
+    // $n/$l/$r/$0A/$0D escape (or, for a function-macro argument, were
+    // already re-emitted as a separate newline token by the call; see
+    // expand.cpp). Such newlines never advance the Env line counter (like C,
+    // where a macro expansion never changes __LINE__) and are not counted
+    // as source lines by compact_blank_lines(). Excluded from operator==
+    // like lineno_counted, so macro redefinition checks are unaffected.
+    bool        output_only_lines = false;
     HideSetPtr  hs;          // hide-set (shared, copy-on-write)
 
     // Factories
@@ -41,6 +51,13 @@ struct Token {
                              int num_of_lines = 0);
 
     Token clone() const;
+
+    // Sets output_only_lines, and lineno_counted so expand() never applies
+    // this token's num_of_lines to the Env line counter.
+    void mark_output_only() noexcept {
+        output_only_lines = true;
+        lineno_counted = true;
+    }
 
     // Convert newlines inside whitespace/any tokens to spaces (for macro arg flattening)
     Token& flatten();
@@ -77,6 +94,8 @@ std::vector<Token> ts_trim(std::vector<Token> ts);
 std::vector<Token> ts_ltrim(std::vector<Token> ts);
 std::vector<Token> ts_rtrim(std::vector<Token> ts);
 std::vector<Token> ts_flatten(std::vector<Token> ts);
+// Token::mark_output_only() on every token of ts.
+void ts_mark_output_only(std::vector<Token>& ts) noexcept;
 
 // Hide-set helper functions (defined in token.cpp)
 Token::HideSetPtr hs_empty();

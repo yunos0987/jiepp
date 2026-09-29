@@ -15,6 +15,14 @@
 // A "blank line" is a physical line all of whose characters are whitespace
 // (Token::WS tokens only — NOT Token::C, which also carries MASK_WS but is a
 // comment, not blank content).
+//
+// Separately, in Markers mode, a newline a macro expansion prints
+// (Token::output_only_lines — not a source line, see token.hpp) can leave
+// the printed output ahead of the source. Once a following source line break
+// is seen, a resync line marker is inserted so later lines still map back to
+// the right source line — independent of blank-line compaction, and not
+// disabled by `max_blank_lines == 0` (which only disables blank-line
+// removal). Not done under CollapseAll (-P already omits every line marker).
 #include "../env/lineno.hpp"
 #include "../loader/token.hpp"
 
