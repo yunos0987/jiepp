@@ -25,15 +25,57 @@ TEST_F(DirectiveTest, LineComment) {
 
 TEST_F(DirectiveTest, Unknown) {
     // PP45 (UNKNOWN_DIRECTIVE) is ERROR: each throws in library mode.
-    EXPECT_THROW(pp("{# /**/};"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
-    EXPECT_THROW(pp("{# (**)};"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
-    EXPECT_THROW(pp("{# //};"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
+    // "{# /**/}" and friends are no longer here: a comment before the name
+    // is skipped like whitespace now (see CommentOnlyDirectiveIsNull), so
+    // only text that is not a comment at all -- an unclosed "*/"/"/*" --
+    // still reaches UNKNOWN_DIRECTIVE via this path.
     EXPECT_THROW(pp("{# */};"), Issue::Exception);
     EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
     EXPECT_THROW(pp("{# /*};"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
+}
+
+TEST_F(DirectiveTest, CommentOnlyDirectiveIsNull) {
+    // A directive whose name-position text is only whitespace and comments
+    // is the empty (null) directive, like gcc/clang's "# /**/" and "# //".
+    EXPECT_EQ(";", pp("{# /**/};"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(";", pp("{# (**)};"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(";", pp("{# //};"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(";", pp("{#(* c *)};"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(DirectiveTest, CommentAroundDirectiveName) {
+    // A comment between "{#" and the name, or right after the name, is
+    // whitespace, like gcc/clang's "#/*c*/define".
+    EXPECT_EQ(";1", pp("{#(*c*)define X 1};X"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(";1", pp("{#/*c*/define X 1};X"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(";1", pp("{# (* c *) define X 1};X"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(";1", pp("{#define(*c*)X 1};X"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(";1", pp("{#define/*c*/X 1};X"));
+    EXPECT_TRUE(empty());
+
+    // A comment before "if"/"else"/"endif" is likewise skipped.
+    EXPECT_EQ("y", pp("{#(*c*)if 1}y{#(*c*)else}n{#(*c*)endif}"));
+    EXPECT_TRUE(empty());
+
+    // Nesting is still counted correctly when the inner {#if} is commented.
+    EXPECT_EQ("y", pp("{#if 0}{#(*c*)if 1}{#endif}x{#endif}y"));
+    EXPECT_TRUE(empty());
+
+    // A comment before ":" behaves the same as without one.
+    EXPECT_EQ(pp("{#:100}\n__LINE__"), pp("{#(*c*):100}\n__LINE__"));
+    EXPECT_TRUE(empty());
+
+    // A document comment is a token, not skipped: the name stays "(*! d *)".
+    EXPECT_THROW(pp("{#(*! d *)define X 1}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
 }
 

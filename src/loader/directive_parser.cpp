@@ -35,6 +35,31 @@ std::size_t skip_directive_ws(std::string_view text, std::size_t pos) {
     return pos;
 }
 
+// Skips whitespace and comments -- (* *), /* */, and // (which runs to the
+// end: a raw newline already ended it in read_pragma_body()) -- the way
+// gcc/clang accept "#/*c*/define". A document comment ((*!, /*!, //!) is a
+// token in jiepp and is not skipped; an unclosed block comment is not a
+// comment here, so "{# /*}" keeps "/*" as the (unknown) name.
+std::size_t skip_directive_ws_and_comments(std::string_view text, std::size_t pos) {
+    for (;;) {
+        pos = skip_directive_ws(text, pos);
+        if (pos + 1 >= text.size())
+            return pos;
+        const char c = text[pos], d = text[pos + 1];
+        const bool doc = pos + 2 < text.size() && text[pos + 2] == '!';
+        if ((c == '(' || c == '/') && d == '*' && !doc) {
+            const std::size_t e = text.find(c == '(' ? "*)" : "*/", pos + 2);
+            if (e == std::string_view::npos)
+                return pos;
+            pos = e + 2;
+            continue;
+        }
+        if (c == '/' && d == '/' && !doc)
+            return text.size();
+        return pos;
+    }
+}
+
 } // namespace
 
 std::optional<char> decode_directive_escape(char nc) {
@@ -139,7 +164,7 @@ std::pair<std::string, std::string> parse_directive(std::string_view text,
         return {"", ""};
     }
 
-    std::size_t pos = skip_directive_ws(inner, 0);
+    std::size_t pos = skip_directive_ws_and_comments(inner, 0);
     std::size_t key_start = pos;
     while (pos < inner.size()) {
         unsigned char c = static_cast<unsigned char>(inner[pos]);
@@ -156,6 +181,14 @@ std::pair<std::string, std::string> parse_directive(std::string_view text,
             }
             continue;
         }
+        // A comment ends the name, like whitespace ("{#define(*c*)X 1}"):
+        // reuse the same recognizer as the leading skip, so a document
+        // comment (a token, kept as part of an unrecognized name, e.g.
+        // "{#(*! d *)define X 1}" stays PP45) and an unclosed block comment
+        // (not a comment at all, e.g. "{# /*}") are treated the same way
+        // here as there.
+        if (skip_directive_ws_and_comments(inner, pos) != pos)
+            break;
         if (c == ':' || c == ';' || c == '\'' || c == '"' || c == '<' || is_directive_ws(c)) {
             break;
         }
