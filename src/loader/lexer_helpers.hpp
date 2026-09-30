@@ -50,6 +50,6 @@ bool try_push_date_or_time(std::vector<Token>& result,
 bool try_push_number(std::vector<Token>& result,
                      const std::string& text, std::size_t& pos);
 void push_string_token(std::vector<Token>& result, int type, std::string str,
-                       int num_of_lines = 0);
+                       int num_of_lines = 0, bool unterminated = false);
 
 } // namespace jiepp::detail

@@ -205,7 +205,7 @@ bool try_push_number(std::vector<Token>& result,
 }
 
 void push_string_token(std::vector<Token>& result, int type, std::string str,
-                       int num_of_lines) {
+                       int num_of_lines, bool unterminated) {
     std::vector<Token> trailing_ws;
     std::size_t scan = result.size();
     while (scan > 0 && result[scan - 1].type == Token::WS) {
@@ -214,12 +214,15 @@ void push_string_token(std::vector<Token>& result, int type, std::string str,
     }
     result.resize(scan);
 
-    if (scan > 0 && result[scan - 1].type == type) {
+    // A literal ended by a newline has no closing quote to drop; merging
+    // used to drop its last character ('abc<LF>'def' gave 'abdef').
+    if (scan > 0 && result[scan - 1].type == type && !result[scan - 1].unterminated) {
         Token merged = std::move(result[scan - 1]);
         result.resize(scan - 1);
         merged.text.pop_back();
         merged.text += str.substr(1);
         merged.num_of_lines += num_of_lines;
+        merged.unterminated = unterminated;
         result.push_back(std::move(merged));
         for (auto it = trailing_ws.rbegin(); it != trailing_ws.rend(); ++it) {
             result.push_back(std::move(*it));
@@ -230,7 +233,9 @@ void push_string_token(std::vector<Token>& result, int type, std::string str,
     for (auto it = trailing_ws.rbegin(); it != trailing_ws.rend(); ++it) {
         result.push_back(std::move(*it));
     }
-    result.push_back(Token::create(type, std::move(str), num_of_lines));
+    Token t = Token::create(type, std::move(str), num_of_lines);
+    t.unterminated = unterminated;
+    result.push_back(std::move(t));
 }
 
 } // namespace jiepp::detail

@@ -36,6 +36,12 @@ struct Token {
     // as source lines by compact_blank_lines(). Excluded from operator==
     // like lineno_counted, so macro redefinition checks are unaffected.
     bool        output_only_lines = false;
+    // True for a STRING/WSTRING token whose literal the lexer ended at a
+    // newline or at the end of the input, not at its closing quote.
+    // push_string_token() never merges the next literal into such a token
+    // (it has no closing quote to drop). Excluded from operator== like
+    // lineno_counted.
+    bool        unterminated = false;
     HideSetPtr  hs;          // hide-set (shared, copy-on-write)
 
     // Factories

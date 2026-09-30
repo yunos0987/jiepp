@@ -144,10 +144,15 @@ std::vector<Token> tokenize(const std::string& text, int lineno) {
                 if (text[p] == '$') ++p;
                 if (p < n) ++p;
             }
-            if (p < n && text[p] == quote)
+            bool closed = false;
+            if (p < n && text[p] == quote) {
                 ++p;
+                closed = true;
+            }
             lineno += dollar_nl;
-            push_string_token(r, tok_type, text.substr(start, p - start), dollar_nl);
+            // No closing quote (ended by a newline or the end of the input):
+            // never merged with the next literal; core/ reports PP29.
+            push_string_token(r, tok_type, text.substr(start, p - start), dollar_nl, !closed);
             continue;
         }
 
