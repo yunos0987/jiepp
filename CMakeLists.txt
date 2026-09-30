@@ -72,7 +72,7 @@ endif()
 find_package(FLEX REQUIRED)
 find_package(BISON REQUIRED)
 
-# ---- Python3 (for the perf test harness under tools/perftest/) ----
+# ---- Python3 (for the perf test harness under bench/) ----
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
 BISON_TARGET(CfParser
@@ -173,7 +173,7 @@ if(GTest_FOUND OR TARGET GTest::gtest)
         if(Python3_Interpreter_FOUND AND NOT JIEPP_SANDBOX)
             add_test(NAME perftest_smoke
                 COMMAND ${Python3_EXECUTABLE}
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tools/perftest/perftest.py" selfcheck
+                    "${CMAKE_CURRENT_SOURCE_DIR}/bench/perftest.py" selfcheck
                     --jiepp "$<TARGET_FILE:jiepp>"
                     --work "${CMAKE_BINARY_DIR}/perftest/selfcheck"
                     --build-type "$<CONFIG>"
@@ -183,7 +183,7 @@ if(GTest_FOUND OR TARGET GTest::gtest)
     endif()
 endif()
 
-# ---- Profiling (perf tests ported from jiecc, see tools/perftest/) ----
+# ---- Benchmark (perf tests ported from jiecc, see bench/) ----
 set(JIEPP_PERF_REPEAT "10" CACHE STRING "Number of repeated runs per perf test case")
 set(JIEPP_PERF_MODE "all" CACHE STRING "Perf test case-size mode: all|greedy|greedy2")
 set(JIEPP_PERF_RESULTS_DIR "${CMAKE_BINARY_DIR}/perftest/results" CACHE PATH "Directory for perf test TSV results")
@@ -200,8 +200,8 @@ endforeach()
 if(Python3_Interpreter_FOUND AND NOT JIEPP_SANDBOX)
     add_custom_target(perf_make
         COMMAND ${Python3_EXECUTABLE}
-            "${CMAKE_CURRENT_SOURCE_DIR}/tools/perftest/perftest.py" make
-            --cases-src "${CMAKE_CURRENT_SOURCE_DIR}/tools/perftest/cases"
+            "${CMAKE_CURRENT_SOURCE_DIR}/bench/perftest.py" make
+            --cases-src "${CMAKE_CURRENT_SOURCE_DIR}/bench/cases"
             --out "${CMAKE_BINARY_DIR}/perftest/cases"
             --mode "${JIEPP_PERF_MODE}"
             ${_JIEPP_PERF_CASE_ARGS}
@@ -210,9 +210,9 @@ if(Python3_Interpreter_FOUND AND NOT JIEPP_SANDBOX)
         VERBATIM
     )
 
-    add_custom_target(profiling
+    add_custom_target(bench
         COMMAND ${Python3_EXECUTABLE}
-            "${CMAKE_CURRENT_SOURCE_DIR}/tools/perftest/perftest.py" run
+            "${CMAKE_CURRENT_SOURCE_DIR}/bench/perftest.py" run
             --jiepp "$<TARGET_FILE:jiepp>"
             --cases "${CMAKE_BINARY_DIR}/perftest/cases"
             --results "${JIEPP_PERF_RESULTS_DIR}"
@@ -223,22 +223,22 @@ if(Python3_Interpreter_FOUND AND NOT JIEPP_SANDBOX)
         USES_TERMINAL
         VERBATIM
     )
-    add_dependencies(profiling jiepp perf_make)
+    add_dependencies(bench jiepp perf_make)
 
-    message(STATUS "Profiling target enabled (Python3: ${Python3_EXECUTABLE})")
+    message(STATUS "Bench target enabled (Python3: ${Python3_EXECUTABLE})")
 else()
     if(JIEPP_SANDBOX)
-        set(_JIEPP_PROFILING_DISABLED_REASON "JIEPP_SANDBOX is ON")
+        set(_JIEPP_BENCH_DISABLED_REASON "JIEPP_SANDBOX is ON")
     else()
-        set(_JIEPP_PROFILING_DISABLED_REASON "Python 3 interpreter not found")
+        set(_JIEPP_BENCH_DISABLED_REASON "Python 3 interpreter not found")
     endif()
-    add_custom_target(profiling
-        COMMAND ${CMAKE_COMMAND} -E echo "profiling target disabled: ${_JIEPP_PROFILING_DISABLED_REASON}"
+    add_custom_target(bench
+        COMMAND ${CMAKE_COMMAND} -E echo "bench target disabled: ${_JIEPP_BENCH_DISABLED_REASON}"
         COMMAND ${CMAKE_COMMAND} -E false
-        COMMENT "profiling target disabled: ${_JIEPP_PROFILING_DISABLED_REASON}"
+        COMMENT "bench target disabled: ${_JIEPP_BENCH_DISABLED_REASON}"
         USES_TERMINAL
         VERBATIM
     )
-    message(STATUS "Profiling target disabled: ${_JIEPP_PROFILING_DISABLED_REASON}")
+    message(STATUS "Bench target disabled: ${_JIEPP_BENCH_DISABLED_REASON}")
 endif()
 

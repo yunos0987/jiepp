@@ -98,12 +98,12 @@ ctest --preset windows-clang-ninja-debug            # test
 
 Release プリセットでは clang の ThinLTO (`-O3 -flto=thin`) が有効になります（Windows は常時有効、Linux では `ld.lld` が見つかった場合のみ有効で、見つからない場合は configure 時に警告が出て ThinLTO なしでビルドされます）。
 
-### 性能測定 / Profiling
+### 性能測定 / Benchmark
 
-Release ビルドに `profiling` ターゲットを用意しています。詳細は [CONTRIBUTING.md の性能測定](CONTRIBUTING.md#性能測定--profiling) を参照してください。
+Release ビルドに `bench` ターゲットを用意しています。詳細は [CONTRIBUTING.md の性能測定](CONTRIBUTING.md#性能測定--benchmark) を参照してください。
 
 ```powershell
-cmake --build --preset windows-clang-ninja-release --target profiling
+cmake --build --preset windows-clang-ninja-release --target bench
 ```
 
 ### VSCode での開発 / Development in VSCode

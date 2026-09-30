@@ -14,12 +14,12 @@
 - Sandbox-only tests (`tests/core/test_sandbox.cpp`, `#ifdef JIEPP_SANDBOX`) only run in a `-DJIEPP_SANDBOX=ON` build. Conversely, many ordinary tests are *expected* to fail in a sandbox build, since filesystem-access directives are intentionally disabled there — do not treat those failures as regressions when testing sandbox mode specifically.
 - Never run a Debug ctest and a Release ctest concurrently against the same worktree: the `tests/jiepp/` end-to-end tests write actual output under `tests/jiepp/input/` (gitignored), and concurrent runs from two builds race on the same files.
 
-## Profiling
+## Benchmarking
 
-- `cmake --build --preset <release-preset> --target profiling` builds `jiepp`, generates perf test case inputs from `tools/perftest/cases/*/*.py`, and runs them, writing a TSV under `build/<preset>/perftest/results/stats.<timestamp>.tsv`.
+- `cmake --build --preset <release-preset> --target bench` builds `jiepp`, generates perf test case inputs from `bench/cases/*/*.py`, and runs them, writing a TSV under `build/<preset>/perftest/results/stats.<timestamp>.tsv`.
 - Configure-time cache vars: `JIEPP_PERF_REPEAT` (samples per case, default 10), `JIEPP_PERF_MODE` (`all`|`greedy`|`greedy2`, default `all`), `JIEPP_PERF_RESULTS_DIR` (default `<build>/perftest/results`), `JIEPP_PERF_CASES` (semicolon-separated case names to restrict to, default empty = all cases).
 - `ctest --preset <name> -L perf` runs only `perftest_smoke`, a fast 2-case selfcheck; it is not part of a plain `ctest` run's normal case count and is not part of `ALL`/CI otherwise.
-- Profiling a Debug build still runs but prints a `WARNING` and is not representative of real performance — always use a Release preset for numbers you intend to report.
+- Benchmarking a Debug build still runs but prints a `WARNING` and is not representative of real performance — always use a Release preset for numbers you intend to report.
 
 ## Code Rules
 

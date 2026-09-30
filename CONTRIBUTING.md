@@ -90,15 +90,15 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 4. 問題なければ、`tests/jiepp/input/<testid>.*` を対応する `tests/jiepp/output/<testid>.*` へ上書きコピーします。
 5. 再度テストを実行し、pass することを確認します。
 
-## 性能測定 / Profiling
+## 性能測定 / Benchmark
 
-`tools/perftest/` は旧 jiecc 由来の性能測定ハーネスです（`tools/perftest/perftest.py`、ケース生成器 `tools/perftest/cases/<name>/<name>.py`）。標準ライブラリのみに依存し、`jiepp.exe` を直接起動します。
+`bench/` は旧 jiecc 由来の性能測定ハーネスです（`bench/perftest.py`、ケース生成器 `bench/cases/<name>/<name>.py`）。標準ライブラリのみに依存し、`jiepp.exe` を直接起動します。
 
 - **make フェーズ**: `perftest.py make` がケース生成器を実行し、ビルドディレクトリ配下（ソースツリー外）にテスト入力ファイル一式を生成します（実行のたびに出力先ディレクトリをクリアしてから生成）。
 - **run フェーズ**: `perftest.py run` が各ケースに対して `jiepp.exe` を `--repeat` 回実行し、実行時間（プロセス起動オーバーヘッドを含む壁時計時間。旧 jiecc の計測方式を踏襲）を TSV に記録します。
-- CMake ターゲット: `perf_make`（ケース生成のみ）と `profiling`（`perf_make` + `jiepp` に依存し、生成とベンチ実行の両方を行う）。どちらも `ALL` ビルドには含まれず、CI でも実行されません（`perftest_smoke` という高速な自己診断テストのみ `ctest -L perf` で実行されます）。
+- CMake ターゲット: `perf_make`（ケース生成のみ）と `bench`（`perf_make` + `jiepp` に依存し、生成とベンチ実行の両方を行う）。どちらも `ALL` ビルドには含まれず、CI でも実行されません（`perftest_smoke` という高速な自己診断テストのみ `ctest -L perf` で実行されます）。
   ```powershell
-  cmake --build --preset windows-clang-ninja-release --target profiling
+  cmake --build --preset windows-clang-ninja-release --target bench
   ```
 - 設定用キャッシュ変数: `JIEPP_PERF_REPEAT`（既定 10）、`JIEPP_PERF_MODE`（`all`|`greedy`|`greedy2`、既定 `all`）、`JIEPP_PERF_RESULTS_DIR`（既定 `<build>/perftest/results`）、`JIEPP_PERF_CASES`（セミコロン区切りのケース名リストで対象を絞り込み、既定は空 = 全ケース）。
 - TSV 形式: `build/<preset>/perftest/results/stats.<YYYYmmdd_HHMMSS>.tsv`。ヘッダは `case name`, `time_1 [ms]` … `time_N [ms]`, `min [ms]`, `median [ms]`, `mean [ms]`, `stdev [ms]`（小数点以下 3 桁）。

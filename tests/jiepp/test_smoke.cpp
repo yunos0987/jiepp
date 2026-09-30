@@ -375,7 +375,7 @@ TEST_F(SmokeTest, StdoutMatchesOutputFileBytes) {
 // limits, so this stays well under that).
 
 TEST_F(SmokeTest, DeeplyNestedFunctionMacroExpansion) {
-    // Matches tools/perftest/cases/iterate_fmacros/iterate_fmacros.py's input
+    // Matches bench/cases/iterate_fmacros/iterate_fmacros.py's input
     // shape (n=100, well under the default stack's Debug-build recursion
     // ceiling -- about 1240 levels with the 8 MiB default stack -- so this
     // passes in both Debug and Release).

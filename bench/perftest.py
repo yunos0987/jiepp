@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # coding: utf-8
-"""tools/perftest/perftest.py -- jiepp preprocessor performance test harness.
+"""bench/perftest.py -- jiepp preprocessor performance test harness.
 
 Ported from jiecc's tools/perftest/{perftest.py,perftest_maker.py,
 perftest_config.py,stats_perftest.py}. Unlike the jiecc version, this
@@ -210,7 +210,7 @@ def cmd_run(args) -> int:
     display_build_type = args.build_type if args.build_type else "unknown"
     is_release = (args.build_type == "Release")
     if not is_release:
-        print(f"WARNING: profiling a {display_build_type} build; timings are not representative", file=sys.stderr)
+        print(f"WARNING: benchmarking a {display_build_type} build; timings are not representative", file=sys.stderr)
 
     case_filter = set(args.case) if args.case else None
     entries = [
@@ -264,7 +264,7 @@ def cmd_run(args) -> int:
 
     print(f"Wrote {tsv_path}")
     if not is_release:
-        print(f"WARNING: profiling a {display_build_type} build; timings are not representative", file=sys.stderr)
+        print(f"WARNING: benchmarking a {display_build_type} build; timings are not representative", file=sys.stderr)
     return 0
 
 
