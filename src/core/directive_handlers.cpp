@@ -133,7 +133,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     // by default (gcc/clang -CC keep them in macro bodies too), whitespace
     // with -nC (gcc/clang without -C). Either way a comment is whitespace to
     // the checks below (Token::C has MASK_WS), so the definition is the same.
-    auto ts = iec3_tokens_from_string(raw_arg, env.get_remove_comments());
+    auto ts = lex_operand(raw_arg, env.get_remove_comments());
     ts = ts_ltrim(std::move(ts));
     // C1: like gcc/clang, the macro name must be an identifier (comments
     // are whitespace, already stripped by ts_ltrim above). A missing name
@@ -347,7 +347,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
 // caller uses this to decide whether to echo the directive under -dD.
 bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_name) {
     // C1: same name validation as {#define} (comments removed, as whitespace).
-    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    auto ts = ts_trim(lex_operand(raw_arg, /*remove_comments=*/true));
     if (ts.empty()) {
         ISSUE(INVALID_DEFINE_SYNTAX, "macro name missing");
         return false;
@@ -376,7 +376,7 @@ bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_n
 }
 
 void handle_tokenize(const std::string& raw_arg, Env& env, std::vector<Token>& ots) {
-    auto ts = iec3_tokens_from_string(raw_arg, env.get_remove_comments());
+    auto ts = lex_operand(raw_arg, env.get_remove_comments());
     // Operand newlines are decoded escapes, not source lines (see
     // expand_operand_tokens()).
     ts_mark_output_only(ts);
@@ -520,7 +520,9 @@ void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
     // folded into one space by the lexer (read_pragma_body()), like in any
     // multi-line directive; a $n/$r escape decodes to a real line break and
     // is printed as one. NewlineInStringAndMessageDirectives checks both.
-    std::string msg = expand_operand_text(raw_arg, env);
+    // A quote in the message text is not scanned for PP29, like clang's
+    // #error/#warning (gcc does scan it).
+    std::string msg = expand_operand_text(raw_arg, env, /*report_unterminated=*/false);
 #ifdef JIEPP_SANDBOX
     // Sandbox: strip control characters to prevent log injection
     std::erase_if(msg, [](unsigned char c) {
@@ -537,7 +539,7 @@ void handle_ignore(const std::string& raw_arg, Env& env) {
     // non-whitespace token matching "PP" followed by exactly two digits
     // (e.g. PP41). Well-formed but unassigned/retired codes are accepted
     // silently by design (§10); only the format is validated here.
-    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    auto ts = ts_trim(lex_operand(raw_arg, /*remove_comments=*/true));
     if (ts.size() == 1 && ts[0].type == Token::ANY) {
         const std::string& s = ts[0].text;
         if (s.size() == 4 && s[0] == 'P' && s[1] == 'P' &&
@@ -603,7 +605,7 @@ void handle_pragma_style(const std::string& raw_arg, Env& env) {
     // trailing comment is stripped rather than rejected as garbage, and
     // require exactly one non-whitespace token equal to VAL_PRAGMA_STANDARD
     // or VAL_PRAGMA_ANNOTATED.
-    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    auto ts = ts_trim(lex_operand(raw_arg, /*remove_comments=*/true));
     if (ts.size() != 1 || ts[0].type != Token::ANY ||
         (ts[0].text != VAL_PRAGMA_STANDARD && ts[0].text != VAL_PRAGMA_ANNOTATED)) {
         // raw_arg is decoded, so re-escape it before it reaches the
@@ -619,7 +621,9 @@ void handle_pragma_once(const std::string& raw_arg, Env& env) {
     // Only "once" is recognised; other pragma names are silently ignored.
     // Comments are whitespace; tokens after "once" are a warning and the
     // pragma still applies, like clang. A document comment is a token.
-    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    // lex_operand() reports PP29 before the "once" check below, so an
+    // unrecognised pragma name still gets it, e.g. {#pragma foo 'x}.
+    auto ts = ts_trim(lex_operand(raw_arg, /*remove_comments=*/true));
     if (ts.empty() || ts[0].type != Token::ANY || ts[0].text != "once")
         return;
     if (ts.size() > 1)

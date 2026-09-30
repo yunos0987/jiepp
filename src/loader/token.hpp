@@ -40,7 +40,7 @@ struct Token {
     // newline or at the end of the input, not at its closing quote.
     // push_string_token() never merges the next literal into such a token
     // (it has no closing quote to drop). Excluded from operator== like
-    // lineno_counted.
+    // lineno_counted. core reports it as PP29 and clears the mark.
     bool        unterminated = false;
     HideSetPtr  hs;          // hide-set (shared, copy-on-write)
 

@@ -192,7 +192,27 @@ Jiepp が認識・保持するコメント形式:
 "ab" 'cd'           (* → 引用符が異なるため結合されない *)
 ```
 
-改行または入力の終わりで終わった（閉じる引用符のない）リテラルには後ろのリテラルを結合しない。gcc/clang と同じく両方をそのまま出力する（`'abc<改行>'def'` は `'abc` と `'def'` のまま。以前は `'abdef'` となり 1 文字失われていた）。
+改行または入力の終わりで終わった（閉じる引用符のない）リテラル（§2「閉じていない文字列リテラル」）には後ろのリテラルを結合しない。gcc/clang と同じく両方をそのまま出力する（`'abc<改行>'def'` は `'abc` と `'def'` のまま。以前は `'abdef'` となり 1 文字失われていた）。
+
+### 閉じていない文字列リテラル / Unterminated String Literals
+
+文字列リテラル（`'...'`・`"..."`）は同じ引用符で閉じる。閉じる前に改行（LF・CR・CRLF）か入力の終わりに達したリテラルはそこで終わったものとして扱い、`UNTERMINATED_STRING_LITERAL` (`PP29`) 警告を出す（gcc/clang の "missing terminating ' character" と同じ）。警告だけで出力は変わらない。
+
+```
+x := 'abc      (* PP29 *)
+y := 'it$'s    (* PP29: $' はエスケープなので閉じていない *)
+z := 'ab$
+cd';           (* 警告なし: $ + 改行は行の継続 *)
+```
+
+- 行番号はリテラルが始まる行（`$` + 改行で続く場合も最初の行。`{#line}` を反映）。コンテキストは開始引用符から最初の行の終わりまで（例: `warning: PP29: Missing terminating quote character; ''abc'`）。前のリテラルと結合された場合は結合後のリテラルを示す
+- 警告はトークンを処理するときに出す。`{#if 0}` などの無効なグループでは出さない（clang と同じ。gcc は出す）。マクロ本体（`{#define}`・`-D`）は定義したときに 1 回だけ出し、展開のたびには出さない。関数マクロの引数は、引数を読んだときに 1 回だけ出す（仮引数を何回使っても、使わなくても）。同じファイルを 2 回インクルードすれば 2 回出す
+- ディレクティブの引数も調べる（行番号はディレクティブの `{` の行）。`{#define}`・`{#undef}`・`{#ifdef}`・`{#if}`・`{#elif}`・`{#include}`・`{#line}`・`{#string}`・`{#token}`・`{#pragma}`・`{#ignore}` など、引数を字句解析するディレクティブが対象。`{#elif}`・`{#else}`・`{#endif}` は、外側のグループが有効なら条件を評価しない場合でも調べる。有効な範囲の未知のディレクティブも `PP45` の後に調べる（gcc/clang と同じ）。数値だけを取る `{#max_*}` と `{#nop}` の引数は調べない
+- `{#error}`・`{#warning}`・`{#info}`・`{#severe}` のメッセージは調べない（clang の `#error` と同じ。gcc は出す）。`{#error don't stop}` は警告にならない。メッセージに展開されるマクロは、定義したときに調べる
+- 引数の中の閉じない引用符（§2「文字列リテラルの中」の `{#define X don't$nstop}`）は、デコード後の字句解析で閉じていないリテラルになるので `PP29` になる
+- 通常のプラグマ（`{attribute 'x}`）の本体は展開するときに調べる。マクロ本体の中のプラグマは展開のたびに出す（gcc/clang の `_Pragma` と同じ）
+- コメントの中の引用符、`@@` 連結や文字列化の結果は対象外
+- `-w` で表示しない。`-Werror` でエラー。`{#ignore PP29}` はそれより後に処理するリテラルに効く。`-D`・`-U` の値で出た場合は `jiepp: warning: PP29: …` と表示する
 
 ### 引数の引用符 / Argument Quoting
 
@@ -730,6 +750,7 @@ VAR CONSTANT MAX_SIZE : INT := 100; END_VAR
 - メッセージ引数はマクロ展開される
 - 上記の例の引用符（`'...'`）は慣例的な記述で実際には取り除かれない。引用符も含めたメッセージ全体をそのまま扱う（§2「引数の引用符」）。閉じた引用符の中の IEC エスケープ（`$'` など）は書いたとおりに出力する（§2）
 - メッセージの中に直接書いた改行は §2 の規則で 1 個の空白になる（`{#warning a<改行>b}` のメッセージは `a b`）。`$n`・`$r`（文字列リテラルの外に書いた場合）は改行としてそのまま出力する
+- メッセージの中の閉じない引用符（`{#error don't}` など）は `PP29` にならない（clang と同じ。§2）
 
 ---
 
@@ -1248,6 +1269,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP26 | `ELSE_ERROR` | ERROR | Unexpected else directive | `{#else}` の位置エラー |
 | PP27 | `ENDIF_ERROR` | ERROR | Unexpected endif directive | `{#endif}` の位置エラー |
 | PP28 | `WHITESPACE_BEFORE_DIRECTIVE` | WARNING | Whitespace between '{' and '#'; treated as an ordinary pragma | `{` と `#` の間に空白があり、通常のプラグマとして扱われた（§2。コメントを挟んだ場合はこの警告は出ない） |
+| PP29 | `UNTERMINATED_STRING_LITERAL` | WARNING | Missing terminating quote character | 文字列リテラルが閉じる引用符の前に改行か入力の終わりに達した（§2「閉じていない文字列リテラル」。出力は変わらない。無効なグループと `{#error}` などのメッセージでは出さない） |
 | PP30 | `INVALID_DEFINE_SYNTAX` | ERROR | Invalid define syntax | `{#define}` / `{#undef}` / `-D` / `-U` の構文エラー（マクロ名がない、識別子でない、パラメータリストが不正など。§3） |
 | PP31 | `INVALID_STRINGIZING` | ERROR | Invalid stringizing (@) | 不正な文字列化演算子 |
 | PP32 | `INVALID_TOKEN_PASTING` | ERROR | Invalid token pasting (@@) | 不正なトークン連結演算子、または `@@` がマクロ本体の先頭・末尾にある（§4.3） |

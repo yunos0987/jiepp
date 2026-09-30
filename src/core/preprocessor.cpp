@@ -26,8 +26,30 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
 
 namespace jiepp::preprocessor_detail {
 
-std::vector<Token> expand_operand_tokens(const std::string& text, Env& env) {
-    auto its = iec3_tokens_from_string(text, env.get_remove_comments(), 1);
+void report_unterminated_literal(Token& t) {
+    if (!t.unterminated)
+        return;
+    t.unterminated = false;
+    // Opening quote to the end of the literal's first line: a "$"+newline
+    // continuation would otherwise put a line break in the diagnostic.
+    ISSUE(UNTERMINATED_STRING_LITERAL, t.text.substr(0, t.text.find_first_of("\r\n")));
+}
+
+std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
+                               bool report_unterminated) {
+    auto ts = iec3_tokens_from_string(text, remove_comments);
+    for (auto& t : ts) {
+        if (report_unterminated)
+            report_unterminated_literal(t);
+        else
+            t.unterminated = false;
+    }
+    return ts;
+}
+
+std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
+                                         bool report_unterminated) {
+    auto its = lex_operand(text, env.get_remove_comments(), report_unterminated);
     // Every newline in an operand is a decoded $n/$l/$r/$0A/$0D escape: the
     // raw newlines of the directive are counted by the lexer separately
     // (the extra newline tokens of read_pragma_body()), so none is a source line.
@@ -37,9 +59,10 @@ std::vector<Token> expand_operand_tokens(const std::string& text, Env& env) {
     return ots;
 }
 
-std::string expand_operand_text(const std::string& text, Env& env) {
+std::string expand_operand_text(const std::string& text, Env& env,
+                                bool report_unterminated) {
     std::string r;
-    for (const auto& t : expand_operand_tokens(text, env))
+    for (const auto& t : expand_operand_tokens(text, env, report_unterminated))
         r += t.text;
     return r;
 }

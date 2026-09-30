@@ -103,7 +103,12 @@ TEST_F(LexerLiteralTest, String1) {
 TEST_F(LexerLiteralTest, String2) {
     EXPECT_EQ("\"abc\"",                       pp("\"abc\""));
     EXPECT_EQ("\"abc\",\"$0041$$$n$'$\"\"$t\"", pp("\"abc\",\"$0041$$$n$'$\"\"$t\""));
-    EXPECT_TRUE(empty());
+    // The unescaped quote right after "$\"" (a $-escaped quote) closes this
+    // literal early; the trailing $t" then opens a third literal that is
+    // never closed, so this input genuinely triggers PP29 -- output is
+    // unaffected (it is still copied through verbatim).
+    EXPECT_EQ("<unknown location>:1.0: warning: PP29: Missing terminating quote character; '\"'",
+              message());
 }
 
 // ---- $-newline continuation inside a string literal (B13) ----

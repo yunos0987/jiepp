@@ -1236,10 +1236,16 @@ TEST_F(DirectiveTest, EscapedQuoteFormUnchanged) {
     EXPECT_EQ(R"('it$'s';)", pp(R"({#define W $'it$$$'s$'}W;)"));
     EXPECT_EQ("\n'a//b' +1;", pp("{#define B $'a//b$'\n+1}B;"));
     EXPECT_EQ("\n'a' +1;", pp("{#define B $'a$' // c\n+1}B;"));
-    // An apostrophe that never closes is not a string literal.
-    EXPECT_EQ("don't\nstop;", pp("{#define X don't$nstop}X;"));
-    EXPECT_EQ("\ndon't // c +2;", pp("{#define B don't // c\n+2}B;"));
     EXPECT_TRUE(empty());
+    // An apostrophe that never closes is not a string literal, but it does
+    // start one after decoding: "'t" (from "t$nstop", $n decoded to a real
+    // newline) never closes either, so PP29 fires once, at definition.
+    EXPECT_EQ("don't\nstop;", pp("{#define X don't$nstop}X;"));
+    EXPECT_NE(std::string::npos,
+              message().find("warning: PP29: Missing terminating quote character; '\'t'"));
+    EXPECT_EQ("\ndon't // c +2;", pp("{#define B don't // c\n+2}B;"));
+    EXPECT_NE(std::string::npos,
+              message().find("warning: PP29: Missing terminating quote character; '\'t // c +2'"));
 }
 
 TEST_F(DirectiveTest, DumpMacrosRoundTripsRawStrings) {
@@ -1271,5 +1277,10 @@ TEST_F(DirectiveTest, WstringQuotesUseFourDigitHex) {
     EXPECT_EQ(R"("$0022ab$0022")", pp(R"({#define Q "ab"}{#wstring Q})"));
     EXPECT_EQ(R"("it$0027s")", pp("{#wstring it's}"));
     EXPECT_EQ(R"('it$27s')", pp("{#string it's}"));
-    EXPECT_TRUE(empty());
+    // Both operands' "it's" contains an unterminated 's literal (no closing
+    // quote before the operand ends): PP29 once per {#wstring}/{#string}.
+    EXPECT_EQ((std::vector<std::string>{
+                  "<unknown location>:1.0: warning: PP29: Missing terminating quote character; '\'s'",
+                  "<unknown location>:1.0: warning: PP29: Missing terminating quote character; '\'s'"}),
+              messages());
 }

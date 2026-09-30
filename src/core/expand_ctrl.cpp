@@ -214,7 +214,7 @@ bool eval_cond(const std::string& raw_cond, Env& env) {
 
 // C2: {#ifdef NAME}/{#ifndef NAME}. See expand_helpers.hpp for the contract.
 bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env) {
-    auto ts = ts_trim(iec3_tokens_from_string(raw_arg, /*remove_comments=*/true));
+    auto ts = ts_trim(jiepp::preprocessor_detail::lex_operand(raw_arg, /*remove_comments=*/true));
     if (ts.empty()) {
         ISSUE(INVALID_DEFINED_OPERAND, "macro name missing");
         return false;

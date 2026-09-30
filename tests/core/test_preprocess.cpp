@@ -265,6 +265,10 @@ TEST_F(PreprocessTest, Pragma) {
 
     // Fact: single and double quotes in pragma values pass through unchanged in C++
     EXPECT_EQ("(*{doc: it's a test}*)", pp("{doc: it's a test}"));
+    // "it's a test" contains an unterminated 's a test literal (no closing
+    // quote before the pragma body ends): PP29 once.
+    EXPECT_EQ("<unknown location>:1.0: warning: PP29: Missing terminating quote character; '\'s a test'",
+              message());
     EXPECT_EQ("(*{doc: say \"hello\"}*)", pp("{doc: say \"hello\"}"));
     EXPECT_EQ("(*{doc: 'helloworld' }*)", pp("{doc: 'hello' 'world'}"));
 

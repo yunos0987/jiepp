@@ -90,6 +90,11 @@ void dispatch_directive(const Token& t,
             // INVALID_DIRECTIVE_NAME diagnostic stays on one line, like the
             // directive-operand diagnostics in directive_handlers.cpp.
             Issue::happen(classify_unknown_directive(key), Util::escape_line_breaks(key));
+            // Like gcc/clang, an unrecognised but active directive's operand
+            // is still scanned for PP29 (only reached in continue mode: the
+            // happen() call above throws otherwise).
+            if (!raw_arg.empty())
+                (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
         }
         return;
     }
@@ -136,6 +141,15 @@ void dispatch_directive(const Token& t,
                 if (last.seen_else) {
                     ISSUE(ELIF_ERROR, "elif after else");
                 }
+                if (last.condition.has_value()) {
+                    // A true branch was already taken earlier in this
+                    // if/elif chain: this {#elif}'s condition is never
+                    // evaluated (eval_cond() below is skipped), but gcc/clang
+                    // still scan its operand for a warning, so PP29 is
+                    // reported here explicitly.
+                    if (ctrl_parent_active(ctrl))
+                        (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
+                }
                 if (last.condition.has_value() && last.condition.value()) {
                     last = {true, false};
                 } else if (!last.condition.has_value()) {
@@ -156,6 +170,10 @@ void dispatch_directive(const Token& t,
             }
             if (ctrl_parent_active(ctrl) && invalid_escape)
                 ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+            // Like gcc/clang, a reached {#else}'s operand (normally just
+            // trailing garbage, PP49) is still scanned for PP29.
+            if (ctrl_parent_active(ctrl) && !raw_arg.empty())
+                (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
             {
                 auto& last = ctrl.back();
                 if (last.seen_else) {
@@ -178,6 +196,10 @@ void dispatch_directive(const Token& t,
             }
             if (ctrl_parent_active(ctrl) && invalid_escape)
                 ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+            // Like gcc/clang, a reached {#endif}'s operand is still scanned
+            // for PP29, before the group it closes is popped.
+            if (ctrl_parent_active(ctrl) && !raw_arg.empty())
+                (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
             ctrl.pop_back();
             break;
         default:
@@ -426,6 +448,14 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
         Token t = std::move(work.back());
         work.pop_back();
 
+        // PP29 only where the literal is processed (not in a skipped group,
+        // like clang; gcc also warns there), before its own "$"+newline
+        // continuations advance the counter, so its first line is reported.
+        // Only source tokens still carry the mark: operands, macro bodies and
+        // arguments were reported and cleared already.
+        if (t.unterminated && ctrl_is_active(ctrl))
+            jiepp::preprocessor_detail::report_unterminated_literal(t);
+
         if (t.num_of_lines > 0 && !t.lineno_counted) {
             advance_lineno(t.num_of_lines, env);
         }
@@ -560,6 +590,17 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     while (!work.empty()) {
                         Token pt = std::move(work.back());
                         work.pop_back();
+
+                        // PP29 once, as the argument is read (its copies are
+                        // rescanned once per use of the parameter, or never),
+                        // at the literal's own line: the counter has not yet
+                        // been advanced past the newlines collected so far.
+                        if (pt.unterminated) {
+                            Issue::with_lineno(wrap_lineno(env.get_lineno() + sum_uncounted), [&] {
+                                jiepp::preprocessor_detail::report_unterminated_literal(pt);
+                            });
+                        }
+
                         sum_num_of_lines += pt.num_of_lines;
                         if (pt.output_only_lines)
                             sum_output_only += pt.num_of_lines;

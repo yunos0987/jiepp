@@ -63,6 +63,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `token.hpp` の `DirectiveToken` はディレクティブをビットマスクで分類する。`MASK_OUTPUT` は自身のハンドラが `ots`（出力トークン列）へ直接書き込むディレクティブ（`{#include}` 等）を示し、マクロ引数収集中に見つかると囲むマクロ展開より先に出力してしまうため拒否される
 - 未知のディレクティブ名（`DirectiveToken::name_to_kind()` が解決できないキー）は `directive_token.cpp` の `classify_unknown_directive()` が PP45 (`UNKNOWN_DIRECTIVE`, ERROR) / PP46 (`INVALID_DIRECTIVE_NAME`, ERROR) に振り分けるが、実際に診断を出すのは `core/expand.cpp` の `dispatch_directive()` 1 箇所のみ（有効なコード範囲内のときだけ）
 - `{` と `#` の間に空白・改行・コメントがあると通常のプラグマとして扱われる。空白/改行なら `PP28`（`WHITESPACE_BEFORE_DIRECTIVE`）警告（`lexer_pragma.cpp`）
+- 閉じていない文字列リテラルは `tokenize()` が `Token::unterminated` を立て（後続リテラルと結合しない）、`PP29`（`UNTERMINATED_STRING_LITERAL`）警告は core がトークンを処理するとき（`expand()` 主ループ・関数マクロ引数収集・`preprocessor_detail::lex_operand()`）に 1 回だけ出してフラグを下ろす。無効なグループとメッセージディレクティブでは出さない
 - `Token`（`token.hpp`）はトークン 1 個を表す構造体（`text`, `kind` 等のフィールド）
 
 ### core/ の内部構成
