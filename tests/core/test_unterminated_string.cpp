@@ -29,6 +29,14 @@ std::string w29(int line, const std::string& ctx) {
            ".0: warning: PP29: Missing terminating quote character; '" + ctx + "'";
 }
 
+// The exact PP49 (EXTRA_TOKENS_AT_END_OF_DIRECTIVE) message text at line
+// `line` for context `ctx`; see test_else_endif_extra_tokens.cpp for the
+// full PP49 coverage this helper is used for here.
+std::string w49(int line, const std::string& ctx) {
+    return "<unknown location>:" + std::to_string(line) +
+           ".0: warning: PP49: Extra tokens at end of directive; '" + ctx + "'";
+}
+
 } // namespace
 
 // ---- lexer marks (D1) ----
@@ -333,7 +341,10 @@ TEST_F(UnterminatedStringTest, UnknownDirectiveOperandReportsPP45ThenPP29) {
 
 TEST_F(UnterminatedStringTest, ElseAndEndifOperandsAreScanned) {
     pp("{#if 1}\n{#else 'x}\n{#endif 'y}\n");
-    EXPECT_EQ((std::vector<std::string>{w29(2, "'x"), w29(3, "'y")}), messages());
+    EXPECT_EQ((std::vector<std::string>{
+                  w29(2, "'x"), w49(2, "{#else 'x}"),
+                  w29(3, "'y"), w49(3, "{#endif 'y}")}),
+              messages());
 }
 
 TEST_F(UnterminatedStringTest, ElifNotEvaluatedButScannedAfterTrueBranchTaken) {

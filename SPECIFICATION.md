@@ -67,6 +67,7 @@ Jiepp is a preprocessor for IEC 61131-3, providing C-preprocessor-equivalent mac
 - 引数末尾の `$` はそのまま残る
 - 残った `$q` などは通常の文字として後続の処理に渡る。文字列リテラルの中の `$q` などは不正なエスケープとして扱わない（下記）
 - 処理されないディレクティブ（無効なグループ内）の不正なエスケープは報告しない（gcc/clang と同じ）。`{#if 0}` で無効になったグループの中の `{#define A x$q}` は `PP21` を出さない
+- `{#else}` の不正なエスケープは §5.1 の `PP49` と同じ条件を満たすときだけ報告する
 
 #### 文字列リテラルの中 / Inside String Literals
 
@@ -207,7 +208,7 @@ cd';           (* 警告なし: $ + 改行は行の継続 *)
 
 - 行番号はリテラルが始まる行（`$` + 改行で続く場合も最初の行。`{#line}` を反映）。コンテキストは開始引用符から最初の行の終わりまで（例: `warning: PP29: Missing terminating quote character; ''abc'`）。前のリテラルと結合された場合は結合後のリテラルを示す
 - 警告はトークンを処理するときに出す。`{#if 0}` などの無効なグループでは出さない（clang と同じ。gcc は出す）。マクロ本体（`{#define}`・`-D`）は定義したときに 1 回だけ出し、展開のたびには出さない。関数マクロの引数は、引数を読んだときに 1 回だけ出す（仮引数を何回使っても、使わなくても）。同じファイルを 2 回インクルードすれば 2 回出す
-- ディレクティブの引数も調べる（行番号はディレクティブの `{` の行）。`{#define}`・`{#undef}`・`{#ifdef}`・`{#if}`・`{#elif}`・`{#include}`・`{#line}`・`{#string}`・`{#token}`・`{#pragma}`・`{#ignore}` など、引数を字句解析するディレクティブが対象。`{#elif}`・`{#else}`・`{#endif}` は、外側のグループが有効なら条件を評価しない場合でも調べる。有効な範囲の未知のディレクティブも `PP45` の後に調べる（gcc/clang と同じ）。数値だけを取る `{#max_*}` と `{#nop}` の引数は調べない
+- ディレクティブの引数も調べる（行番号はディレクティブの `{` の行）。`{#define}`・`{#undef}`・`{#ifdef}`・`{#if}`・`{#elif}`・`{#include}`・`{#line}`・`{#string}`・`{#token}`・`{#pragma}`・`{#ignore}` など、引数を字句解析するディレクティブが対象。`{#elif}`・`{#endif}` は外側のグループが有効なら条件を評価しない場合でも調べる。`{#else}` は §5.1 の `PP49` と同じ条件で調べる。対応する `{#if}` がない `{#else}`・`{#endif}` も `PP26`・`PP27` の前に調べる。有効な範囲の未知のディレクティブも `PP45` の後に調べる（gcc/clang と同じ）。数値だけを取る `{#max_*}` と `{#nop}` の引数は調べない
 - `{#error}`・`{#warning}`・`{#info}`・`{#severe}` のメッセージは調べない（clang の `#error` と同じ。gcc は出す）。`{#error don't stop}` は警告にならない。メッセージに展開されるマクロは、定義したときに調べる
 - 引数の中の閉じない引用符（§2「文字列リテラルの中」の `{#define X don't$nstop}`）は、デコード後の字句解析で閉じていないリテラルになるので `PP29` になる
 - 通常のプラグマ（`{attribute 'x}`）の本体は展開するときに調べる。マクロ本体の中のプラグマは展開のたびに出す（gcc/clang の `_Pragma` と同じ）
@@ -513,6 +514,8 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 `NAME` はマクロ展開しない。`NAME` がない、または識別子でない場合は `INVALID_DEFINED_OPERAND` (`PP40`) エラーになり、`{#ifndef}` の場合もその分岐は偽として扱う。後続の `{#elif}` / `{#else}` は通常どおり評価する（clang と同じ）。
 
 `NAME` の後に余分なトークンがある場合（`{#ifdef A B}`・`{#ifdef X) \or\ (1}` など）は `PP49` 警告を出し、`NAME` だけで判定する（gcc/clang と同じ）。余分なトークンは式として評価しない。無効な分岐（`{#if 0}` の中など）では検査しない。
+
+`{#else}` / `{#endif}` の後に余分なトークンがある場合（`{#else X}`・`{#endif FOO}` など）も `PP49` 警告を出す（gcc/clang の "extra tokens at end of #else/#endif directive" と同じ）。処理は変わらない。コメントは空白として扱うので `{#endif (* FOO *)}`・`{#endif // FOO}` は警告しない（ドキュメントコメント `(*! … *)` はトークンとして数える）。`{#endif}` は外側のグループが有効なときに検査する。`{#else}` は外側が有効で、直前の分岐が有効だったか、その `{#else}` の分岐が選ばれるときに検査する（clang と同じ。`{#if 1}{#elif 1}{#else X}` は警告しない。gcc はこの場合も警告する）。対応する `{#if}` がない `{#else X}` / `{#endif X}` は `PP49` の後に `PP26` / `PP27` を出す。
 
 ### 5.2 `defined` 演算子 / `defined` Operator
 
@@ -1288,7 +1291,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP46 | `INVALID_DIRECTIVE_NAME` | ERROR | Invalid directive name | 英字または `_` で始まるが、識別子として使えない文字を含む名前（例: `{#foo.bar}`）。先頭が数字など識別子として始まれない名前は `PP45` になる |
 | PP47 | `INVALID_PATH` | ERROR | Invalid path | 不正なパス |
 | PP48 | `INVALID_PRAGMA_STYLE_OPERAND` | WARNING | Invalid operand for pragma style directive | `{#pp_output_pragma_style}` の不正なオペランド |
-| PP49 | `EXTRA_TOKENS_AT_END_OF_DIRECTIVE` | WARNING | Extra tokens at end of directive | `{#undef}` / `{#ifdef}` / `{#ifndef}` / `-U` でマクロ名の後に余分なトークンがある（その名前だけを使う。§3.5、§5.1） |
+| PP49 | `EXTRA_TOKENS_AT_END_OF_DIRECTIVE` | WARNING | Extra tokens at end of directive | `{#undef}` / `{#ifdef}` / `{#ifndef}` / `-U` でマクロ名の後、`{#pragma once}` の `once` の後、`{#else}` / `{#endif}` の後に余分なトークンがある（§3.5、§5.1、§7.6） |
 | PP50 | `EXPR_TYPE_ERROR` | ERROR | Type error in expression | 式中の型エラー（ゼロ除算等） |
 | PP51 | `MISSING_EXPRESSION` | ERROR | Missing expression | `{#if}` に式がない |
 | PP52 | `INVALID_EXPRESSION` | ERROR | Invalid expression | 不正な式 |

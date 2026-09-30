@@ -57,6 +57,22 @@ void advance_lineno(LineNo delta, Env& env) {
     err_set_lineno(env.get_lineno());
 }
 
+// Like clang's CheckEndOfDirective() for {#else}/{#endif}: `lex_operand`
+// itself raises PP29 for each unterminated literal in the operand (a side
+// effect of lexing it), and this then raises PP49 (EXTRA_TOKENS_AT_END_OF_
+// DIRECTIVE) if a non-whitespace token remains after that. Comments are
+// whitespace (silent); a document comment `(*! *)` is a token and counts.
+// Callers gate whether this is even called; an empty raw_arg needs no scan.
+void check_end_of_directive(const char* name, const std::string& raw_arg) {
+    if (raw_arg.empty())
+        return;
+    auto ts = ts_trim(jiepp::preprocessor_detail::lex_operand(raw_arg, /*remove_comments=*/true));
+    if (!ts.empty())
+        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
+              std::string("{#") + name + " " +
+                  Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
+}
+
 // ── jiepp extension: directive dispatch (not in Prosser) ──────────
 
 void dispatch_directive(const Token& t,
@@ -175,18 +191,31 @@ void dispatch_directive(const Token& t,
             break;
         case DirectiveToken::ELSE:
             if (ctrl.size() <= 1) {
-                // Same edge case as {#elif} above.
+                // Unlike {#elif} above: clang scans an unmatched {#else}'s
+                // operand too (R3), the top level always counting as
+                // "active" for this purpose, so PP21/PP29/PP49 are reported
+                // here before the "else without matching if" error.
+                if (invalid_escape)
+                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                check_end_of_directive("else", raw_arg);
                 ISSUE(ELSE_ERROR, "else without matching if");
                 return;
             }
-            if (ctrl_parent_active(ctrl) && invalid_escape)
-                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
-            // Like gcc/clang, a reached {#else}'s operand (normally just
-            // trailing garbage, PP49) is still scanned for PP29.
-            if (ctrl_parent_active(ctrl) && !raw_arg.empty())
-                (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
             {
                 auto& last = ctrl.back();
+                // R1 (clang): a {#else} is "reached" -- and so has its
+                // operand scanned for PP21/PP29/PP49 -- when the group right
+                // before it is active, or was itself taken; not when an
+                // earlier, non-adjacent branch of this same chain was
+                // already taken (gcc scans that case too; clang wins ties,
+                // see the design doc). This is narrower than the old
+                // ctrl_parent_active() gate this replaces.
+                const bool reached = ctrl_parent_active(ctrl) &&
+                                     (!last.condition.has_value() || *last.condition);
+                if (reached && invalid_escape)
+                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                if (reached)
+                    check_end_of_directive("else", raw_arg);
                 if (last.seen_else) {
                     ISSUE(ELSE_ERROR, "else after else");
                 }
@@ -201,16 +230,20 @@ void dispatch_directive(const Token& t,
             break;
         case DirectiveToken::ENDIF:
             if (ctrl.size() <= 1) {
-                // Same edge case as {#elif} above.
+                // Unlike {#elif} above: clang scans an unmatched {#endif}'s
+                // operand too (R3), matching the {#else} case above.
+                if (invalid_escape)
+                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                check_end_of_directive("endif", raw_arg);
                 ISSUE(ENDIF_ERROR, "endif without matching if");
                 return;
             }
             if (ctrl_parent_active(ctrl) && invalid_escape)
                 ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
-            // Like gcc/clang, a reached {#endif}'s operand is still scanned
-            // for PP29, before the group it closes is popped.
-            if (ctrl_parent_active(ctrl) && !raw_arg.empty())
-                (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
+            // Like gcc/clang (R2), a reached {#endif}'s operand is still
+            // scanned for PP29/PP49, before the group it closes is popped.
+            if (ctrl_parent_active(ctrl))
+                check_end_of_directive("endif", raw_arg);
             ctrl.pop_back();
             break;
         default:
