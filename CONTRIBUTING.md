@@ -100,7 +100,7 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
   ```powershell
   cmake --build --preset windows-clang-ninja-release --target bench
   ```
-- 設定用キャッシュ変数: `JIEPP_PERF_REPEAT`（既定 10）、`JIEPP_PERF_MODE`（`all`|`greedy`|`greedy2`、既定 `all`）、`JIEPP_PERF_RESULTS_DIR`（既定 `<build>/perftest/results`）、`JIEPP_PERF_CASES`（セミコロン区切りのケース名リストで対象を絞り込み、既定は空 = 全ケース）。
+- 設定用キャッシュ変数: `JIEPP_PERF_REPEAT`（既定 10）、`JIEPP_PERF_MODE`（`all`|`greedy`|`greedy2`、既定 `all`）、`JIEPP_PERF_RESULTS_DIR`（既定 `<build>/perftest/results`）、`JIEPP_PERF_CASES`（セミコロン区切りのケース名リストで対象を絞り込み、既定は空 = 全ケース。存在しないケース名を含むとエラー終了）。
 - TSV 形式: `build/<preset>/perftest/results/stats.<YYYYmmdd_HHMMSS>.tsv`。ヘッダは `case name`, `time_1 [ms]` … `time_N [ms]`, `min [ms]`, `median [ms]`, `mean [ms]`, `stdev [ms]`（小数点以下 3 桁）。
 - 計測値は必ず Release プリセットで取得してください。Debug ビルドでも動作しますが `WARNING` が出力され、数値は代表値になりません。
 

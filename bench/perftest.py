@@ -81,6 +81,16 @@ def _discover_case_dirs(cases_src: Path):
             yield entry.name, entry, generator
 
 
+def _report_unknown_cases(case_filter, available) -> bool:
+    """Print an error and return True if case_filter names cases that are not
+    in 'available'; a typo must not silently benchmark fewer cases."""
+    unknown = sorted(case_filter - set(available))
+    if unknown:
+        print(f"ERROR: unknown perf test case(s): {', '.join(unknown)}", file=sys.stderr)
+        return True
+    return False
+
+
 def cmd_make(args) -> int:
     cases_src = Path(args.cases_src)
     out_dir = Path(args.out)
@@ -88,11 +98,16 @@ def cmd_make(args) -> int:
         print(f"ERROR: --cases-src not found: {cases_src}", file=sys.stderr)
         return 1
 
+    case_filter = set(args.case) if args.case else None
+    if case_filter is not None:
+        available = {case_name for case_name, _, _ in _discover_case_dirs(cases_src)}
+        if _report_unknown_cases(case_filter, available):
+            return 1
+
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    case_filter = set(args.case) if args.case else None
     made = 0
     for case_name, case_dir, generator_py in _discover_case_dirs(cases_src):
         if case_filter is not None and case_name not in case_filter:
@@ -213,6 +228,10 @@ def cmd_run(args) -> int:
         print(f"WARNING: benchmarking a {display_build_type} build; timings are not representative", file=sys.stderr)
 
     case_filter = set(args.case) if args.case else None
+    if case_filter is not None:
+        available = {case_name for case_name, _ in _discover_run_files(cases_dir)}
+        if _report_unknown_cases(case_filter, available):
+            return 1
     entries = [
         (case_name, input_path)
         for case_name, input_path in _discover_run_files(cases_dir)
