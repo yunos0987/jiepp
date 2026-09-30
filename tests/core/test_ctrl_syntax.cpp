@@ -300,6 +300,25 @@ TEST_F(CtrlSyntaxTest, Depth1IfElse) {
     EXPECT_TRUE(empty());
 }
 
+// Fact: once a group has seen {#else}, every subsequent {#elif} or {#else}
+// in that same group must keep reporting "after else" (ELIF_ERROR/
+// ELSE_ERROR) -- like gcc/clang's "#elif after #else"/"#else after #else"
+// for `#if 0 / #else / #elif 1 / #else / #endif` -- even though the first
+// ELIF_ERROR does not itself abort processing (ContinueMode, as used by the
+// jiepp CLI's main expansion phase; see jiepp_continue_abort_codes() in
+// jiepp.cpp, which does not include ELIF_ERROR/ELSE_ERROR). A prior bug
+// reset the whole CtrlState (losing seen_else) in the {#elif} handler's
+// "condition was already true" branch, so this second {#else} went
+// unreported.
+TEST_F(CtrlSyntaxTest, ElifAfterElseKeepsSeenElseForLaterElse) {
+    Issue::ContinueMode guard({});
+    EXPECT_NO_THROW(pp("{#if false}{#else}{#elif true}{#else}{#endif}"));
+    auto cs = codes();
+    ASSERT_EQ(2u, cs.size());
+    EXPECT_EQ(Issue::Code::ELIF_ERROR, cs[0]);
+    EXPECT_EQ(Issue::Code::ELSE_ERROR, cs[1]);
+}
+
 // Fact: nested if/elif/else inside depth-1 block evaluates only when the outer branch is taken
 TEST_F(CtrlSyntaxTest, Depth1IfElifElse) {
     // inner if/elif/else is in the 'if' branch

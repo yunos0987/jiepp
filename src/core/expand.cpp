@@ -150,14 +150,25 @@ void dispatch_directive(const Token& t,
                     if (ctrl_parent_active(ctrl))
                         (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
                 }
+                // item: assign has_entered/condition individually here
+                // (instead of replacing the whole CtrlState) so seen_else --
+                // already checked above -- survives into any further
+                // {#elif}/{#else} in this same group; a later {#else} still
+                // needs it to report ELSE_ERROR ("else after else"), matching
+                // gcc/clang's "#elif after #else"/"#else after #else" for
+                // `#if 0 / #else / #elif 1 / #else / #endif` (only reachable
+                // when the first ELIF_ERROR above does not itself abort
+                // processing, e.g. under Issue::ContinueMode).
                 if (last.condition.has_value() && last.condition.value()) {
-                    last = {true, false};
+                    last.has_entered = true;
+                    last.condition = false;
                 } else if (!last.condition.has_value()) {
+                    last.has_entered = true;
                     if (ctrl_parent_active(ctrl)) {
                         bool cond = eval_cond(raw_arg, env);
-                        last = {true, cond ? std::optional<bool>(true) : std::nullopt};
+                        last.condition = cond ? std::optional<bool>(true) : std::nullopt;
                     } else {
-                        last = {true, false};
+                        last.condition = false;
                     }
                 }
             }
