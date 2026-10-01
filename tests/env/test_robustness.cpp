@@ -1,7 +1,12 @@
 #include "test_helper.hpp"
 
 // =====================================================================
-// Robustness limit tests (always-on, regardless of JIEPP_SANDBOX)
+// Robustness limit tests.
+// Most of these are always-on, regardless of JIEPP_SANDBOX. The
+// directive-based max_expansion_depth/max_if_nesting tests below are an
+// exception: {#max_expansion_depth}/{#max_if_nesting} are blocked in
+// sandbox builds (PP62, covered by SandboxDirectiveTest), so those tests
+// only run in non-sandbox builds.
 // =====================================================================
 
 class RobustnessTest : public JieppTest {};
@@ -96,6 +101,9 @@ TEST_F(RobustnessTest, NormalOutputTokensOk) {
 }
 
 // ---- max_expansion_depth directive ----
+// {#max_expansion_depth}/{#max_if_nesting} directives are blocked in
+// sandbox builds (PP62); these tests only apply to non-sandbox builds.
+#ifndef JIEPP_SANDBOX
 
 TEST_F(RobustnessTest, MaxExpansionDepthDirectiveSetsLimit) {
     Env env = setup();
@@ -161,3 +169,5 @@ TEST_F(RobustnessTest, MaxIfNestingDirectiveThenExceed) {
     EXPECT_THROW(pp("{#max_if_nesting 2}{#if 1}{#if 1}{#if 1}A{#endif}{#endif}{#endif}", env), Issue::Exception);
     EXPECT_EQ(Issue::Code::MAX_IF_NESTING_EXCEEDED, code());
 }
+
+#endif  // !JIEPP_SANDBOX
