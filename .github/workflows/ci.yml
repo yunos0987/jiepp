@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        preset: [linux-makefiles-debug, linux-makefiles-release]
+        preset: [linux-makefiles-debug, linux-makefiles-release, linux-portable-release]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -69,3 +69,42 @@ jobs:
 
       - name: Build and Test
         run: cmake --workflow --preset ${{ matrix.preset }}
+
+  build-linux-sandbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake make flex bison curl zip unzip tar
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: build/linux-sandbox-release/vcpkg_installed
+          key: vcpkg-linux-sandbox-release-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-linux-sandbox-release-
+
+      - name: Bootstrap vcpkg
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Configure (sandbox)
+        run: cmake --preset linux-makefiles-release -B build/linux-sandbox-release -DJIEPP_SANDBOX=ON
+
+      - name: Build (sandbox)
+        run: cmake --build build/linux-sandbox-release --parallel
+
+      # Ordinary tests are expected to fail in sandbox builds (filesystem-access
+      # directives are intentionally disabled; see AGENTS.md), so only run the
+      # sandbox-specific and robustness tests here. Two separate selections so
+      # that an empty match (e.g. if -DJIEPP_SANDBOX silently did not apply)
+      # fails the job via --no-tests=error instead of reporting a false pass.
+      - name: Test (sandbox-specific)
+        run: ctest --test-dir build/linux-sandbox-release -R "^Sandbox" --no-tests=error --output-on-failure
+
+      - name: Test (robustness)
+        run: ctest --test-dir build/linux-sandbox-release -R "^RobustnessTest" --no-tests=error --output-on-failure
