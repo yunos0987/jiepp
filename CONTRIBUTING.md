@@ -84,10 +84,10 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 
 上記のサンプル `.piec` とは別に、`tests/jiepp/` の E2E テスト（`run_e2e()`、`tests/jiepp/test_jiepp_command.cpp`）は独自のゴールデンファイル一式を持ちます。意図的な仕様変更でこれらの期待値を更新する必要がある場合は、以下の手順に従ってください。
 
-1. `run_e2e()` は実行のたびに実際の出力を `tests/jiepp/input/<testid>.piec` / `.log` / `.d`（いずれも `.gitignore` 対象で追跡外）へ書き込み、`tests/jiepp/output/<testid>.piec` / `.log` / `.d` の期待値と比較します（`.log` / `.d` は期待値ファイルが存在する場合のみ比較されます）。
-2. **必ず Release プリセットでビルドしたバイナリでテストを実行してください**（例: `ctest --preset windows-clang-ninja-release --gtest_filter` 相当のフィルタ、または `jiepp_test.exe --gtest_filter=JieppCommandTest.<TestName>` を Release ビルドで直接実行）。Debug ビルドではメッセージ末尾に `@<ソースファイル>:<行番号>`（ローカルの絶対パスを含む）が付与されます（`src/env/issue_message.cpp` の `#ifndef NDEBUG` 分岐）。テスト内の比較自体はこの付与部分を両辺で除去してから行うため Debug でもテストは通りますが、ここで生成した `tests/jiepp/input/<testid>.log` をそのままコミット用ゴールデンにコピーすると、ビルド環境のローカル絶対パスがリポジトリに残ってしまいます。既存のゴールデンは全て Release ビルドで生成されています。
-3. 対象テストを実行後、`tests/jiepp/input/<testid>.piec`（変更があれば `.log` / `.d` も）を `tests/jiepp/output/<testid>.piec` 等と diff し、意図した変更のみであることを確認します。
-4. 問題なければ、`tests/jiepp/input/<testid>.*` を対応する `tests/jiepp/output/<testid>.*` へ上書きコピーします。
+1. `run_e2e()` は実行のたびに実際の出力を `build/<preset>/e2e-actual/<testid>.piec` / `.log` / `.d`（ビルドツリー配下。`/build` が `.gitignore` 対象で追跡外）へ書き込み、`tests/jiepp/output/<testid>.piec` / `.log` / `.d` の期待値と比較します（`.log` / `.d` は期待値ファイルが存在する場合のみ比較されます）。
+2. **必ず Release プリセットでビルドしたバイナリでテストを実行してください**（例: `ctest --preset windows-clang-ninja-release --gtest_filter` 相当のフィルタ、または `jiepp_test.exe --gtest_filter=JieppCommandTest.<TestName>` を Release ビルドで直接実行）。Debug ビルドではメッセージ末尾に `@<ソースファイル>:<行番号>`（ローカルの絶対パスを含む）が付与されます（`src/env/issue_message.cpp` の `#ifndef NDEBUG` 分岐）。テスト内の比較自体はこの付与部分を両辺で除去してから行うため Debug でもテストは通りますが、ここで生成した `build/<preset>/e2e-actual/<testid>.log` をそのままコミット用ゴールデンにコピーすると、ビルド環境のローカル絶対パスがリポジトリに残ってしまいます。既存のゴールデンは全て Release ビルドで生成されています。
+3. 対象テストを実行後、`build/windows-clang-ninja-release/e2e-actual/<testid>.piec`（変更があれば `.log` / `.d` も）を `tests/jiepp/output/<testid>.piec` 等と diff し、意図した変更のみであることを確認します。
+4. 問題なければ、`build/windows-clang-ninja-release/e2e-actual/<testid>.*` を対応する `tests/jiepp/output/<testid>.*` へ上書きコピーします。
 5. 再度テストを実行し、pass することを確認します。
 
 ## 性能測定 / Benchmark

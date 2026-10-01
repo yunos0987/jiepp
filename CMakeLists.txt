@@ -186,6 +186,12 @@ if(GTest_FOUND OR TARGET GTest::gtest)
             JIEPP_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
             JIEPP_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
             JIEPP_EXE_PATH="$<TARGET_FILE:jiepp>"
+            # C8: tests/jiepp/test_jiepp_command.cpp's run_e2e() writes each
+            # e2e case's actual .piec/.log/.d here instead of into
+            # tests/jiepp/input, so the source tree stays clean after a test
+            # run and a Debug and a Release ctest no longer race on the same
+            # files (each build directory gets its own e2e-actual/).
+            JIEPP_E2E_ACTUAL_DIR="${CMAKE_BINARY_DIR}/e2e-actual"
         )
 
         include(GoogleTest)
