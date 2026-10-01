@@ -133,6 +133,38 @@ FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Tok
 
     body_ = normalize(std::move(body), args_);
     stringizes_va_ = compute_stringizes_va(body_, args_);
+    const int num_formals = regular_count + (has_va ? 1 : 0);
+    compute_arg_slots(body_, args_, num_formals, arg_slots_, arg_slot_uses_);
+}
+
+void FunctionMacro::compute_arg_slots(
+    const std::vector<Token>& body,
+    const std::unordered_map<std::string, std::pair<int, bool>>& args,
+    int num_formals,
+    std::vector<int>& out_slots,
+    std::vector<int>& out_slot_uses) {
+    std::vector<int> use_count(static_cast<std::size_t>(num_formals), 0);
+    for (const auto& t : body) {
+        if (t.type != Token::ANY)
+            continue;
+        if (t.text == VA_ARGC)
+            continue; // __VA_ARGC__ is substituted as a count, never expanded
+        auto it = args.find(t.text);
+        if (it == args.end())
+            continue;
+        int pidx = it->second.first;
+        if (pidx >= 0 && pidx < num_formals)
+            ++use_count[static_cast<std::size_t>(pidx)];
+    }
+    out_slots.assign(static_cast<std::size_t>(num_formals), -1);
+    out_slot_uses.clear();
+    for (int pidx = 0; pidx < num_formals; ++pidx) {
+        int count = use_count[static_cast<std::size_t>(pidx)];
+        if (count >= 2) {
+            out_slots[static_cast<std::size_t>(pidx)] = static_cast<int>(out_slot_uses.size());
+            out_slot_uses.push_back(count);
+        }
+    }
 }
 
 bool FunctionMacro::compute_stringizes_va(

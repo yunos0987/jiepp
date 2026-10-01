@@ -635,10 +635,13 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         Token pt = std::move(work.back());
                         work.pop_back();
 
-                        // PP29 once, as the argument is read (its copies are
-                        // rescanned once per use of the parameter, or never),
-                        // at the literal's own line: the counter has not yet
-                        // been advanced past the newlines collected so far.
+                        // PP29 once, as the argument is read (the argument is
+                        // expanded at most once per invocation regardless of
+                        // how many times its parameter is used in the body --
+                        // see expand_subst.cpp's ArgExpansionMemo -- or never,
+                        // if the parameter is never substituted), at the
+                        // literal's own line: the counter has not yet been
+                        // advanced past the newlines collected so far.
                         if (pt.unterminated) {
                             Issue::with_lineno(wrap_lineno(env.get_lineno() + sum_uncounted), [&] {
                                 jiepp::preprocessor_detail::report_unterminated_literal(pt);
@@ -658,7 +661,10 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         // dropped from the argument stream, instead of being captured
                         // as a raw token and re-executed once per occurrence of the
                         // parameter in the macro body (see subst()'s formal-parameter
-                        // substitution, which calls expand() per occurrence).
+                        // substitution, which expands the actual at most once per
+                        // invocation -- see expand_subst.cpp's ArgExpansionMemo --
+                        // and shares that one expansion's output tokens, including
+                        // any this directive produced, across every occurrence).
                         if (pt.type == Token::DIRECTIVE) {
                             // UD2: decode without raising PP21 yet (the 2-arg
                             // overload) -- dispatch_directive() below decodes
@@ -779,8 +785,23 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     // macro name appeared on.
                     advance_lineno(sum_uncounted, env);
 
+                    // task_slug arg-expand-once (D2): a memo is allocated only when
+                    // this macro has at least one parameter spelled >= 2 times in its
+                    // body (fm->num_arg_slots() > 0); otherwise nullptr is passed and
+                    // subst() takes its original per-occurrence expand() path for
+                    // every parameter, with no allocation. fm must stay valid across
+                    // this call (already required; see symtab.hpp F14).
+                    std::optional<ArgExpansionMemo> arg_memo;
+                    if (fm->num_arg_slots() > 0) {
+                        arg_memo.emplace(ArgExpansionMemo{
+                            &fm->arg_slots(), fm->arg_slot_uses(),
+                            std::vector<std::optional<std::vector<Token>>>(
+                                static_cast<std::size_t>(fm->num_arg_slots()))});
+                    }
                     auto replaced = subst(fm->body(), fm->args(), params,
-                                         arg_ws.empty() ? nullptr : &arg_ws, new_hs, env);
+                                         arg_ws.empty() ? nullptr : &arg_ws, new_hs, env,
+                                         /*va_sep_ws=*/false,
+                                         arg_memo ? &*arg_memo : nullptr);
                     // A macro replacement never contributes source lines: a newline
                     // in it is either a decoded $n in the body or a copy of an
                     // argument newline, whose source line the call newline token

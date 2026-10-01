@@ -94,7 +94,8 @@ void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
 std::vector<Token> select_arg(int idx,
                               const std::vector<std::vector<Token>>& actuals,
                               bool is_va,
-                              const std::vector<ArgWs>* ws) {
+                              const std::vector<ArgWs>* ws,
+                              bool mark_sep) {
     if (!is_va) {
         if (idx < static_cast<int>(actuals.size()))
             return actuals[idx];
@@ -109,15 +110,23 @@ std::vector<Token> select_arg(int idx,
     auto flag = [&](int k, bool ArgWs::*field) {
         return ws && k >= 0 && k < static_cast<int>(ws->size()) && (*ws)[k].*field;
     };
+    // D3: when building the one shared spelling for a memoised multi-use
+    // variadic parameter, tag each inserted WS token so append_expanded()
+    // can filter it back out for the plain (non-stringize) consumer.
+    auto ws_token = [&] {
+        Token t = Token::create(Token::WS, " ");
+        t.va_sep = mark_sep;
+        return t;
+    };
 
     std::vector<Token> result;
     for (int k = idx; k < static_cast<int>(actuals.size()); ++k) {
         if (k > idx) {
             if (flag(k - 1, &ArgWs::trail))
-                result.push_back(Token::create(Token::WS, " "));
+                result.push_back(ws_token());
             result.push_back(Token::create(Token::SEP, ","));
             if (flag(k, &ArgWs::lead))
-                result.push_back(Token::create(Token::WS, " "));
+                result.push_back(ws_token());
         }
         for (auto& t : actuals[k])
             result.push_back(t);
@@ -221,6 +230,32 @@ static std::size_t collect_va_opt_content(
     return j; // index of matching closing ')'
 }
 
+// task_slug arg-expand-once (D1/D3): append one occurrence's worth of a
+// memoised expansion `cached` to `result`. keep_sep selects which of the
+// two spellings D3 may have cached (plain vs. the WS-carrying variadic
+// spelling, see select_arg()'s mark_sep): a va_sep-marked token is dropped
+// unless keep_sep is true, and is always copied out with the marker
+// cleared, so it can never leak out of subst() even on the moved-out path.
+// When `move` is true (the occurrence that observes the slot's last
+// remaining need), tokens are moved out of `cached` instead of copied --
+// safe because this is always the last appender.
+static void append_expanded(std::vector<Token>& result, std::vector<Token>& cached,
+                            bool keep_sep, bool move) {
+    result.reserve(result.size() + cached.size());
+    for (auto& t : cached) {
+        if (t.va_sep && !keep_sep)
+            continue;
+        if (move) {
+            t.va_sep = false;
+            result.push_back(std::move(t));
+        } else {
+            Token copy = t;
+            copy.va_sep = false;
+            result.push_back(std::move(copy));
+        }
+    }
+}
+
 // ── §subst — substitute args, handle stringize and paste ──────────
 
 std::vector<Token> subst(
@@ -230,7 +265,8 @@ std::vector<Token> subst(
     const std::vector<ArgWs>* actual_ws,
     const Token::HideSet& hs,
     Env& env,
-    bool va_sep_ws) {
+    bool va_sep_ws,
+    ArgExpansionMemo* memo) {
 
     std::vector<Token> result;
     result.reserve(body.size());
@@ -289,7 +325,7 @@ std::vector<Token> subst(
                 if (k < body.size()) {
                     if (va_args_non_empty(formal_params, actual_params))
                         item = ts_flatten(subst(content, formal_params, actual_params,
-                                                actual_ws, {}, env, va_sep_ws));
+                                                actual_ws, {}, env, va_sep_ws, memo));
                     // Empty item → glue_tokens is a no-op → left side preserved unchanged.
                     i = k;
                 } else {
@@ -347,7 +383,7 @@ std::vector<Token> subst(
                         std::vector<Token> inner;
                         if (va_args_non_empty(formal_params, actual_params))
                             inner = subst(content, formal_params, actual_params,
-                                         actual_ws, {}, env, /*va_sep_ws=*/true);
+                                         actual_ws, {}, env, /*va_sep_ws=*/true, memo);
                         result.push_back(stringize_tokens(inner));
                         i = k;
                         continue;
@@ -396,7 +432,7 @@ std::vector<Token> subst(
                 }
                 if (va_args_non_empty(formal_params, actual_params)) {
                     auto inner = subst(content, formal_params, actual_params,
-                                       actual_ws, {}, env, va_sep_ws);
+                                       actual_ws, {}, env, va_sep_ws, memo);
                     for (auto& et : inner) result.push_back(et);
                 }
                 i = j; // advance past closing ')'
@@ -413,29 +449,56 @@ std::vector<Token> subst(
                     continue;
                 }
 
+                // task_slug arg-expand-once (D1/D2): a slot >= 0 means this
+                // parameter is spelled >= 2 times in the body, so its
+                // expansion is memoised; see ArgExpansionMemo. slot == -1
+                // (including memo == nullptr, for a macro with no multi-use
+                // parameter) keeps the original O3 direct-expand path below
+                // untouched -- no allocation, no copy.
+                const int slot = (memo && pidx < static_cast<int>(memo->slots->size()))
+                                      ? (*memo->slots)[pidx]
+                                      : -1;
+                // D3: a multi-use variadic parameter whose macro stringizes
+                // its variable arguments builds its cached expansion from a
+                // single WS-marked spelling (see select_arg's mark_sep),
+                // computed fresh below, regardless of actual_ws -- so the
+                // raw spelling is not needed to seed that cache.
+                const bool slot_needs_marked_spelling = slot >= 0 && is_va && actual_ws;
+                const bool need_raw =
+                    glue_adjacent[i] || slot < 0 ||
+                    (!memo->expanded[static_cast<std::size_t>(slot)].has_value() &&
+                     !slot_needs_marked_spelling);
+
                 // O2b: select_arg() copies the actual's token vector even for
                 // the (overwhelmingly common) non-variadic case, where
                 // actual_params[pidx] already holds exactly the tokens
-                // select_arg() would build. Bind a const& straight into
+                // select_arg() would build. Bind a pointer straight into
                 // actual_params there instead; only the variadic path (which
                 // must concatenate multiple actuals with inserted SEP
                 // tokens) still needs select_arg()'s freshly-built vector,
                 // held alive in actual_va.
                 std::vector<Token> actual_va;
                 static const std::vector<Token> empty_actual;
-                const std::vector<Token>& actual =
-                    is_va
-                        ? (actual_va = select_arg(pidx, actual_params, is_va,
-                                                  va_sep_ws ? actual_ws : nullptr))
-                        : (pidx < static_cast<int>(actual_params.size())
-                               ? actual_params[pidx]
-                               : empty_actual);
+                const std::vector<Token>* actual = nullptr;
+                if (need_raw) {
+                    if (is_va) {
+                        actual_va = select_arg(pidx, actual_params, is_va,
+                                               va_sep_ws ? actual_ws : nullptr);
+                        actual = &actual_va;
+                    } else {
+                        actual = (pidx < static_cast<int>(actual_params.size()))
+                                     ? &actual_params[static_cast<std::size_t>(pidx)]
+                                     : &empty_actual;
+                    }
+                }
 
                 if (glue_adjacent[i]) {
                     // A formal parameter directly adjacent to @@ that substitutes to
                     // zero tokens is a placemarker (C17 6.10.3.3p2): it must not fall
-                    // back to being pasted as its own literal name.
-                    auto flat = ts_flatten(actual);
+                    // back to being pasted as its own literal name. Never memoised
+                    // (D1): the raw actual is pasted as-is, independent of any other
+                    // occurrence's expansion.
+                    auto flat = ts_flatten(*actual);
                     if (flat.empty()) {
                         pending_placemarker = true;
                     } else {
@@ -443,12 +506,27 @@ std::vector<Token> subst(
                             result.push_back(ft);
                         pending_placemarker = false;
                     }
-                } else {
+                } else if (slot < 0) {
                     // O3: expand() appends straight into `result` instead of
                     // into a throwaway `expanded` vector that is then
                     // copied token-by-token -- one fewer O(k) copy per
                     // formal-parameter occurrence.
-                    expand(actual, result, env);
+                    expand(*actual, result, env);
+                    pending_placemarker = false;
+                } else {
+                    auto& cached = memo->expanded[static_cast<std::size_t>(slot)];
+                    if (!cached) {
+                        cached.emplace();
+                        if (slot_needs_marked_spelling)
+                            expand(select_arg(pidx, actual_params, true, actual_ws,
+                                              /*mark_sep=*/true),
+                                   *cached, env);
+                        else
+                            expand(*actual, *cached, env);
+                    }
+                    const bool last =
+                        (--memo->remaining[static_cast<std::size_t>(slot)] == 0);
+                    append_expanded(result, *cached, /*keep_sep=*/va_sep_ws, /*move=*/last);
                     pending_placemarker = false;
                 }
                 continue;

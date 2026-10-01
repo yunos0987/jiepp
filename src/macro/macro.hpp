@@ -162,6 +162,20 @@ public:
     // equal() and is not compared there.
     bool stringizes_va() const { return stringizes_va_; }
 
+    // task_slug arg-expand-once (D2): per formal index (by pidx, as used in
+    // args()), the dense slot for a parameter spelled >= 2 times in the
+    // body, or -1 if spelled 0 or 1 times. "Spelled" over-counts (counts
+    // every ANY body token resolving through args() to pidx, including
+    // @/@@ operands and __VA_OPT__ content, excluding __VA_ARGC__), so it
+    // never under-counts a real expansion need. Computed once in the
+    // constructor; not part of equal().
+    const std::vector<int>& arg_slots() const { return arg_slots_; }
+    // Per slot (indexed by arg_slots()[pidx]): the precomputed spelling
+    // count, i.e. the number of times expand_subst.cpp's subst() must be
+    // asked for that parameter's expansion within one invocation.
+    const std::vector<int>& arg_slot_uses() const { return arg_slot_uses_; }
+    int num_arg_slots() const { return static_cast<int>(arg_slot_uses_.size()); }
+
 private:
     std::unordered_map<std::string, std::pair<int, bool>> args_;
     int num_params_min_ = 0;
@@ -170,10 +184,23 @@ private:
     std::vector<std::string> args_list_; // original ordered parameter names
     bool named_variadic_ = false;
     bool stringizes_va_ = false;
+    std::vector<int> arg_slots_;     // size == number of formals; -1 or slot index
+    std::vector<int> arg_slot_uses_; // size == number of slots; spelling count
 
     static bool compute_stringizes_va(
         const std::vector<Token>& body,
         const std::unordered_map<std::string, std::pair<int, bool>>& args);
+
+    // task_slug arg-expand-once (D2). num_formals is the number of distinct
+    // formal-parameter slots in args() (regular params plus, for a
+    // variadic macro, one more for the variable-arguments index) -- i.e.
+    // one past the highest pidx that occurs in args()'s values.
+    static void compute_arg_slots(
+        const std::vector<Token>& body,
+        const std::unordered_map<std::string, std::pair<int, bool>>& args,
+        int num_formals,
+        std::vector<int>& out_slots,
+        std::vector<int>& out_slot_uses);
 
     static std::vector<Token> normalize(
         std::vector<Token> ts,

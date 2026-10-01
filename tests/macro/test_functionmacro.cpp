@@ -917,4 +917,60 @@ TEST_F(FuncMacroTest, GnuNamedVariadicRedefinition) {
     EXPECT_EQ(Issue::Code::MACRO_REDEFINED, cs3[0]);
 }
 
+// ---- function macro: multi-use-parameter slot precomputation (task_slug arg-expand-once, D2) ----
+//
+// FunctionMacro precomputes, once per definition, a dense "slot" index for
+// every formal parameter spelled >= 2 times in the body (over-counting is
+// accepted: @/@@ operands and __VA_OPT__ content are counted even though
+// some never trigger a real expansion). A parameter spelled 0 or 1 times
+// gets no slot (arg_slots()[pidx] == -1). __VA_ARGC__ never counts toward
+// the variadic parameter's use count.
+
+TEST_F(FuncMacroTest, ArgSlotsSingleUseParameterHasNoSlot) {
+    FunctionMacro f({"a"}, ts("a"));
+    ASSERT_EQ(1u, f.arg_slots().size());
+    EXPECT_EQ(-1, f.arg_slots()[0]);
+    EXPECT_EQ(0, f.num_arg_slots());
+    EXPECT_TRUE(f.arg_slot_uses().empty());
+}
+
+TEST_F(FuncMacroTest, ArgSlotsDoubleUseParameterGetsSlot) {
+    FunctionMacro f({"a"}, ts("a a"));
+    ASSERT_EQ(1u, f.arg_slots().size());
+    EXPECT_NE(-1, f.arg_slots()[0]);
+    EXPECT_EQ(1, f.num_arg_slots());
+    ASSERT_EQ(1u, f.arg_slot_uses().size());
+    EXPECT_EQ(2, f.arg_slot_uses()[static_cast<std::size_t>(f.arg_slots()[0])]);
+}
+
+TEST_F(FuncMacroTest, ArgSlotsStringizeOperandCountsTowardOverCount) {
+    // @a a: @a is a stringize operand (never truly expanded) but D2 counts
+    // it anyway, over-counting (accepted: never under-counts a real need).
+    FunctionMacro f({"a"}, ts("@a a"));
+    ASSERT_EQ(1u, f.arg_slots().size());
+    EXPECT_NE(-1, f.arg_slots()[0]);
+    EXPECT_EQ(1, f.num_arg_slots());
+    EXPECT_EQ(2, f.arg_slot_uses()[static_cast<std::size_t>(f.arg_slots()[0])]);
+}
+
+TEST_F(FuncMacroTest, ArgSlotsVaArgcExcludedFromVariadicUseCount) {
+    // __VA_ARGS__ appears twice (counted), __VA_ARGC__ appears once
+    // (excluded): the variadic slot's use count must be 2, not 3.
+    FunctionMacro f({"..."}, ts("__VA_ARGS__ __VA_ARGC__ __VA_ARGS__"));
+    const auto& args = f.args();
+    int va_idx = args.at(FunctionMacro::VA_SYM).first;
+    ASSERT_GT(static_cast<int>(f.arg_slots().size()), va_idx);
+    EXPECT_NE(-1, f.arg_slots()[static_cast<std::size_t>(va_idx)]);
+    EXPECT_EQ(2, f.arg_slot_uses()[static_cast<std::size_t>(f.arg_slots()[static_cast<std::size_t>(va_idx)])]);
+}
+
+TEST_F(FuncMacroTest, ArgSlotsDoNotAffectEqual) {
+    // Slot precomputation is derived data, not part of macro identity.
+    FunctionMacro a({"x"}, ts("x x"));
+    FunctionMacro b({"x"}, ts("x x"));
+    EXPECT_TRUE(a.equal(b));
+    FunctionMacro c({"x"}, ts("x"));
+    EXPECT_FALSE(a.equal(c)); // different body, not because of slots
+}
+
 

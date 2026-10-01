@@ -19,6 +19,14 @@ struct Token {
     using HideSetPtr = std::shared_ptr<const HideSet>;
 
     int         type   = ANY;
+    // True only for an R6 whitespace token that select_arg() inserted around a
+    // joining comma of the variable arguments, for the shared memoised
+    // expansion of a multi-use variadic parameter (task_slug arg-expand-once,
+    // expand_subst.cpp D3). Never leaves subst(): consumers either keep it
+    // (stringize context) or skip it (plain use). Placed here, directly after
+    // `type`, to reuse the padding before `text` so sizeof(Token) is
+    // unchanged; excluded from operator== like the other bookkeeping flags.
+    bool        va_sep = false;
     std::string text;
     int         num_of_lines = 0; // number of newlines this token contributes
     // True once this token's num_of_lines has already been applied to Env's line
