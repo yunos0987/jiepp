@@ -103,11 +103,10 @@ std::string encode_directive_text(std::string_view t);
 
 // Parse "{#keyword arg}" or "{#keyword: arg}" -> (keyword, arg), decoding
 // $-escapes in both with the literal-on-invalid rule (see
-// decode_directive_text() above). Raises no diagnostic itself (not even for
-// "{...}" that is not a directive at all -- INVALID_PP_SYNTAX is still
-// raised for that, since the caller cannot recover a (key, arg) pair for it
-// either way). *invalid_escape (when non-null) is set to the raw,
-// undecoded text of the key or the arg -- whichever is invalid, key
+// decode_directive_text() above). Raises no diagnostic itself, except
+// INVALID_PP_SYNTAX for a "{...}" that is not a directive at all (no
+// key/arg pair can be recovered). *invalid_escape (when non-null) is set to
+// the raw, undecoded text of the key or the arg -- whichever is invalid, key
 // preferred if both are -- so the caller can raise INVALID_ESCAPE_SEQUENCE
 // (PP21) itself, once per directive, only when/if the directive turns out
 // to matter (e.g. not inside a skipped {#if 0} group).
