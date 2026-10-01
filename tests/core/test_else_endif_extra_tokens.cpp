@@ -110,10 +110,13 @@ TEST_F(ElseEndifExtraTokensTest, MultiLineOperand) {
 }
 
 TEST_F(ElseEndifExtraTokensTest, UnterminatedThenExtra) {
-    pp("{#if 1}\n{#else 'abc}\n{#endif 'xyz}\n");
+    // The design calls for a double-quoted literal here (distinct from
+    // {#else}'s single-quoted one above), not another single-quoted one --
+    // verified: {#endif "xyz} -> PP29 '"xyz' then PP49 at line 3.
+    pp("{#if 1}\n{#else 'abc}\n{#endif \"xyz}\n");
     EXPECT_EQ((std::vector<std::string>{
                   w29(2, "'abc"), w49(2, "{#else 'abc}"),
-                  w29(3, "'xyz"), w49(3, "{#endif 'xyz}")}),
+                  w29(3, "\"xyz"), w49(3, "{#endif \"xyz}")}),
               messages());
 }
 
