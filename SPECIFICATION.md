@@ -446,6 +446,7 @@ STR(a/**/b)               (* → 'a b' *)
 STR(a+b)                  (* → 'a+b'   -- 空白なしは詰めたまま *)
 STR(  a  )                (* → 'a' *)
 STR('x   y'  z)            (* → '$27x   y$27 z'  -- 文字列リテラル内部は保持 *)
+{#define S2(x) STR(x)}
 {#define B a   b}
 S2(B)                     (* → 'a b'  -- 展開結果にも規則が適用される *)
 {#define V(...) @__VA_ARGS__}
