@@ -76,7 +76,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `expand()`（トークン列版オーバーロード） — Prosser のアルゴリズムに基づく展開の主ループ。トークン列を受けマクロ展開・ディレクティブ処理して出力トークン列を返す
 - `preprocess()` — ストリーム/ファイルパス向け簡易 API。CLI は使わず、主に `tests/test_helper.hpp` が利用
 - `preprocess_text()` — 文字列を `preprocess()` に通してマクロ展開後の文字列を返す公開 API。空行圧縮（`compact_blank_lines()`）込みで、ディレクティブのオペランド再展開には使わない
-- `preprocessor_detail::expand_operand_tokens()`/`expand_operand_text()` — ディレクティブのオペランド（`{#if}`/`{#elif}` の条件式、`{#string}`/`{#wstring}`/`{#line}`/`{#include}`/`{#sinclude}`/`{#syspath}` のオペランド、メッセージ本文）と通常のプラグマ本体をマクロ展開する。空行圧縮を一切行わない点が `preprocess_text()` との違いで、圧縮は最終出力に対する後処理であり、オペランドのテキスト自体に行マーカーが混入するのを防ぐ（詳細は「データフロー」）
+- `preprocessor_detail::expand_operand_tokens()`/`expand_operand_text()` — ディレクティブのオペランド（`{#if}`/`{#elif}` の条件式、`{#line}`/`{#include}`/`{#sinclude}`/`{#syspath}` のオペランド、メッセージ本文）と通常のプラグマ本体をマクロ展開する。空行圧縮を一切行わない点が `preprocess_text()` との違いで、圧縮は最終出力に対する後処理であり、オペランドのテキスト自体に行マーカーが混入するのを防ぐ（詳細は「データフロー」）。`{#string}`/`{#wstring}` だけは `expand_operand_tokens()` の結果を `expand_operand_text()`（単純連結）ではなく `expand_detail::stringize_text()`（文字列化の空白圧縮規則、`expand_subst.cpp`、§4.1）に通す
 - `dump_macros()` — `env` のユーザー定義マクロを `{#define ...}` 形式で書き出す。`-dM` の実体
 
 ### macro/ の内部構成
