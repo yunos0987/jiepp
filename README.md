@@ -264,4 +264,4 @@ MIT ライセンス — 詳細は [LICENSE](LICENSE) を参照してください
 
 ### テストデータ / Test Data
 
-`tests/jiepp/input/boost/` 以下の Boost.Preprocessor ヘッダファイルは [Boost Software License 1.0 (BSL-1.0)](https://www.boost.org/LICENSE_1_0.txt) の下でライセンスされています。テストデータとしてのみ使用しています。
+`tests/jiepp/input/boost/` 以下の Boost.Preprocessor ヘッダファイルは [Boost Software License 1.0 (BSL-1.0)](https://www.boost.org/LICENSE_1_0.txt) の下でライセンスされています。テストデータとしてのみ使用しています。ライセンス全文は [`tests/jiepp/input/boost/LICENSE_1_0.txt`](tests/jiepp/input/boost/LICENSE_1_0.txt) に同梱しています。また、これらから生成した `tests/jiepp/output/boost.piec` も同じライセンス (BSL-1.0) の下にあります。
