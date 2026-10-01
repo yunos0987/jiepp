@@ -23,7 +23,9 @@ option(JIEPP_SANDBOX "Enable sandbox mode: disable file-system directives and ma
 
 # ---- Portable static binary (for deployment on older Linux servers) ----
 # Produces a self-contained binary with no GLIBC/GLIBCXX version requirements.
-# Use the linux-portable-release preset, which also sets VCPKG_TARGET_TRIPLET=x64-linux-static.
+# Use the linux-portable-release preset. The default vcpkg x64-linux triplet
+# already builds static libraries; -static additionally links glibc and
+# libstdc++ statically.
 option(JIEPP_STATIC_LINK "Link all executables statically (-static)" OFF)
 if(JIEPP_STATIC_LINK)
     add_link_options(-static)
