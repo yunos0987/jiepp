@@ -37,7 +37,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 |---|---|---|
 | `jiepp/` | `main.cpp`, `jiepp.hpp/cpp`, `option.hpp/cpp` | CLI: 引数解析・前処理実行・入出力制御 |
 | `env/` | `env.hpp/cpp`, `issue.hpp/cpp`, `issue_message.hpp/cpp`, `issue_codes.def` | `Env` 状態管理と診断出力 |
-| `loader/` | `lexer.hpp/cpp`, `token.hpp/cpp`, `directive_parser.hpp/cpp`, `directive_token.cpp`, `loader.hpp/cpp` | トークン化・ディレクティブ解析 |
+| `loader/` | `lexer.hpp/cpp`, `token.hpp/cpp`, `hideset.hpp/cpp`, `directive_parser.hpp/cpp`, `directive_token.cpp`, `loader.hpp/cpp` | トークン化・ディレクティブ解析 |
 | `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp`, `line_compaction.hpp/cpp` | ディレクティブ処理・マクロ展開本体（`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む） |
 | `macro/` | `macro.hpp/cpp`, `macro_builtin.cpp` | `Macro` クラスと組み込みオブジェクトマクロ |
 | `constfold/` | `constfold.hpp/cpp`, `constfold_internal.hpp`, `constfold.l`, `constfold.y` | `#if` / `#elif` 式の定数畳み込み |
@@ -65,6 +65,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `{` と `#` の間に空白・改行・コメントがあると通常のプラグマとして扱われる。空白/改行なら `PP28`（`WHITESPACE_BEFORE_DIRECTIVE`）警告（`lexer_pragma.cpp`）
 - 閉じていない文字列リテラルは `tokenize()` が `Token::unterminated` を立て（後続リテラルと結合しない）、`PP29`（`UNTERMINATED_STRING_LITERAL`）警告は core がトークンを処理するとき（`expand()` 主ループ・関数マクロ引数収集・`preprocessor_detail::lex_operand()`）に 1 回だけ出してフラグを下ろす。無効なグループとメッセージディレクティブでは出さない
 - `Token`（`token.hpp`）はトークン 1 個を表す構造体（`text`, `kind` 等のフィールド）
+- Prosser の hide set（`Token::hs`）は `hideset.hpp/cpp` の `HideSet` が実装する。中身はインターン済みマクロ名 id 上の永続的（immutable、構造共有）ビットマップ基数トライで、値はポインタ 1 個のハンドル（コピーは参照カウントの atomic increment のみ）。名前→id のテーブルはプロセス全体で 1 つ・一度登録した名前は解放されず・`Issue` 同様スレッドセーフではない
 
 ### core/ の内部構成
 

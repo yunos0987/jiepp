@@ -526,7 +526,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
 
         // ── Prosser's algorithm (cpp.algo.md §expand) ──
 
-        if (t.type == Token::ANY && (!t.hs || !t.hs->count(t.text))) {
+        if (t.type == Token::ANY && !t.hs.contains(t.text)) {
             Macro* macro = env.lookup(t.text);
             if (macro) {
 
@@ -768,15 +768,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     for (auto& p : params)
                         p = ts_flatten(std::move(p));
 
-                    Token::HideSet new_hs;
-                    if (t.hs && rp_token.hs) {
-                        std::set_intersection(
-                            t.hs->begin(), t.hs->end(),
-                            rp_token.hs->begin(), rp_token.hs->end(),
-                            std::inserter(new_hs, new_hs.begin())
-                        );
-                    }
-                    new_hs.insert(t.text);
+                    Token::HideSet new_hs = Token::HideSet::intersect(t.hs, rp_token.hs).with(t.text);
 
                     // Advance the line counter to the closing ')' BEFORE subst(), so a
                     // __LINE__ reference inside the macro body or an argument reports
@@ -841,8 +833,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             // Case: T is a "()-less macro" → expand(subst(ts(T), {}, {}, HS∪{T}, {}) • TS')
             else if (auto* om = dynamic_cast<ObjectMacro*>(macro)) {
                 auto repl = om->replacement(env);
-                Token::HideSet new_hs = t.hs ? *t.hs : Token::HideSet{};
-                new_hs.insert(t.text);
+                Token::HideSet new_hs = t.hs.with(t.text);
                 static const std::unordered_map<std::string, std::pair<int, bool>> no_params;
                 static const std::vector<std::vector<Token>> no_actuals;
                 repl = subst(repl, no_params, no_actuals, nullptr, new_hs, env);

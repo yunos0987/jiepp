@@ -67,7 +67,7 @@ Token Token::line_pragma(LineNo lineno,
 }
 
 Token Token::clone() const {
-    Token t = *this;  // hs is shared_ptr copy (O(1))
+    Token t = *this;  // hs is a shared handle copy (O(1))
     return t;
 }
 
@@ -111,42 +111,4 @@ std::vector<Token> ts_flatten(std::vector<Token> ts) {
 void ts_mark_output_only(std::vector<Token>& ts) noexcept {
     for (auto& t : ts)
         t.mark_output_only();
-}
-
-// ---------------------------------------------------------------------------
-// Hide-set helpers
-// ---------------------------------------------------------------------------
-
-Token::HideSetPtr hs_empty() {
-    static const Token::HideSetPtr empty = std::make_shared<Token::HideSet>();
-    return empty;
-}
-
-Token::HideSetPtr hs_add_all(const Token::HideSetPtr& base, const Token::HideSet& names) {
-    if (names.empty())
-        return base ? base : hs_empty();
-    // O1: when every name is already in base, the union equals base itself --
-    // share the existing hide set instead of allocating (and copying) a new
-    // one. This is the common case for nested function-macro expansion,
-    // where the same hide set is re-added to many tokens as they propagate
-    // outward through nesting levels.
-    if (base && std::includes(base->begin(), base->end(), names.begin(), names.end()))
-        return base;
-    if (!base || base->empty())
-        return std::make_shared<Token::HideSet>(names);
-    auto s = std::make_shared<Token::HideSet>(*base);
-    for (const auto& n : names)
-        s->insert(n);
-    return s;
-}
-
-Token::HideSetPtr hs_intersect(const Token::HideSetPtr& a, const Token::HideSetPtr& b) {
-    if (!a || a->empty() || !b || b->empty())
-        return hs_empty();
-    auto s = std::make_shared<Token::HideSet>();
-    for (const auto& n : *a) {
-        if (b->count(n))
-            s->insert(n);
-    }
-    return s;
 }

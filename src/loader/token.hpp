@@ -1,5 +1,6 @@
 #pragma once
 #include "../env/lineno.hpp"
+#include "hideset.hpp"
 
 #include <memory>
 #include <set>
@@ -15,8 +16,11 @@ struct Token {
 #include "token.def"
 #undef JIEPP_TOKEN
 
-    using HideSet    = std::set<std::string>;
-    using HideSetPtr = std::shared_ptr<const HideSet>;
+    // Prosser hide set (task_slug hideset-linear): a value handle to an
+    // immutable, structurally shared trie -- see hideset.hpp. Kept as an
+    // alias so hsadd()/subst()'s `const Token::HideSet&` signatures stay
+    // unchanged.
+    using HideSet = ::HideSet;
 
     int         type   = ANY;
     // True only for an R6 whitespace token that select_arg() inserted around a
@@ -56,7 +60,7 @@ struct Token {
     // the replacement, so stringizing (R2) skips it as a separator
     // candidate. Excluded from operator== like lineno_counted.
     bool        line_filler = false;
-    HideSetPtr  hs;          // hide-set (shared, copy-on-write)
+    HideSet     hs;          // hide-set (persistent trie handle, O(1) copy)
 
     // Factories
     static Token create(int type, std::string text, int num_of_lines = 0);
@@ -116,8 +120,3 @@ std::vector<Token> ts_rtrim(std::vector<Token> ts);
 std::vector<Token> ts_flatten(std::vector<Token> ts);
 // Token::mark_output_only() on every token of ts.
 void ts_mark_output_only(std::vector<Token>& ts) noexcept;
-
-// Hide-set helper functions (defined in token.cpp)
-Token::HideSetPtr hs_empty();
-Token::HideSetPtr hs_add_all(const Token::HideSetPtr& base, const Token::HideSet& names);
-Token::HideSetPtr hs_intersect(const Token::HideSetPtr& a, const Token::HideSetPtr& b);
