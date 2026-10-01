@@ -118,6 +118,16 @@ TEST_F(SmokeTest, Help) {
         << "stdout: " << r.out;
 }
 
+TEST_F(SmokeTest, HelpListsShortAlias) {
+    auto help = run("--help");
+    EXPECT_NE(help.out.find("--help / -h"), std::string::npos)
+        << "stdout: " << help.out;
+
+    auto short_help = run("-h");
+    EXPECT_EQ(short_help.exit_code, 0);
+    EXPECT_EQ(short_help.out, help.out);
+}
+
 // ---- 2. --version ----
 
 TEST_F(SmokeTest, Version) {

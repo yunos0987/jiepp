@@ -95,7 +95,7 @@ void display_help_and_exit(int exit_code = 0) {
         "  -dD                      Emit {#define}/{#undef} lines inline\n"
         "  --silent                 Suppress all diagnostic output\n"
         "  --                       End of options\n"
-        "  --help                   Show this help\n"
+        "  --help / -h              Show this help\n"
         "  --version                Show version\n";
     std::exit(exit_code);
 }
