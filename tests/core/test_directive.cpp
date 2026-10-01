@@ -723,6 +723,19 @@ TEST_F(DirectiveTest, RemoveCommentsInMacroBodies) {
         EXPECT_NE(std::string::npos, out.find("{#undef X}")) << "out:\n" << out;
     }
 
+    // Same as above, but for a function macro (C2 in the deferred backlog:
+    // only the object-macro case existed before). Verified on jiepp.exe:
+    // {#define F(x) (* c *) x} with -nC -dD echoes {#define F(x) x}.
+    {
+        Env env = setup();
+        env.set_remove_comments(true);
+        env.set_dd_mode(true);
+        const std::string out = pp("{#define F(x) (* c *) x}F(1)", env);
+        EXPECT_NE(std::string::npos, out.find("{#define F(x) x}")) << "out:\n" << out;
+        EXPECT_EQ(std::string::npos, out.find("(* c")) << "out:\n" << out;
+        EXPECT_NE(std::string::npos, out.find("1")) << "out:\n" << out;
+    }
+
     // -D's body follows the same -nC policy (setup()'s remove_comments
     // parameter is set before -D is processed).
     {
