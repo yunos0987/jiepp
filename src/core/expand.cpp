@@ -746,6 +746,19 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                               + ", got " + std::to_string(n));
                     }
 
+                    // R6: per-actual-argument leading/trailing whitespace/comment
+                    // presence, from the raw (pre-flatten) argument tokens -- needed
+                    // only for a macro that stringizes its variable arguments
+                    // (@__VA_ARGS__/@args or __VA_ARGS__ inside @__VA_OPT__(...)), so
+                    // every other function-macro call pays nothing for it.
+                    std::vector<jiepp::expand_detail::ArgWs> arg_ws;
+                    if (fm->stringizes_va()) {
+                        arg_ws.reserve(params.size());
+                        for (const auto& p : params)
+                            arg_ws.push_back({!p.empty() && (p.front().type & Token::MASK_WS) != 0,
+                                              !p.empty() && (p.back().type & Token::MASK_WS) != 0});
+                    }
+
                     for (auto& p : params)
                         p = ts_flatten(std::move(p));
 
@@ -766,7 +779,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     // macro name appeared on.
                     advance_lineno(sum_uncounted, env);
 
-                    auto replaced = subst(fm->body(), fm->args(), params, new_hs, env);
+                    auto replaced = subst(fm->body(), fm->args(), params,
+                                         arg_ws.empty() ? nullptr : &arg_ws, new_hs, env);
                     // A macro replacement never contributes source lines: a newline
                     // in it is either a decoded $n in the body or a copy of an
                     // argument newline, whose source line the call newline token
@@ -777,6 +791,10 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     if (sum_output_only > 0) {
                         Token nl = Token::newline(sum_output_only);
                         nl.mark_output_only();
+                        // R2: this newline re-emits line count, not an actual
+                        // separator between two tokens of the replacement -- it
+                        // must not become a stringized space (group 11/C13).
+                        nl.line_filler = true;
                         replaced.push_back(std::move(nl));
                     }
                     if (source_lines > 0) {
@@ -785,6 +803,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         // main loop from advancing it a second time when this token is
                         // later popped.
                         nl.lineno_counted = true;
+                        nl.line_filler = true;
                         replaced.push_back(std::move(nl));
                     }
 
@@ -805,7 +824,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 new_hs.insert(t.text);
                 static const std::unordered_map<std::string, std::pair<int, bool>> no_params;
                 static const std::vector<std::vector<Token>> no_actuals;
-                repl = subst(repl, no_params, no_actuals, new_hs, env);
+                repl = subst(repl, no_params, no_actuals, nullptr, new_hs, env);
                 // See the function-macro case above: never source lines.
                 ts_mark_output_only(repl);
 

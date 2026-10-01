@@ -29,9 +29,13 @@ TEST_F(OperandExpansionTest, MessageTextIsNotCompacted) {
 }
 
 TEST_F(OperandExpansionTest, StringizeResultIsNotCompacted) {
-    // Before the fix: 'a$n(*{#:9}*)$nb'.
-    EXPECT_EQ("'a" + kTenNewlines + "b'", pp("{## a" + kTenNewlines + "b}"));
-    EXPECT_EQ("\"a" + kTenNewlines + "b\"", pp("{#wstring a" + kTenNewlines + "b}"));
+    // The stringize whitespace rule (R1/R5) collapses an ordinary decoded $n
+    // run to a single space, so an operand with ten newlines can no longer
+    // exercise compaction directly; carry them inside a doc comment instead,
+    // whose interior is kept verbatim (R3) and never collapsed.
+    // Before the fix: '(*!a$n(*{#:9}*)$nb*)'.
+    EXPECT_EQ("'(*!a" + kTenNewlines + "b*)'", pp("{## (*!a" + kTenNewlines + "b*)}"));
+    EXPECT_EQ("\"(*!a" + kTenNewlines + "b*)\"", pp("{#wstring (*!a" + kTenNewlines + "b*)}"));
     EXPECT_TRUE(empty());
 }
 

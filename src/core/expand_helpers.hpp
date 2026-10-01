@@ -53,21 +53,41 @@ std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts);
 // §glue — paste last of left side with first of right side
 void glue_tokens(std::vector<Token>& src, std::vector<Token>& item);
 
+// Leading/trailing whitespace-or-comment presence of one actual argument in
+// the macro call's own source, used to reproduce clang's comma spacing when
+// stringizing __VA_ARGS__ (R6).
+struct ArgWs { bool lead = false; bool trail = false; };
+
 // §Support functions: select
 std::vector<Token> select_arg(int idx,
                               const std::vector<std::vector<Token>>& actuals,
-                              bool is_va);
+                              bool is_va,
+                              const std::vector<ArgWs>* ws = nullptr);
 int argc_from(int idx, const std::vector<std::vector<Token>>& actuals);
 
 // §Support functions: stringize
+// Text of ts per the stringizing whitespace rule R1-R5: every maximal run of
+// MASK_WS (non-line_filler) tokens between two non-WS tokens becomes one
+// space; a run at either end is dropped; every other token is appended
+// verbatim (no quoting/escaping -- the caller encodes the result).
+std::string stringize_text(const std::vector<Token>& ts);
 Token stringize_tokens(const std::vector<Token>& ts);
 
 // §subst — substitute args, handle stringize and paste
+// actual_ws: per-actual-argument leading/trailing whitespace flags (R6),
+// non-null only when va_sep_ws is true somewhere in the call chain (i.e.
+// only for a macro whose body stringizes its variable arguments --
+// FunctionMacro::stringizes_va()); nullptr for every other call.
+// va_sep_ws: true only while substituting the content of @__VA_OPT__(...),
+// so select_arg() inserts ArgWs-derived spacing around the variadic commas
+// there too, without ever doing so for ordinary (non-stringize) expansion.
 std::vector<Token> subst(
     const std::vector<Token>& body,
     const std::unordered_map<std::string, std::pair<int, bool>>& formal_params,
     const std::vector<std::vector<Token>>& actual_params,
+    const std::vector<ArgWs>* actual_ws,
     const Token::HideSet& hs,
-    Env& env);
+    Env& env,
+    bool va_sep_ws = false);
 
 } // namespace jiepp::expand_detail

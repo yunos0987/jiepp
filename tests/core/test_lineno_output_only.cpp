@@ -80,8 +80,8 @@ TEST_F(OutputOnlyLinesTest, AfterLineDirective) {
 
 TEST_F(OutputOnlyLinesTest, DirectiveOperands) {
     EXPECT_EQ("a\nb\n(*{#:1}*)\n2;", pp("{#token a$nb}\n__LINE__;"));                       // before: 3
-    EXPECT_EQ("'a$nb'\n2;", pp("{## a$nb}\n__LINE__;"));                         // before: 3
-    EXPECT_EQ("\n'a$nb'\n3;", pp("{#define Z a$nb}\n{#string Z}\n__LINE__;"));   // before: 4
+    EXPECT_EQ("'a b'\n2;", pp("{## a$nb}\n__LINE__;"));                          // before: 3
+    EXPECT_EQ("\n'a b'\n3;", pp("{#define Z a$nb}\n{#string Z}\n__LINE__;"));    // before: 4
     EXPECT_EQ("\n\n3;", pp("{#if 1$n+0}\n{#endif}\n__LINE__;"));                // before: 4
     EXPECT_EQ("\n\n\n4;", pp("{#define O 1$n+0}\n{#if O}\n{#endif}\n__LINE__;")); // before: 5
     EXPECT_EQ("\n(*{foo a\nb}*)\n(*{#:2}*)\n3;", pp("{#define Z a$nb}\n{foo Z}\n__LINE__;"));  // before: 4

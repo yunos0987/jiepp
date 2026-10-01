@@ -42,6 +42,12 @@ struct Token {
     // (it has no closing quote to drop). Excluded from operator== like
     // lineno_counted. core reports it as PP29 and clears the mark.
     bool        unterminated = false;
+    // True for a newline token re-emitted after a function-macro replacement
+    // for line-count fidelity (see expand.cpp's function-macro argument
+    // collection): it is not whitespace that ever separated two tokens of
+    // the replacement, so stringizing (R2) skips it as a separator
+    // candidate. Excluded from operator== like lineno_counted.
+    bool        line_filler = false;
     HideSetPtr  hs;          // hide-set (shared, copy-on-write)
 
     // Factories

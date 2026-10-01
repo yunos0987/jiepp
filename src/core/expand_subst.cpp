@@ -93,17 +93,32 @@ void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
 
 std::vector<Token> select_arg(int idx,
                               const std::vector<std::vector<Token>>& actuals,
-                              bool is_va) {
+                              bool is_va,
+                              const std::vector<ArgWs>* ws) {
     if (!is_va) {
         if (idx < static_cast<int>(actuals.size()))
             return actuals[idx];
         return {};
     }
 
+    // R6: reproduce clang's comma spacing for @__VA_ARGS__/@__VA_OPT__ --
+    // one space before the comma iff the preceding actual had trailing
+    // whitespace/comment in the call, one after iff the following actual
+    // had leading whitespace/comment. Bounds-checked: a missing ws entry
+    // (ws == nullptr, or shorter than actuals) counts as false.
+    auto flag = [&](int k, bool ArgWs::*field) {
+        return ws && k >= 0 && k < static_cast<int>(ws->size()) && (*ws)[k].*field;
+    };
+
     std::vector<Token> result;
     for (int k = idx; k < static_cast<int>(actuals.size()); ++k) {
-        if (k > idx)
+        if (k > idx) {
+            if (flag(k - 1, &ArgWs::trail))
+                result.push_back(Token::create(Token::WS, " "));
             result.push_back(Token::create(Token::SEP, ","));
+            if (flag(k, &ArgWs::lead))
+                result.push_back(Token::create(Token::WS, " "));
+        }
         for (auto& t : actuals[k])
             result.push_back(t);
     }
@@ -122,11 +137,47 @@ Token va_argc_token(int idx, const std::vector<std::vector<Token>>& actuals) {
     return Token::create(Token::ANY, std::to_string(argc_from(idx, actuals)));
 }
 
-Token stringize_tokens(const std::vector<Token>& ts) {
+// R1-R5: one pass, no copy through ts_flatten(). A maximal run of
+// MASK_WS tokens (WS: spaces/tabs/newlines; C: comments, with or without
+// -nC) between two non-WS tokens becomes one space; a run before the first
+// or after the last non-WS token is dropped (R1). A run made only of
+// line_filler newlines is not a separator (R2). Every other token is
+// appended verbatim: a line-comment DOCUMENT token's trailing CR/LF is
+// stripped from the text and instead treated as a separator candidate (R4);
+// any ANY token whose interior still carries a raw newline is flattened the
+// way ts_flatten() used to (R5); STRING/WSTRING/PRAGMA/block-DOCUMENT
+// interiors are left untouched (R3).
+std::string stringize_text(const std::vector<Token>& ts) {
     std::string text;
-    for (auto& t : ts_flatten(ts))
-        text += t.text;
-    return Token::create(Token::STRING, Util::encode_iec_string(text, '\''));
+    bool any = false, sep = false;
+    for (const auto& t : ts) {
+        if (t.type & Token::MASK_WS) {
+            if (!t.line_filler)
+                sep = true;
+            continue;
+        }
+        std::string_view s = t.text;
+        bool trailing_nl = false;
+        if (t.type == Token::DOCUMENT && s.starts_with("//")) {
+            while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
+                s.remove_suffix(1);
+                trailing_nl = true;
+            }
+        }
+        if (sep && any)
+            text += ' ';
+        const std::size_t at = text.size();
+        text.append(s);
+        if (t.type == Token::ANY && t.num_of_lines != 0)
+            std::replace(text.begin() + static_cast<std::ptrdiff_t>(at), text.end(), '\n', ' ');
+        any = true;
+        sep = trailing_nl;
+    }
+    return text;
+}
+
+Token stringize_tokens(const std::vector<Token>& ts) {
+    return Token::create(Token::STRING, Util::encode_iec_string(stringize_text(ts), '\''));
 }
 
 // ── §Support functions: __VA_OPT__ helpers ────────────────────────
@@ -176,8 +227,10 @@ std::vector<Token> subst(
     const std::vector<Token>& body,
     const std::unordered_map<std::string, std::pair<int, bool>>& formal_params,
     const std::vector<std::vector<Token>>& actual_params,
+    const std::vector<ArgWs>* actual_ws,
     const Token::HideSet& hs,
-    Env& env) {
+    Env& env,
+    bool va_sep_ws) {
 
     std::vector<Token> result;
     result.reserve(body.size());
@@ -235,7 +288,8 @@ std::vector<Token> subst(
                 std::size_t k = collect_va_opt_content(body, j + 1, content);
                 if (k < body.size()) {
                     if (va_args_non_empty(formal_params, actual_params))
-                        item = ts_flatten(subst(content, formal_params, actual_params, {}, env));
+                        item = ts_flatten(subst(content, formal_params, actual_params,
+                                                actual_ws, {}, env, va_sep_ws));
                     // Empty item → glue_tokens is a no-op → left side preserved unchanged.
                     i = k;
                 } else {
@@ -251,7 +305,8 @@ std::vector<Token> subst(
                         if (nb.text == FunctionMacro::VA_ARGC) {
                             item = {va_argc_token(pidx, actual_params)};
                         } else {
-                            item = ts_flatten(select_arg(pidx, actual_params, is_va));
+                            item = ts_flatten(select_arg(pidx, actual_params, is_va,
+                                                         va_sep_ws ? actual_ws : nullptr));
                         }
                     }
                 }
@@ -291,7 +346,8 @@ std::vector<Token> subst(
                     if (k < body.size()) {
                         std::vector<Token> inner;
                         if (va_args_non_empty(formal_params, actual_params))
-                            inner = subst(content, formal_params, actual_params, {}, env);
+                            inner = subst(content, formal_params, actual_params,
+                                         actual_ws, {}, env, /*va_sep_ws=*/true);
                         result.push_back(stringize_tokens(inner));
                         i = k;
                         continue;
@@ -303,7 +359,12 @@ std::vector<Token> subst(
                         if (body[j].text == FunctionMacro::VA_ARGC) {
                             result.push_back(stringize_tokens({va_argc_token(pidx, actual_params)}));
                         } else {
-                            auto actual = select_arg(pidx, actual_params, is_va);
+                            // @param / @__VA_ARGS__: the stringize operator applies
+                            // directly to this formal parameter, so R6's comma
+                            // spacing always applies here regardless of va_sep_ws
+                            // (which only governs the separate @__VA_OPT__(...)
+                            // content-substitution recursion above).
+                            auto actual = select_arg(pidx, actual_params, is_va, actual_ws);
                             result.push_back(stringize_tokens(actual));
                         }
                         i = j;
@@ -334,7 +395,8 @@ std::vector<Token> subst(
                     continue;
                 }
                 if (va_args_non_empty(formal_params, actual_params)) {
-                    auto inner = subst(content, formal_params, actual_params, {}, env);
+                    auto inner = subst(content, formal_params, actual_params,
+                                       actual_ws, {}, env, va_sep_ws);
                     for (auto& et : inner) result.push_back(et);
                 }
                 i = j; // advance past closing ')'
@@ -363,7 +425,8 @@ std::vector<Token> subst(
                 static const std::vector<Token> empty_actual;
                 const std::vector<Token>& actual =
                     is_va
-                        ? (actual_va = select_arg(pidx, actual_params, is_va))
+                        ? (actual_va = select_arg(pidx, actual_params, is_va,
+                                                  va_sep_ws ? actual_ws : nullptr))
                         : (pidx < static_cast<int>(actual_params.size())
                                ? actual_params[pidx]
                                : empty_actual);

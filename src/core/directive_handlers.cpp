@@ -1,5 +1,6 @@
 #include "preprocessor.hpp"
 #include "preprocessor_internal.hpp"
+#include "expand_helpers.hpp"
 
 #include "../env/lineno.hpp"
 #include "../env/param_constants.hpp"
@@ -388,7 +389,13 @@ void handle_stringize(const std::string& raw_arg,
                       Env& env,
                       std::vector<Token>& ots,
                       bool wide) {
-    std::string raw_text = expand_operand_text(raw_arg, env);
+    // The stringizing whitespace rule (R1-R5, expand_subst.cpp's
+    // stringize_text()) applies to the macro-expanded operand, same as the
+    // `@` operator: expand first (expand_operand_tokens(), unchanged "expand
+    // first" semantics incl. PP29 reporting), then build the text at the
+    // token level instead of via expand_operand_text()'s plain concatenation.
+    std::string raw_text =
+        jiepp::expand_detail::stringize_text(expand_operand_tokens(raw_arg, env));
     if (wide) {
         ots.push_back(Token::create(Token::WSTRING, Util::encode_iec_string(raw_text, '"')));
     } else {

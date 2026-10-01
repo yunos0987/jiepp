@@ -155,6 +155,13 @@ public:
     int num_of_params_max() const { return num_params_max_; }
     const std::vector<Token>& body() const { return body_; }
 
+    // True iff the body stringizes its variable arguments (@__VA_ARGS__/@args,
+    // or __VA_ARGS__/args used inside @__VA_OPT__(...)): the only case where
+    // expand.cpp needs to compute per-actual-argument whitespace flags (R6).
+    // Computed once in the constructor from body_/args_, so it cannot affect
+    // equal() and is not compared there.
+    bool stringizes_va() const { return stringizes_va_; }
+
 private:
     std::unordered_map<std::string, std::pair<int, bool>> args_;
     int num_params_min_ = 0;
@@ -162,6 +169,11 @@ private:
     std::vector<Token> body_;
     std::vector<std::string> args_list_; // original ordered parameter names
     bool named_variadic_ = false;
+    bool stringizes_va_ = false;
+
+    static bool compute_stringizes_va(
+        const std::vector<Token>& body,
+        const std::unordered_map<std::string, std::pair<int, bool>>& args);
 
     static std::vector<Token> normalize(
         std::vector<Token> ts,
