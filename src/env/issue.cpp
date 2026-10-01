@@ -91,6 +91,17 @@ void Issue::set_output(std::ostream& stream) {
     stream_ = &stream;
 }
 
+void Issue::ensure_location_stack() {
+    // B1: only seed the bottom-of-stack dummy when it is missing; unlike
+    // initialize(), this must never reset ignorings_/blockings_/werror_/etc.,
+    // since a library caller may call setup() more than once (one Env per
+    // call) while relying on Issue state configured in between, and a CLI
+    // process has already had initialize() push this same dummy entry from
+    // main() before setup() ever runs, so this is a no-op there.
+    if (loc_stack_.empty())
+        loc_stack_.push_back({1, "<unknown location>"});
+}
+
 void Issue::push(LocationEntry loc) {
     loc_stack_.push_back(std::move(loc));
 }
@@ -175,9 +186,22 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // just copies that placeholder forward. Without this, such a
         // diagnostic rendered as "<unknown location>:N.0: ..." instead of
         // "jiepp: ...", because loc_stack_.size() was already 2 by then.
-        std::string loc_file = (cli_mode_ && (loc_stack_.size() == 1 ||
-                                filepath() == loc_stack_.front().second)) ? CLI_LOCATION : filepath();
-        message_.message(*stream_, severity, code, context, loc_file, lineno(), 0, loc);
+        // B1 defensive: loc_stack_ should never be empty here (ensure_location_stack()
+        // and initialize() both guarantee a bottom dummy entry), but if some future
+        // caller manages to hit this with an empty stack, filepath()/lineno() calling
+        // back into top() -> FATAL() -> fatal() -> happen() here would recurse
+        // without bound (the original B1 stack overflow). Fall back to a literal
+        // placeholder instead of calling filepath()/lineno() in that case.
+        std::string loc_file;
+        LineNo loc_line = 0;
+        if (loc_stack_.empty()) {
+            loc_file = "<no location>";
+        } else {
+            loc_file = (cli_mode_ && (loc_stack_.size() == 1 ||
+                        filepath() == loc_stack_.front().second)) ? CLI_LOCATION : filepath();
+            loc_line = lineno();
+        }
+        message_.message(*stream_, severity, code, context, loc_file, loc_line, 0, loc);
         *stream_ << '\n';
     }
 

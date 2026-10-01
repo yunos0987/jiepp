@@ -78,6 +78,16 @@ std::string preprocess_text(const std::string& input, Env& env) {
 
 Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macros,
           bool remove_comments) {
+    // B1: this is the library's public entry point (see preprocessor.hpp),
+    // and the predefine_macros loop below can itself raise a diagnostic
+    // (MACRO_REDEFINED, via handle_define()) before preprocess()/preprocess_text()
+    // is ever called. Seed Issue::loc_stack_'s bottom dummy entry here, unconditionally
+    // and before anything else, so a caller that links jiepp_lib directly without
+    // separately calling Issue::initialize() first does not crash on the first
+    // diagnostic raised during or after setup(). A no-op when already seeded
+    // (in particular, on the CLI path, where main() already called
+    // Issue::initialize() before setup() ever runs).
+    Issue::ensure_location_stack();
 #ifndef JIEPP_VERSION_MAJOR
 #define JIEPP_VERSION_MAJOR 0
 #endif

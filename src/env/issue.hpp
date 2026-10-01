@@ -85,6 +85,17 @@ public:
     static void initialize(std::ostream& stream);
     static void set_output(std::ostream& stream);
 
+    // B1: library entry point (setup(), see preprocessor.cpp) calls this
+    // before doing anything that can raise a diagnostic, so a caller that
+    // links jiepp_lib directly and never calls initialize() still gets a
+    // non-empty loc_stack_ (initialize()'s own dummy bottom entry). A no-op
+    // whenever loc_stack_ already has an entry -- in particular, right after
+    // main()'s own initialize() call, and on every setup() call after the
+    // first -- so it never resets ignorings_/blockings_/werror_/etc. the way
+    // initialize() does, and never discards a LineGuard the caller may
+    // already have pushed.
+    static void ensure_location_stack();
+
     // ---- Location stack ----
     static void push(LocationEntry loc);
     static LocationEntry pop();

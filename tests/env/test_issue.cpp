@@ -377,3 +377,70 @@ TEST_F(IssueTest, InitializeResetsContinueModeState) {
     EXPECT_EQ(0, Issue::error_count_);
     EXPECT_FALSE(Issue::continue_mode_);
 }
+
+// ---- B1: library API usable without a prior Issue::initialize() call ----
+//
+// Issue::initialize() is only ever called by main() (src/jiepp/main.cpp) in
+// the real CLI process; a library caller that links jiepp_lib directly and
+// calls setup() + preprocess()/preprocess_text() without separately calling
+// Issue::initialize() first used to crash the whole process with a silent
+// stack overflow on the very first diagnostic (Issue::top() on an empty
+// loc_stack_ -> FATAL() -> Issue::fatal() -> happen() -> filepath() -> top()
+// -> ... unbounded recursion, verified against the shipped release build --
+// see scratchpad's release-review/B-findings.md). loc_stack_.clear() below
+// mirrors that "never initialized" process state (the only state that
+// matters for this bug) without needing a dedicated test-only reset, since
+// Issue::loc_stack_ is itself a public static member.
+
+TEST_F(IssueTest, SetupWorksWithoutPriorInitialize) {
+    // Simulate a fresh process that never called Issue::initialize(): the
+    // JieppTest fixture's own SetUp() already called it once, so undo just
+    // the part that matters (the empty loc_stack_ from before initialize()
+    // ever ran).
+    Issue::loc_stack_.clear();
+    ASSERT_TRUE(Issue::loc_stack_.empty());
+
+    // setup() itself must not crash: B1's repro showed the very first
+    // diagnostic (even from setup()'s own -D/predefine_macros handling)
+    // could already trigger the recursion before preprocess() ever runs.
+    Env env;
+    ASSERT_NO_THROW(env = setup());
+    EXPECT_FALSE(Issue::loc_stack_.empty());
+}
+
+TEST_F(IssueTest, PreprocessTextWorksWithoutPriorInitializeAndStillWarns) {
+    // Same "never initialized" simulation as above, but through the full
+    // public API: setup() + preprocess_text(), with input that raises a
+    // PP35 (MACRO_REDEFINED) warning -- exactly B1's repro input. Before the
+    // fix this crashed the process (STATUS_STACK_OVERFLOW, no output at
+    // all) instead of reaching this assertion.
+    Issue::loc_stack_.clear();
+    ASSERT_TRUE(Issue::loc_stack_.empty());
+
+    Env env = setup();
+    std::string out;
+    ASSERT_NO_THROW(out = preprocess_text("{#define X 1}\n{#define X 2}\n", env));
+
+    // Normal preprocessing output: both {#define} directive lines are
+    // consumed (no directive text leaks into the output).
+    EXPECT_EQ(std::string::npos, out.find("#define"));
+
+    // The PP35 warning was printed (not swallowed, not crashed past).
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, cs.front());
+}
+
+TEST_F(IssueTest, EmptyStackFatalThrowsInsteadOfRecursing) {
+    // B1 defensive fix: happen()'s own location rendering must not call
+    // filepath()/lineno() (which call top(), which calls FATAL() on an
+    // empty stack) while loc_stack_ is itself empty -- that chain is exactly
+    // how a single misuse used to turn into unbounded recursion. With the
+    // fix, Issue::fatal() on an empty stack still reports (with a literal
+    // placeholder location) and still throws, it just does not recurse.
+    Issue::loc_stack_.clear();
+    ASSERT_TRUE(Issue::loc_stack_.empty());
+
+    EXPECT_THROW(Issue::fatal(), Issue::Exception);
+    EXPECT_THAT(message(), ::testing::HasSubstr("PP01"));
+}
