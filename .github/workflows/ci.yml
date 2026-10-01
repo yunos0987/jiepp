@@ -85,26 +85,26 @@ jobs:
       - name: Cache vcpkg packages
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: build/linux-sandbox-release/vcpkg_installed
-          key: vcpkg-linux-sandbox-release-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-linux-sandbox-release-
+          path: build/linux-makefiles-sandbox-release/vcpkg_installed
+          key: vcpkg-linux-makefiles-sandbox-release-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-linux-makefiles-sandbox-release-
 
       - name: Bootstrap vcpkg
         run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
       - name: Configure (sandbox)
-        run: cmake --preset linux-makefiles-release -B build/linux-sandbox-release -DJIEPP_SANDBOX=ON
+        run: cmake --preset linux-makefiles-sandbox-release
 
       - name: Build (sandbox)
-        run: cmake --build build/linux-sandbox-release --parallel
+        run: cmake --build build/linux-makefiles-sandbox-release --parallel
 
       # Ordinary tests are expected to fail in sandbox builds (filesystem-access
       # directives are intentionally disabled; see AGENTS.md), so only run the
       # sandbox-specific and robustness tests here. Two separate selections so
-      # that an empty match (e.g. if -DJIEPP_SANDBOX silently did not apply)
+      # that an empty match (e.g. if the sandbox preset silently did not apply)
       # fails the job via --no-tests=error instead of reporting a false pass.
       - name: Test (sandbox-specific)
-        run: ctest --test-dir build/linux-sandbox-release -R "^Sandbox" --no-tests=error --output-on-failure
+        run: ctest --test-dir build/linux-makefiles-sandbox-release -R "^Sandbox" --no-tests=error --output-on-failure
 
       - name: Test (robustness)
-        run: ctest --test-dir build/linux-sandbox-release -R "^RobustnessTest" --no-tests=error --output-on-failure
+        run: ctest --test-dir build/linux-makefiles-sandbox-release -R "^RobustnessTest" --no-tests=error --output-on-failure

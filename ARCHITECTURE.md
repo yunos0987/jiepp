@@ -18,7 +18,7 @@ Jiepp は **Windows** と **Linux / WSL** に対応し、CMake プリセット�
 | Linux / WSL | Clang (`clang++`) | Make | `linux-makefiles-debug`, `linux-makefiles-release` |
 | Linux（サーバー配布） | Clang (`clang++`) | Make | `linux-portable-release`（完全静的リンク） |
 
-configure/build/test コマンドは [`README.md`](README.md#ビルドとテスト--build--test) と [`CONTRIBUTING.md`](CONTRIBUTING.md#build--test) を参照。サンドボックスビルド (`-DJIEPP_SANDBOX=ON`) は「[サンドボックスモード](#サンドボックスモード-jiepp_sandbox)」を参照。
+configure/build/test コマンドは [`README.md`](README.md#ビルドとテスト--build--test) と [`CONTRIBUTING.md`](CONTRIBUTING.md#build--test) を参照。サンドボックスビルド（`*-sandbox-*` プリセット、`JIEPP_SANDBOX=ON`） は「[サンドボックスモード](#サンドボックスモード-jiepp_sandbox)」を参照。
 
 ### 依存管理・言語標準・コンパイラ要件
 

@@ -204,16 +204,19 @@ Web サーバー上で信頼できない入力を処理する場合は、サン�
 **Linux / WSL:**
 
 ```bash
-cmake --preset linux-makefiles-release -DJIEPP_SANDBOX=ON
-cmake --build --preset linux-makefiles-release
+cmake --preset linux-makefiles-sandbox-release
+cmake --build --preset linux-makefiles-sandbox-release
 ```
 
 **Windows (開発・テスト用):**
 
 ```powershell
-cmake --preset windows-clang-ninja-debug -DJIEPP_SANDBOX=ON
-cmake --build --preset windows-clang-ninja-debug
+cmake --preset windows-clang-ninja-sandbox-debug
+cmake --build --preset windows-clang-ninja-sandbox-debug
+ctest --preset windows-clang-ninja-sandbox-debug
 ```
+
+サンドボックス専用プリセット（`*-sandbox-debug` / `*-sandbox-release`）は独自のビルドディレクトリを持ち、`JIEPP_SANDBOX=ON` を設定します。通常のプリセットは `JIEPP_SANDBOX=OFF` を明示します。通常プリセットに `-DJIEPP_SANDBOX=ON` を付けるとキャッシュに値が残るため、使用しないでください。サンドボックス用 `ctest` は `Sandbox` / `RobustnessTest` のみを実行します（通常テストはサンドボックスビルドでは失敗が想定されます）。
 
 詳細は [`SPECIFICATION.md` §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode) を参照してください。
 
@@ -223,9 +226,9 @@ cmake --build --preset windows-clang-ninja-debug
 
 ```bash
 # サンドボックス + 完全静的リンク
-cmake --preset linux-portable-release -DJIEPP_SANDBOX=ON
-cmake --build --preset linux-portable-release
-# 成果物: build/linux-portable-release/jiepp
+cmake --preset linux-portable-sandbox-release
+cmake --build --preset linux-portable-sandbox-release
+# 成果物: build/linux-portable-sandbox-release/jiepp
 ```
 
 サーバー側では追加インストール不要です。生成されたバイナリをそのまま配置して使用できます。

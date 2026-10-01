@@ -1142,7 +1142,7 @@ jiepp -- -unusual-name.iec
 
 ## 14. サンドボックスモード / Sandbox Mode
 
-信頼できない入力を処理する場合（Web サーバー等）のセキュリティモード。コンパイル時フラグ `-DJIEPP_SANDBOX=ON` で有効化する。ビルドコマンドは [`README.md`](README.md#サンドボックスモード--sandbox-mode) 参照。
+信頼できない入力を処理する場合（Web サーバー等）のセキュリティモード。コンパイル時フラグ `JIEPP_SANDBOX=ON`（`*-sandbox-*` プリセット）で有効化する。ビルドコマンドは [`README.md`](README.md#サンドボックスモード--sandbox-mode) 参照。
 
 ### 制限事項 / Restrictions
 
