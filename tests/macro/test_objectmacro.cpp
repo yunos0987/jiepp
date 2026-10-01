@@ -80,6 +80,34 @@ TEST_F(ObjectMacroTest, Pragma) {
     EXPECT_TRUE(empty());
 }
 
+// E1-3: __COUNTER__ saturates at INT32_MAX like clang (err_counter_overflow),
+// instead of silently wrapping/signed-overflowing. The CounterMacro(start)
+// constructor is a test-only seam so this does not need ~2^31 real calls.
+TEST_F(ObjectMacroTest, CounterOverflowSaturatesAndDiagnoses) {
+    Env env = setup();
+    // COUNTER_OVERFLOW is ERROR, which the library blocks (throws) by
+    // default; unblock it here to observe the "reports and continues"
+    // behavior itself, like the CLI's continue mode does for this code
+    // (it is not one of the abort codes listed in SPECIFICATION.md §16).
+    Issue::remove_blocking(Issue::Code::COUNTER_OVERFLOW);
+    CounterMacro counter(2147483646u);
+
+    auto next = [&](CounterMacro& c) {
+        auto toks = c.replacement(env);
+        return toks.size() == 1 ? toks[0].text : std::string("**FAIL**");
+    };
+
+    EXPECT_EQ("2147483646", next(counter));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("2147483647", next(counter));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("2147483647", next(counter));
+    EXPECT_EQ(Issue::Code::COUNTER_OVERFLOW, code());
+    // Saturated: further calls keep reporting the same overflow and value.
+    EXPECT_EQ("2147483647", next(counter));
+    EXPECT_EQ(Issue::Code::COUNTER_OVERFLOW, code());
+}
+
 TEST_F(ObjectMacroTest, Redefine) {
     // same value redefinition (no warning)
     EXPECT_NO_THROW(pp("{#define N 2};N;{#define N 2};N"));

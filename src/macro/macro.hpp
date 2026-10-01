@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -41,11 +42,15 @@ private:
 
 class CounterMacro : public ObjectMacro {
 public:
+    // `start` is a test seam: production code always uses the default (0).
+    // It lets a unit test instantiate a CounterMacro already close to
+    // INT32_MAX without actually calling replacement() ~2^31 times.
+    explicit CounterMacro(std::uint32_t start = 0) : counter_(start) {}
     std::vector<Token> replacement(Env& env) const override;
     bool equal(const Macro& other) const override;
     std::string str() const override { return "__COUNTER__"; }
 private:
-    mutable int counter_ = 0;
+    mutable std::uint32_t counter_;
 };
 
 class LineMacro : public ObjectMacro {

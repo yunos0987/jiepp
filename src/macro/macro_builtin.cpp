@@ -9,11 +9,13 @@
 #include "../core/preprocessor_internal.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #if defined(__cpp_lib_format)
 #include <format>
 #endif
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -22,6 +24,14 @@
 // ---------------------------------------------------------------------------
 
 std::vector<Token> CounterMacro::replacement(Env& /*env*/) const {
+    // Match clang's err_counter_overflow: once the value to be emitted would
+    // exceed INT32_MAX, report an error and saturate at INT32_MAX instead of
+    // wrapping/overflowing signed int. Every further call keeps reporting
+    // the same error and the same saturated value (it never recovers).
+    if (counter_ > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
+        ISSUE(COUNTER_OVERFLOW);
+        counter_ = static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max());
+    }
     return {Token::create(Token::ANY, std::to_string(counter_++))};
 }
 

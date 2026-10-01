@@ -1326,6 +1326,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP50 | `EXPR_TYPE_ERROR` | ERROR | Type error in expression | 式中の型エラー（ゼロ除算等） |
 | PP51 | `MISSING_EXPRESSION` | ERROR | Missing expression | `{#if}` に式がない |
 | PP52 | `INVALID_EXPRESSION` | ERROR | Invalid expression | 不正な式 |
+| PP53 | `COUNTER_OVERFLOW` | ERROR | __COUNTER__ value exceeds 2147483647 | `__COUNTER__` の値が上限を超過 |
 | PP60 | `MAX_EXPANSION_DEPTH_EXCEEDED` | ERROR | Maximum expansion depth exceeded | マクロ展開深度上限超過 |
 | PP61 | `MAX_IF_NESTING_EXCEEDED` | ERROR | Maximum conditional nesting depth exceeded | 条件分岐ネスト深度上限超過 |
 | PP62 | `SANDBOX_RESTRICTED_DIRECTIVE` | ERROR | Directive is restricted in sandbox mode | サンドボックスモードで禁止されたディレクティブ |
