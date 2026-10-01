@@ -9,6 +9,15 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" JIEPP_VERSION)
 string(STRIP "${JIEPP_VERSION}" JIEPP_VERSION)
 project(jiepp VERSION ${JIEPP_VERSION} LANGUAGES CXX)
 
+# Keep vcpkg.json's "version" field in sync with VERSION: vcpkg reads its own
+# version from vcpkg.json, and the two drifting apart silently makes the
+# vcpkg-reported package version wrong even though the built binary is correct.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg.json" _jiepp_vcpkg_json)
+string(JSON _jiepp_vcpkg_version GET "${_jiepp_vcpkg_json}" version)
+if(NOT _jiepp_vcpkg_version STREQUAL JIEPP_VERSION)
+    message(FATAL_ERROR "vcpkg.json version (${_jiepp_vcpkg_version}) does not match VERSION (${JIEPP_VERSION}); bump both together")
+endif()
+
 # ---- Sandbox mode for web deployment ----
 option(JIEPP_SANDBOX "Enable sandbox mode: disable file-system directives and mask server paths" OFF)
 
