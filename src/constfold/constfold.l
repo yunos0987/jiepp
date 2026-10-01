@@ -52,6 +52,12 @@ ALPHA   [A-Za-z_]
     // silently wrapping the digits via undefined-behavior signed overflow.
     std::uint64_t uval = 0;
     const std::uint64_t ubase = static_cast<std::uint64_t>(base);
+    // C3: report the overflow once, then keep accumulating (wrapping mod
+    // 2^64, same formula as the non-overflowing case -- unsigned wraparound
+    // is well-defined) instead of stopping at 0, so the literal's value
+    // ends up as its low 64 bits, like gcc (warning) and clang (error) both
+    // do for an over-wide {#if} literal.
+    bool overflowed = false;
     for (; *p; ++p) {
         char ch = *p;
         if (ch == '_') continue;
@@ -63,10 +69,9 @@ ALPHA   [A-Za-z_]
             return cf::CfParser::token::CF_INT;
         }
         const std::uint64_t ud = static_cast<std::uint64_t>(d);
-        if (uval > (UINT64_MAX - ud) / ubase) {
+        if (!overflowed && uval > (UINT64_MAX - ud) / ubase) {
             ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
-            cflval = CfValue::int_value(0);
-            return cf::CfParser::token::CF_INT;
+            overflowed = true;
         }
         uval = uval * ubase + ud;
     }
@@ -120,11 +125,22 @@ ALPHA   [A-Za-z_]
         cflval.text = yytext;
         return cf::CfParser::token::CF_INT_MIN_MAG;
     }
-    int64_t ival = 0;
-    try {
-        ival = std::stoll(clean);
-    } catch (const std::out_of_range&) {
+    // C3: decide overflow by comparing the decimal magnitude directly
+    // against INT64_MAX (19 digits), instead of relying on stoll's
+    // out_of_range -- stoll can only ever leave ival at 0 on overflow, but
+    // gcc (warning) and clang (error) both keep going with the low 64 bits
+    // of the value (as 64-bit two's complement) afterward, so jiepp must too.
+    static const std::string kInt64MaxDigits = "9223372036854775807";
+    const bool overflow = digits.size() > kInt64MaxDigits.size()
+        || (digits.size() == kInt64MaxDigits.size() && digits > kInt64MaxDigits);
+    int64_t ival;
+    if (overflow) {
         ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
+        std::uint64_t uval = 0;
+        for (char c : clean) uval = uval * 10 + static_cast<std::uint64_t>(c - '0');
+        ival = static_cast<int64_t>(uval);
+    } else {
+        ival = std::stoll(clean);
     }
     cflval = CfValue::int_value(ival);
     return cf::CfParser::token::CF_INT;

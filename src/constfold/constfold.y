@@ -416,8 +416,12 @@ mul_expr:
 unary_expr:
     unary_core                        { $$ = $1; }
   | CF_INT_MIN_MAG                    {
+        // C3: 2^63 bare (no preceding unary minus) still reports the
+        // overflow, but the value is INT64_MIN (its low 64 bits, same as
+        // "CF_MINUS CF_INT_MIN_MAG" below), not 0 -- gcc/clang both keep
+        // going with the value after warning/erroring.
         ISSUE(INVALID_EXPRESSION, "integer literal overflow: " + $1.text);
-        $$ = CfValue::int_value(0);
+        $$ = CfValue::int_value(INT64_MIN);
     }
   ;
 
