@@ -595,19 +595,19 @@ TEST_F(DirectiveTest, OperandDiagnosticsStayOnOneLine) {
         // eval_const_expr()'s incomplete-parse path (constfold.cpp), reached
         // via {#elif} instead of {#if}: the operand decodes to "1+" followed
         // by a real newline, which is not all whitespace but still fails to
-        // parse as a complete expression. This legitimately reports two
-        // diagnostics -- the bison grammar's own "syntax error" (msg has no
-        // embedded operand text) via cf::CfParser::error(), then
-        // eval_const_expr()'s own MISSING_EXPRESSION carrying the operand
-        // text -- so unlike the other sub-cases above, a raw-newline defect
-        // here would silently grow msgs.size() further (one extra entry per
-        // embedded newline) rather than just splitting a single entry.
+        // parse as a complete expression. C1: cf::CfParser::error()
+        // (constfold.y) no longer raises its own diagnostic (bison's "syntax
+        // error" text, which never carried the operand text); eval_const_expr()
+        // is the only place that raises now, carrying the operand text, so a
+        // raw-newline defect here would grow msgs.size() past 1 (one extra
+        // entry per embedded newline) rather than just splitting a single
+        // entry.
         SCOPED_TRACE("{#if 0}{#elif 1+$n}{#endif}");
         pp("{#if 0}{#elif 1+$n}{#endif}");
         auto msgs = messages();
-        ASSERT_EQ(2u, msgs.size());
-        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, PlainTextMessage::parse_code(msgs[1]));
-        EXPECT_NE(std::string::npos, msgs[1].find("$n")) << msgs[1];
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("$n")) << msgs[0];
     }
 }
 
@@ -1098,11 +1098,15 @@ TEST_F(DirectiveTest, InvalidEscapeKeptLiterally) {
         // Post-UD4, a syntax-error {#if} expression is false, so the group
         // stays inactive and "yes;" is not printed; PP21 is still the first
         // diagnostic since decoding the operand happens before evaluation.
+        // C1: a malformed expression now reports exactly once (was twice:
+        // the bison grammar's own "syntax error" via cf::CfParser::error(),
+        // then eval_const_expr()'s own diagnostic), so this is 2 codes, not 3.
         SCOPED_TRACE("{#if 1$q}yes;{#endif}");
         EXPECT_EQ("", pp("{#if 1$q}yes;{#endif}"));
         auto cs = codes();
-        ASSERT_EQ(3u, cs.size());
+        ASSERT_EQ(2u, cs.size());
         EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, cs[1]);
     }
     {
         // {#ignore PP21} is process-wide for the rest of the input (like

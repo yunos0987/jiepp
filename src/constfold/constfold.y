@@ -20,6 +20,14 @@
 %code {
 CfValue cflval;  // global semantic value shared with flex scanner
 bool cf_expr_complete = false;  // set true when a complete expr is reduced
+// C1: the code eval_const_expr() should raise for a parse failure, chosen by
+// error() below from cf_expr_complete at the moment bison detects the
+// error -- INVALID_EXPRESSION if a complete expr had already been reduced
+// (a complete expression was followed by more), MISSING_EXPRESSION
+// otherwise. error() itself no longer raises a diagnostic (see below), so
+// eval_const_expr() is the single place a parse failure is reported, using
+// this code instead of unconditionally reporting MISSING_EXPRESSION.
+Issue::Code cf_error_code = Issue::Code::MISSING_EXPRESSION;
 
 extern int cflex(void);
 
@@ -180,10 +188,15 @@ static CfValue compare_ord(const CfValue& lhs, const CfValue& rhs, CompareOp op)
 }
 
 void cf::CfParser::error(const std::string& msg) {
-    if (cf_expr_complete)
-        ISSUE(INVALID_EXPRESSION, msg);
-    else
-        ISSUE(MISSING_EXPRESSION, msg);
+    // C1: record the code only; do not raise here. Raising both here (with
+    // bison's own "syntax error" text, which never carries the offending
+    // expression) and again in eval_const_expr() after parse() returns
+    // non-zero (with the expression text) reported every malformed {#if}/
+    // {#elif} condition twice. eval_const_expr() is now the single place
+    // that raises, using the code chosen here.
+    (void)msg;
+    cf_error_code = cf_expr_complete ? Issue::Code::INVALID_EXPRESSION
+                                      : Issue::Code::MISSING_EXPRESSION;
 }
 }
 

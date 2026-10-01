@@ -14,6 +14,11 @@ typedef struct yy_buffer_state *YY_BUFFER_STATE;
 extern YY_BUFFER_STATE cf_scan_string(const char*);
 extern void cf_delete_buffer(YY_BUFFER_STATE);
 extern bool cf_expr_complete;  // set by bison grammar when expr is fully reduced
+// C1: code chosen by cf::CfParser::error() (constfold.y) from cf_expr_complete
+// at the moment of the parse error; used below instead of unconditionally
+// raising MISSING_EXPRESSION, so a case like "1 x" (a complete expression
+// followed by more) is reported as INVALID_EXPRESSION, not MISSING_EXPRESSION.
+extern Issue::Code cf_error_code;
 
 int64_t eval_const_expr(const std::string& expr) {
     bool all_ws = true;
@@ -34,6 +39,7 @@ int64_t eval_const_expr(const std::string& expr) {
     int64_t result = 0;
     try {
         cf_expr_complete = false;
+        cf_error_code = Issue::Code::MISSING_EXPRESSION;
         cf::CfParser parser(result);
         rc = parser.parse();
         cf_delete_buffer(buf);
@@ -53,7 +59,10 @@ int64_t eval_const_expr(const std::string& expr) {
         // leave result holding a partial value from before the parser gave
         // up (e.g. "1 x" parses "1" before failing on "x"); treat the whole
         // expression as false, like gcc/clang do for a malformed {#if}.
-        ISSUE(MISSING_EXPRESSION, Util::escape_line_breaks(expr));
+        // C1: the single diagnostic for this parse failure, using the code
+        // cf::CfParser::error() chose (cf_error_code) instead of
+        // unconditionally MISSING_EXPRESSION.
+        Issue::happen(cf_error_code, Util::escape_line_breaks(expr));
         return 0;
     }
     return result;

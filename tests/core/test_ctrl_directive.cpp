@@ -40,11 +40,14 @@ TEST_F(CtrlDirectiveTest, IfFloatTruthy) {
 }
 
 TEST_F(CtrlDirectiveTest, IfStringError) {
+    // C1: the context is the (re-escaped) expression text, like every other
+    // eval_const_expr() diagnostic -- not bison's own "syntax error" text,
+    // which cf::CfParser::error() no longer raises itself.
     EXPECT_THROW(pp("{#if 'xyz'}1{#endif}e"), Issue::Exception);
-    EXPECT_EQ("<unknown location>:1.0: error: PP51: Missing expression; 'syntax error'", message());
+    EXPECT_EQ("<unknown location>:1.0: error: PP51: Missing expression; ''xyz''", message());
 
     EXPECT_THROW(pp("{#if ''}1{#endif}e"), Issue::Exception);
-    EXPECT_EQ("<unknown location>:1.0: error: PP51: Missing expression; 'syntax error'", message());
+    EXPECT_EQ("<unknown location>:1.0: error: PP51: Missing expression; ''''", message());
 }
 
 TEST_F(CtrlDirectiveTest, IfIdentifier) {
@@ -71,6 +74,93 @@ TEST_F(CtrlDirectiveTest, IfSyntaxError) {
     // {#if;} has non-empty raw condition but becomes invalid syntax after parsing.
     EXPECT_THROW(pp("{#if;}1{#endif}e"), Issue::Exception);
     EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, code());
+}
+
+// C1: a malformed {#if}/{#elif} expression must raise exactly one
+// diagnostic, not the bison grammar's own "syntax error" (from
+// cf::CfParser::error(), constfold.y) followed by eval_const_expr()'s own
+// message carrying the actual expression text (constfold.cpp). Use
+// ContinueMode so a lingering double report would show as a second message
+// instead of being masked by the first exception thrown.
+//
+// INVALID_EXPRESSION (PP52) when a complete expression was already reduced
+// before the extra tokens ("a complete expression was followed by more");
+// MISSING_EXPRESSION (PP51) otherwise.
+TEST_F(CtrlDirectiveTest, IfMalformedExpressionReportsOnce) {
+    Issue::ContinueMode guard({});
+
+    {
+        SCOPED_TRACE("{#if 1 x}");
+        pp("{#if 1 x}1{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("1 x")) << msgs[0];
+    }
+    {
+        // "(1" reduces the inner parenthesized expression to a complete
+        // expr before failing on the missing ")", so cf_expr_complete is
+        // already true -> INVALID_EXPRESSION, like the other "complete
+        // expression followed by more" cases above.
+        SCOPED_TRACE("{#if (1}");
+        pp("{#if (1}1{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("(1")) << msgs[0];
+    }
+    {
+        SCOPED_TRACE("{#if 1 2}");
+        pp("{#if 1 2}1{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("1 2")) << msgs[0];
+    }
+    {
+        SCOPED_TRACE("{#if defined X Y}");
+        pp("{#if defined X Y}1{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+    }
+    {
+        SCOPED_TRACE("{#if 1 +}");
+        pp("{#if 1 +}1{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("1 +")) << msgs[0];
+    }
+    {
+        SCOPED_TRACE("{#if )}");
+        pp("{#if )}1{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+    }
+    {
+        SCOPED_TRACE("{#if and}");
+        pp("{#if and}1{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+    }
+    {
+        SCOPED_TRACE("{#if 0}{#elif 1+}");
+        pp("{#if 0}{#elif 1+}1{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("1+")) << msgs[0];
+    }
+    {
+        SCOPED_TRACE("{#if 'xyz'}");
+        pp("{#if 'xyz'}1{#endif}");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, PlainTextMessage::parse_code(msgs[0]));
+    }
 }
 
 // ---- #else ----
