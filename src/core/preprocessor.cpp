@@ -11,6 +11,13 @@
 #include <vector>
 
 void preprocess(std::istream& input, std::ostream& output, Env& env) {
+    // C4: start Issue's top-of-stack line at this call's own Env line, not
+    // wherever a previous preprocess()/preprocess_text() call left it (see
+    // Issue::set_top_lineno()). The CLI path never calls preprocess()
+    // directly (it uses jiepp_command()'s own file-driven loc_stack_
+    // pushes), so this only affects library callers of preprocess()/
+    // preprocess_text().
+    Issue::set_top_lineno(env.get_lineno());
     auto its = iec3_tokens(input, env.get_remove_comments(), 1);
     std::vector<Token> ots;
     // No leading line marker here (unlike the jiepp command line), so tell

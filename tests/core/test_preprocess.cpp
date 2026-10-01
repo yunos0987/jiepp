@@ -353,3 +353,34 @@ TEST_F(PreprocessTest, BlankLineCompactionStartsAtFirstLine) {
               pp("a;" + std::string(11, '\n') + "x __LINE__;"));                    // before: (*{#:10}*)
     EXPECT_TRUE(empty());
 }
+
+// ---- diagnostic line does not leak across preprocess()/preprocess_text() calls (C4) ----
+
+// A library caller normally pairs setup() with each preprocess_text() call
+// (one fresh Env per call). Before C4, Issue::loc_stack_'s top line was a
+// free-running counter only ever moved by advance_lineno(), shared across
+// every such call regardless of Env, so the first text's ending line leaked
+// into the second (unrelated) Env's early diagnostics.
+TEST_F(PreprocessTest, DiagnosticLineStartsAtEnvLineAcrossSeparateSetupCalls) {
+    auto env1 = setup();
+    pp("a;\nb;\nc;\n", env1); // 3 lines of plain text, no diagnostics
+    EXPECT_TRUE(empty());
+
+    auto env2 = setup();
+    EXPECT_THROW(pp("{#error x}", env2), Issue::Exception);
+    EXPECT_EQ("<unknown location>:1.0: error: PP91: 'x'", message());
+}
+
+// The same fix must not break the opposite, intended case: one Env used for
+// two preprocess_text() calls in a row still reports the second call's
+// diagnostics starting from that Env's own current line (its counter having
+// advanced past the first call's text), not reset back to line 1.
+TEST_F(PreprocessTest, DiagnosticLineFollowsEnvCounterAcrossRepeatedCalls) {
+    auto env = setup();
+    pp("a;\nb;\nc;\n", env); // leaves env's own line counter at line 4
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(4, env.get_lineno());
+
+    EXPECT_THROW(pp("{#error x}", env), Issue::Exception);
+    EXPECT_EQ("<unknown location>:4.0: error: PP91: 'x'", message());
+}

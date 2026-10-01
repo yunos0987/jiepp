@@ -100,6 +100,12 @@ public:
     static void push(LocationEntry loc);
     static LocationEntry pop();
     static LocationEntry top();
+    // C4: set the line number of the top-of-stack entry in place, keeping
+    // its file path. Used by preprocess() so that each call starts
+    // diagnostics at the Env's own current line instead of wherever a
+    // previous preprocess()/preprocess_text() call on the same loc_stack_
+    // last left it (loc_stack_ otherwise only moves via advance_lineno()).
+    static void set_top_lineno(LineNo ln);
     static std::string base_filepath();
     static std::string filepath() { return top().second; }
     static LineNo lineno() { return top().first; }

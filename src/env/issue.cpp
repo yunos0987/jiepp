@@ -122,6 +122,17 @@ Issue::LocationEntry Issue::top() {
     FATAL();
 }
 
+void Issue::set_top_lineno(LineNo ln) {
+    // B1 defensive: mirror ensure_location_stack()'s dummy entry if somehow
+    // called before any entry exists; the normal caller (preprocess(), after
+    // setup()'s Issue::ensure_location_stack() call) always has one.
+    if (loc_stack_.empty()) {
+        loc_stack_.push_back({ln, "<unknown location>"});
+        return;
+    }
+    loc_stack_.back().first = ln;
+}
+
 std::string Issue::base_filepath() {
     if (!loc_stack_.empty()) {
         if (loc_stack_.size() >= 2)
