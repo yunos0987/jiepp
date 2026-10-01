@@ -288,16 +288,18 @@ TEST_F(ArgCountRecoveryTest, R11b_OutputOnlyNewlineVariant) {
 
 TEST_F(ArgCountRecoveryTest, R11c_MultiLineCallDoesNotShiftLaterDiagnosticLine) {
     // A multi-line erroneous call does not shift a later diagnostic's line
-    // off by the lines it spans, and the PP34 for the call itself stays on
-    // the macro name's own line (line 1, reported before this call's own
-    // lines are added to the counter -- see D4).
+    // off by the lines it spans. C2: the "too many arguments" PP34 itself no
+    // longer stays on the macro name's own line -- it follows clang, which
+    // reports the first non-whitespace token after the comma ending the
+    // last allowed argument (here, P's 1 parameter: the comma right after
+    // "1,", whose first following token is "2" on line 2).
     Issue::ContinueMode guard({});
     pp("{#define P(x) x+1}A P(1,\n2,\n3) B\n{#warning w}");
     auto msgs = messages();
     ASSERT_EQ(2u, msgs.size());
     EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
               PlainTextMessage::parse_code(msgs[0]));
-    EXPECT_NE(std::string::npos, msgs[0].find(":1.")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find(":2.")) << msgs[0];
     EXPECT_EQ(Issue::Code::WARNING_MESSAGE, PlainTextMessage::parse_code(msgs[1]));
     EXPECT_NE(std::string::npos, msgs[1].find(":4.")) << msgs[1];
 }
@@ -336,4 +338,150 @@ TEST_F(ArgCountRecoveryTest, R13_IgnoredStillNotExpanded) {
 TEST_F(ArgCountRecoveryTest, R16_Guard_SubstitutedNameIsNotTreatedAsError) {
     EXPECT_EQ("P(1,1)", pp("{#define P(x) P(x,x)}P(1)"));
     EXPECT_TRUE(empty());
+}
+
+// ---- C2: PP34's reported line for a multi-line call follows clang ----
+//
+// clang reports "too many arguments" at the first non-whitespace,
+// non-comment token after the comma ending the last allowed argument (the
+// closing ')' itself if nothing but whitespace/comments remain, in which
+// case it is the comma's own line instead); "too few arguments" at the
+// closing ')'. gcc instead always uses the ')' line for both kinds; jiepp
+// follows clang. Every expected line below was measured directly with
+// `clang -E -fsyntax-only` (clang 22.1.3) on an equivalent two-parameter
+// `#define F(a,b) a+b` / `#define G(a,b) a+b`, not copied from a table.
+
+TEST_F(ArgCountRecoveryTest, C2_TooManyNextLineAfterTriggerComma) {
+    // clang (case A, `x F(1,\n2,\n3) y;` with F(a,b), call starting on the
+    // line right after the #define): reports line 4 -- the "3" after the
+    // comma that ends the 2nd (last allowed) argument, not the macro name's
+    // own line (2) and not the comma's own line (3).
+    Issue::ContinueMode guard({});
+    pp("{#define F(a,b) a}\nx F(1,\n2,\n3) y;");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":4.")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, C2_TooManyExcessTokenFarFromTriggerComma) {
+    // clang (case B, `F(\n1,\n2,\n3\n);`): reports line 5 -- the excess
+    // argument "3" sits on its own line, two lines after the triggering
+    // comma (end of "2,").
+    Issue::ContinueMode guard({});
+    pp("{#define F(a,b) a}\nF(\n1,\n2,\n3\n);");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":5.")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, C2_TooManySingleLineCallUnaffected) {
+    // clang (case C, one-line `F(1,2,3);`): a single-line call still reports
+    // on its own line -- the fix only changes which *column/position within
+    // a span* the line comes from, not single-line behavior.
+    Issue::ContinueMode guard({});
+    pp("{#define F(a,b) a}\nF(1,2,3);");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":2.")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, C2_TooFewReportsClosingParenLine) {
+    // clang (case D, `G(1\n\n);` with 2-param G): "too few" always reports
+    // the closing ')' line, same as gcc -- unlike "too many", there is no
+    // excess-token search.
+    Issue::ContinueMode guard({});
+    pp("{#define G(a,b) a}\nG(1\n\n);");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":4.")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, C2_TooManyExcessIsTheSecondArgumentAfterAnEmptyOne) {
+    // clang (case E, `F(1\n,\n\n\n,\nx);`): the 2nd argument (between the two
+    // commas) is empty, so the triggering comma ending it is the *second*
+    // one; the excess token is "x" on line 7, not the second comma's own
+    // line (6) -- the binding review correction for this case.
+    Issue::ContinueMode guard({});
+    pp("{#define F(a,b) a}\nF(1\n,\n\n\n,\nx);");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":7.")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, C2_TooManyExcessArgumentIsEmptyFallsBackToCommaLine) {
+    // clang (case F, `F(1,2,\n\n);`): the excess (3rd) argument is empty --
+    // nothing but whitespace stands between the triggering comma and the
+    // closing ')' -- so the report falls back to the comma's own line (2),
+    // not the ')' line (4).
+    Issue::ContinueMode guard({});
+    pp("{#define F(a,b) a}\nF(1,2,\n\n);");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":2.")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, C2_TooManySkipsCommentBeforeExcessToken) {
+    // clang (case G, `F(1,2, /*c*/\n\n3);`): a comment right after the
+    // triggering comma is skipped like whitespace; the excess token "3" is
+    // on line 4.
+    Issue::ContinueMode guard({});
+    pp("{#define F(a,b) a}\nF(1,2, (*c*)\n\n3);");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":4.")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, C2_ZeroParamMacroExcessStartsAfterOpenParen) {
+    // 0-parameter macro: the excess search starts right after '(' itself
+    // (there is no "last allowed argument" comma); the first argument given
+    // is already excess.
+    Issue::ContinueMode guard({});
+    pp("{#define F() a}\nF(\n\n1);");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":4.")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, C2_VariadicTooFewStillReportsClosingParenLine) {
+    // A variadic macro's "too few" case uses the same closing-')' rule as a
+    // non-variadic one.
+    Issue::ContinueMode guard({});
+    pp("{#define V(a,b,...) <a|b|__VA_ARGS__>}\nV(1\n\n);");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":4.")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, C2_OutputOnlyLinesInRescannedArgumentsDoNotMoveTheLine) {
+    // The excess-token line marker reuses the same sum_uncounted accounting
+    // as advance_lineno() itself, so an output-only newline (from a $n
+    // decode, rescanned from another macro's body) must not shift the
+    // reported line any more than it shifts __LINE__ -- BODY's invocation is
+    // one source line, even though F's rescanned argument list embeds
+    // decoded newlines.
+    Issue::ContinueMode guard({});
+    pp("{#define F(a,b) a}{#define BODY F(1$n,2$n,3)}\nBODY");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH,
+              PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find(":2.")) << msgs[0];
 }

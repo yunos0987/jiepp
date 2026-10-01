@@ -631,6 +631,22 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     bool found_rp = false;
                     Token rp_token;
 
+                    // C2: where a "too many arguments" PP34 should be reported if the
+                    // call turns out to have one, following clang -- the line of the
+                    // first non-whitespace, non-comment token after the comma that
+                    // ends the last allowed argument (param fm->num_of_params_max()),
+                    // or after '(' itself for a 0-parameter macro; if every token up to
+                    // the closing ')' is whitespace/comments, the line of that comma
+                    // (or '(') instead. Both line markers are sum_uncounted snapshots
+                    // (the same accounting advance_lineno() below uses), so they
+                    // already exclude output-only lines the same way sum_uncounted
+                    // does. Harmless to compute when the call does not turn out to
+                    // have too many arguments.
+                    const int excess_after_params = fm->num_of_params_max();
+                    bool excess_past_trigger = (excess_after_params == 0);
+                    int excess_trigger_uncounted = sum_uncounted; // pre_lp's value, i.e. right after '('
+                    int excess_token_uncounted = -1;
+
                     while (!work.empty()) {
                         Token pt = std::move(work.back());
                         work.pop_back();
@@ -654,6 +670,22 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         if (!pt.lineno_counted) {
                             sum_uncounted += pt.num_of_lines;
                             pt.lineno_counted = true;
+                        }
+
+                        // C2: comments carry MASK_WS (see N2), so "non-whitespace,
+                        // non-comment" is just "not MASK_WS". The top-level closing
+                        // ')' is excluded here (handled by the fallback to
+                        // excess_trigger_uncounted below); a nested ')'/']' (depth > 0)
+                        // is an ordinary token.
+                        if (!excess_past_trigger) {
+                            if (depth == 0 && pt.type == Token::SEP &&
+                                static_cast<int>(params.size()) + 1 == excess_after_params) {
+                                excess_past_trigger = true;
+                                excess_trigger_uncounted = sum_uncounted;
+                            }
+                        } else if (excess_token_uncounted < 0 && !(pt.type & Token::MASK_WS) &&
+                                   !(depth == 0 && pt.type == Token::RP)) {
+                            excess_token_uncounted = sum_uncounted;
                         }
 
                         // jiepp extension: a directive found while collecting a macro
@@ -756,11 +788,27 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
 
                         int n = static_cast<int>(params.size());
                         if (n < fm->num_of_params_min() || n > fm->num_of_params_max()) {
-                            ISSUE(ARGUMENT_COUNT_MISMATCH,
-                                  "expected " + std::to_string(fm->num_of_params_min())
-                                  + (fm->num_of_params_min() == fm->num_of_params_max()
-                                     ? "" : "-" + std::to_string(fm->num_of_params_max()))
-                                  + ", got " + std::to_string(n));
+                            std::string msg =
+                                "expected " + std::to_string(fm->num_of_params_min())
+                                + (fm->num_of_params_min() == fm->num_of_params_max()
+                                   ? "" : "-" + std::to_string(fm->num_of_params_max()))
+                                + ", got " + std::to_string(n);
+                            // C2: too many arguments reports at the excess-argument
+                            // line derived above (clang); too few reports at the
+                            // closing ')' line (gcc and clang agree there), i.e. the
+                            // same line sum_uncounted resolves to once fully
+                            // accumulated below -- same as advance_lineno()'s target.
+                            if (n > fm->num_of_params_max()) {
+                                int excess_uncounted = (excess_token_uncounted >= 0)
+                                    ? excess_token_uncounted : excess_trigger_uncounted;
+                                Issue::with_lineno(wrap_lineno(env.get_lineno() + excess_uncounted), [&] {
+                                    ISSUE(ARGUMENT_COUNT_MISMATCH, msg);
+                                });
+                            } else {
+                                Issue::with_lineno(wrap_lineno(env.get_lineno() + sum_uncounted), [&] {
+                                    ISSUE(ARGUMENT_COUNT_MISMATCH, msg);
+                                });
+                            }
                             call_error = true;
                         }
                     }
