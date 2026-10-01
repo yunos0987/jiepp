@@ -178,12 +178,10 @@ bool IncludeLevelMacro::equal(const Macro& other) const {
 // ---------------------------------------------------------------------------
 
 std::vector<Token> BaseFileMacro::replacement(Env& /*env*/) const {
-#ifdef JIEPP_SANDBOX
-    return {Token::create(Token::STRING, "''")};
-#else
+    // Not blanked in JIEPP_SANDBOX builds: it only reflects the path that
+    // __FILE__ and diagnostics already expose, and does no filesystem access.
     std::string fp = Issue::base_filepath();
     return {Token::create(Token::STRING, Util::encode_iec_string(fp))};
-#endif
 }
 
 bool BaseFileMacro::equal(const Macro& other) const {
@@ -195,14 +193,12 @@ bool BaseFileMacro::equal(const Macro& other) const {
 // ---------------------------------------------------------------------------
 
 std::vector<Token> FileNameMacro::replacement(Env& /*env*/) const {
-#ifdef JIEPP_SANDBOX
-    return {Token::create(Token::STRING, "''")};
-#else
+    // Not blanked in JIEPP_SANDBOX builds (see BaseFileMacro). The filename
+    // is derived from the string path only; no filesystem access.
     namespace fs = std::filesystem;
     std::string fp = Issue::filepath();
     std::string name = fs::path(fp).filename().generic_string();
     return {Token::create(Token::STRING, Util::encode_iec_string(name))};
-#endif
 }
 
 bool FileNameMacro::equal(const Macro& other) const {

@@ -145,6 +145,15 @@ TEST_F(SandboxInfoLeakTest, TimestampEmpty) {
     EXPECT_TRUE(empty());
 }
 
+// __BASE_FILE__ and __FILE_NAME__ are not blanked in sandbox builds: they
+// behave exactly like a non-sandbox build and agree with __FILE__.
+TEST_F(SandboxInfoLeakTest, FileNameMacrosNotBlanked) {
+    EXPECT_EQ("'<unknown location>'", pp("__FILE__"));
+    EXPECT_EQ("'<unknown location>'", pp("__BASE_FILE__"));
+    EXPECT_EQ("'<unknown location>'", pp("__FILE_NAME__"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(SandboxInfoLeakTest, SetlineIgnoresFilepath) {
     // {#setline} with a filepath arg should not change the filename in errors
     EXPECT_THROW(pp("{#line 10 'secret/path.iec'}{#error test}"), Issue::Exception);

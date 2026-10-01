@@ -82,7 +82,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 ### macro/ の内部構成
 
-`Macro` クラス（`macro.hpp/cpp`）はオブジェクト形式・関数形式マクロの定義を表現する（パラメータ一覧・本体トークン列を保持）。`macro_builtin.cpp` は `__LINE__`/`__FILE__`/`__COUNTER__`/`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__` 等、値が動的に決まる組み込みオブジェクトマクロを実装する。`TimeStampMacro`/`BaseFileMacro`/`FileNameMacro` はファイルシステムにアクセスするため `JIEPP_SANDBOX` ビルドでは空文字列を返すスタブに切り替わる。
+`Macro` クラス（`macro.hpp/cpp`）はオブジェクト形式・関数形式マクロの定義を表現する（パラメータ一覧・本体トークン列を保持）。`macro_builtin.cpp` は `__LINE__`/`__FILE__`/`__COUNTER__`/`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__` 等、値が動的に決まる組み込みオブジェクトマクロを実装する。`TimeStampMacro` はファイルシステムにアクセスするため `JIEPP_SANDBOX` ビルドでは空文字列を返すスタブに切り替わる（`BaseFileMacro`/`FileNameMacro` は `__FILE__` と同じ情報しか返さず、ファイルシステムにもアクセスしないため、サンドボックスでも通常ビルドと同じ値を返す）。
 
 ### jiepp/ の内部構成
 
@@ -167,7 +167,7 @@ Web サーバーで信頼できない入力を処理する際のコンパイル�
 設計方針:
 
 - **コンパイル時フラグ**: `#ifdef JIEPP_SANDBOX` で分岐。ランタイムオーバーヘッドなし
-- ファイルシステムにアクセスする組み込みマクロ（`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__`。実装は `TimeStampMacro`/`BaseFileMacro`/`FileNameMacro`、`macro/macro_builtin.cpp`）は空文字列を返すスタブに切り替わる
+- ファイルシステムにアクセスする組み込みマクロ `__TIMESTAMP__`（実装は `TimeStampMacro`、`macro/macro_builtin.cpp`）は空文字列を返すスタブに切り替わる。`__BASE_FILE__`/`__FILE_NAME__` は `__FILE__` や診断メッセージと同じパス情報しか返さないため、通常ビルドと同じ値を返す（空にしない）
 - 運用要件（process-per-request 必須の理由・入出力サイズ制限の管理元）は [SPECIFICATION.md §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode) の「運用要件」参照
 
 ### テスト構成
