@@ -35,6 +35,11 @@ bool ctrl_parent_active(const std::vector<CtrlState>& stack) {
 
 namespace {
 
+// Only called from the non-sandbox branch of eval_cond_str() below; in a
+// sandbox build it would otherwise be an unused function (__has_include is
+// rejected outright there, see find_has_include_call()).
+#ifndef JIEPP_SANDBOX
+
 // Replace all __has_include("path") and __has_include(<path>) in raw_cond
 // with "1" or "0" based on whether the file is found.
 // This runs before macro expansion so arguments are NOT expanded.
@@ -124,6 +129,8 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
     }
     return result;
 }
+
+#endif  // !JIEPP_SANDBOX
 
 #ifdef JIEPP_SANDBOX
 // Index of the first actual __has_include operator use in s -- the keyword

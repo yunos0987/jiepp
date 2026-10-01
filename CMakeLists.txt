@@ -98,6 +98,12 @@ FLEX_TARGET(CfScanner
 
 ADD_FLEX_BISON_DEPENDENCY(CfScanner CfParser)
 
+# The generated bison parser sets yynerrs_ but a non-debug build never reads
+# it, which trips -Wunused-but-set-variable. Suppress that one warning only
+# on the generated file, not project sources.
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/constfold_parser.cpp
+    PROPERTIES COMPILE_OPTIONS -Wno-unused-but-set-variable)
+
 # ---- Source files ----
 set(JIEPP_SOURCES
     src/util/text.cpp
@@ -135,6 +141,7 @@ set(JIEPP_SOURCES
 )
 
 add_library(jiepp_lib STATIC ${JIEPP_SOURCES})
+target_compile_options(jiepp_lib PRIVATE -Wall -Wextra)
 target_include_directories(jiepp_lib PUBLIC src ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_definitions(jiepp_lib PRIVATE
     JIEPP_VERSION="${PROJECT_VERSION}"
@@ -148,6 +155,7 @@ if(JIEPP_SANDBOX)
 endif()
 
 add_executable(jiepp src/jiepp/main.cpp)
+target_compile_options(jiepp PRIVATE -Wall -Wextra)
 set_target_properties(jiepp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
@@ -161,6 +169,7 @@ if(GTest_FOUND OR TARGET GTest::gtest)
     list(FILTER TEST_SOURCES EXCLUDE REGEX [[.*/debug_.*\.cpp$]])
     if(TEST_SOURCES)
         add_executable(jiepp_test ${TEST_SOURCES})
+        target_compile_options(jiepp_test PRIVATE -Wall -Wextra)
         # Disable linker pruning for test registration (MSVC only)
         if (MSVC)
             target_link_options(jiepp_test PRIVATE "/OPT:NOREF" "/INCREMENTAL:NO")

@@ -33,7 +33,7 @@ bool CounterMacro::equal(const Macro& other) const {
 // LineMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> LineMacro::replacement(Env& env) const {
+std::vector<Token> LineMacro::replacement(Env& /*env*/) const {
     return {Token::create(Token::ANY, std::to_string(Issue::lineno()))};
 }
 
@@ -45,7 +45,7 @@ bool LineMacro::equal(const Macro& other) const {
 // FileMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> FileMacro::replacement(Env& env) const {
+std::vector<Token> FileMacro::replacement(Env& /*env*/) const {
     std::string fp = Issue::filepath();
     return {Token::create(Token::STRING, Util::encode_iec_string(fp))};
 }
@@ -110,7 +110,7 @@ bool TimeMacro::equal(const Macro& other) const {
 // TimeStampMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> TimeStampMacro::replacement(Env& env) const {
+std::vector<Token> TimeStampMacro::replacement([[maybe_unused]] Env& env) const {
 #ifdef JIEPP_SANDBOX
     // Sandbox: no filesystem access
     return {Token::create(Token::STRING, "''")};
@@ -167,7 +167,7 @@ bool IncludeLevelMacro::equal(const Macro& other) const {
 // BaseFileMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> BaseFileMacro::replacement(Env& env) const {
+std::vector<Token> BaseFileMacro::replacement(Env& /*env*/) const {
 #ifdef JIEPP_SANDBOX
     return {Token::create(Token::STRING, "''")};
 #else
@@ -184,7 +184,7 @@ bool BaseFileMacro::equal(const Macro& other) const {
 // FileNameMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> FileNameMacro::replacement(Env& env) const {
+std::vector<Token> FileNameMacro::replacement(Env& /*env*/) const {
 #ifdef JIEPP_SANDBOX
     return {Token::create(Token::STRING, "''")};
 #else

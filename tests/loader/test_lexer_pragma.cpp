@@ -8,10 +8,6 @@ static std::vector<Token> ts(const std::string& text, bool remove_comments = fal
     return iec3_tokens_from_string(text, remove_comments);
 }
 
-static Token make(int type, const std::string& text, int line = 0) {
-    return Token::create(type, text, line);
-}
-
 // ---- pragma errors ----
 
 class LexerPragmaTest : public JieppTest {};

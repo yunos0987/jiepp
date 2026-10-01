@@ -1,15 +1,6 @@
 #include "lineno_test_helper.hpp"
 
 // ---- Function macro: line number tracking ----
-namespace {
-void normalize_diags(std::vector<std::string>& diags) {
-    for (auto& diag : diags) {
-        while (!diag.empty() && diag.back() == ' ') {
-            diag.pop_back();
-        }
-    }
-}
-} // namespace
 
 TEST_F(LinenoTest, Fmacro) {
     const std::vector<TestCase> cases = {

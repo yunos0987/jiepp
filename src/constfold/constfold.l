@@ -12,7 +12,7 @@ extern CfValue cflval;  // defined in constfold_parser.cpp (bison %code section)
 #include <stdexcept>
 %}
 
-%option noyywrap nodefault 8bit nounistd never-interactive
+%option noyywrap nodefault 8bit nounistd never-interactive nounput noinput
 %option prefix="cf"
 
 DIGIT   [0-9]

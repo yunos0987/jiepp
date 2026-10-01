@@ -66,7 +66,7 @@ Issue::Code PlainTextMessage::parse_code(const std::string& line) {
 	return Issue::Code::FATAL; // unreachable
 }
 
-void PlainTextMessage::message(std::ostream& output, Issue::Severity severity, Issue::Code code, std::string context, std::string file, LineNo lineno, int column, std::source_location loc_) {
+void PlainTextMessage::message(std::ostream& output, Issue::Severity severity, Issue::Code code, std::string context, std::string file, LineNo lineno, int column, [[maybe_unused]] std::source_location loc_) {
 	// Issue::happen() passes Issue::CLI_LOCATION verbatim (instead of a real
 	// file) for diagnostics not tied to any source file; render those as
 	// "jiepp: error: PPxx: message" with no ":line.column" suffix.
