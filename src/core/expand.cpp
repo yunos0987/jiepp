@@ -725,80 +725,117 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         cur.push_back(std::move(pt));
                     }
 
+                    // task_slug argcount-error-output (D2): a call with the wrong
+                    // argument count is not expanded (G1/gcc/clang). An unterminated
+                    // call (no ')' before the end of the token stream) skips the
+                    // count check entirely -- it is always an error on its own, and
+                    // checking the count too would report PP34 twice for one call --
+                    // and, unlike a terminated wrong-count call, outputs nothing at
+                    // all, not even the macro name (clang; gcc differs and keeps the
+                    // name, but the project follows clang where they disagree).
+                    bool call_error = false;
+                    bool unterminated_call = false;
                     if (!found_rp) {
                         ISSUE(ARGUMENT_COUNT_MISMATCH, "missing closing parenthesis");
-                    }
-
-                    // Zero-args check: M() with min_params == 0
-                    if (params.size() == 1) {
-                        bool empty = true;
-                        for (auto& tok : params[0]) {
-                            if (!(tok.type & Token::MASK_WS)) {
-                                empty = false;
-                                break;
+                        call_error = true;
+                        unterminated_call = true;
+                    } else {
+                        // Zero-args check: M() with min_params == 0
+                        if (params.size() == 1) {
+                            bool empty = true;
+                            for (auto& tok : params[0]) {
+                                if (!(tok.type & Token::MASK_WS)) {
+                                    empty = false;
+                                    break;
+                                }
+                            }
+                            if (empty && fm->num_of_params_min() == 0) {
+                                params.clear();
                             }
                         }
-                        if (empty && fm->num_of_params_min() == 0) {
-                            params.clear();
+
+                        int n = static_cast<int>(params.size());
+                        if (n < fm->num_of_params_min() || n > fm->num_of_params_max()) {
+                            ISSUE(ARGUMENT_COUNT_MISMATCH,
+                                  "expected " + std::to_string(fm->num_of_params_min())
+                                  + (fm->num_of_params_min() == fm->num_of_params_max()
+                                     ? "" : "-" + std::to_string(fm->num_of_params_max()))
+                                  + ", got " + std::to_string(n));
+                            call_error = true;
                         }
                     }
 
-                    int n = static_cast<int>(params.size());
-                    if (n < fm->num_of_params_min() || n > fm->num_of_params_max()) {
-                        ISSUE(ARGUMENT_COUNT_MISMATCH,
-                              "expected " + std::to_string(fm->num_of_params_min())
-                              + (fm->num_of_params_min() == fm->num_of_params_max()
-                                 ? "" : "-" + std::to_string(fm->num_of_params_max()))
-                              + ", got " + std::to_string(n));
-                    }
-
-                    // R6: per-actual-argument leading/trailing whitespace/comment
-                    // presence, from the raw (pre-flatten) argument tokens -- needed
-                    // only for a macro that stringizes its variable arguments
-                    // (@__VA_ARGS__/@args or __VA_ARGS__ inside @__VA_OPT__(...)), so
-                    // every other function-macro call pays nothing for it.
-                    std::vector<jiepp::expand_detail::ArgWs> arg_ws;
-                    if (fm->stringizes_va()) {
-                        arg_ws.reserve(params.size());
-                        for (const auto& p : params)
-                            arg_ws.push_back({!p.empty() && (p.front().type & Token::MASK_WS) != 0,
-                                              !p.empty() && (p.back().type & Token::MASK_WS) != 0});
-                    }
-
-                    for (auto& p : params)
-                        p = ts_flatten(std::move(p));
-
-                    Token::HideSet new_hs = Token::HideSet::intersect(t.hs, rp_token.hs).with(t.text);
-
-                    // Advance the line counter to the closing ')' BEFORE subst(), so a
-                    // __LINE__ reference inside the macro body or an argument reports
-                    // the invocation's closing-paren line (gcc/clang behaviour for a
-                    // function-macro call spanning multiple lines), not the line the
-                    // macro name appeared on.
+                    // Advance the line counter to the closing ')' (or, on an
+                    // unterminated call, to the end of the collected tokens) BEFORE
+                    // subst(), so a __LINE__ reference inside the macro body or an
+                    // argument reports the invocation's closing-paren line (gcc/clang
+                    // behaviour for a function-macro call spanning multiple lines),
+                    // not the line the macro name appeared on. Also shared by the
+                    // error path below, so line counting is identical whether or not
+                    // the call errors.
                     advance_lineno(sum_uncounted, env);
 
-                    // task_slug arg-expand-once (D2): a memo is allocated only when
-                    // this macro has at least one parameter spelled >= 2 times in its
-                    // body (fm->num_arg_slots() > 0); otherwise nullptr is passed and
-                    // subst() takes its original per-occurrence expand() path for
-                    // every parameter, with no allocation. fm must stay valid across
-                    // this call (already required; see symtab.hpp F14).
-                    std::optional<ArgExpansionMemo> arg_memo;
-                    if (fm->num_arg_slots() > 0) {
-                        arg_memo.emplace(ArgExpansionMemo{
-                            &fm->arg_slots(), fm->arg_slot_uses(),
-                            std::vector<std::optional<std::vector<Token>>>(
-                                static_cast<std::size_t>(fm->num_arg_slots()))});
-                    }
-                    auto replaced = subst(fm->body(), fm->args(), params,
+                    std::vector<Token> replaced;
+                    if (call_error) {
+                        // PP34 recovery (G1-G3, gcc/clang): the call is not expanded.
+                        // On a terminated call with the wrong argument count, the
+                        // macro name is output as is -- pushed directly to `ots`
+                        // (not rescanned via `work`, so it is NOT re-examined
+                        // against whatever follows in this same scan: P(1,2)(5) ->
+                        // P(5), not a second call attempt) with its own hide set,
+                        // unpainted. When this expand() call is itself pre-expanding
+                        // an argument, that argument's `ots` becomes the expanded
+                        // argument text, so the name IS re-examined once the outer
+                        // replacement using it is rescanned (K(P(1,2))(5) -> 5+1).
+                        // An unterminated call outputs nothing at all (gcc differs
+                        // and keeps the name; the project follows clang). Either way
+                        // the argument list is dropped unexpanded: no diagnostics or
+                        // __COUNTER__ increments come from inside it, and `replaced`
+                        // stays empty so only the newline tail below is emitted.
+                        if (!unterminated_call)
+                            ots.push_back(std::move(t));
+                    } else {
+                        // R6: per-actual-argument leading/trailing whitespace/comment
+                        // presence, from the raw (pre-flatten) argument tokens -- needed
+                        // only for a macro that stringizes its variable arguments
+                        // (@__VA_ARGS__/@args or __VA_ARGS__ inside @__VA_OPT__(...)), so
+                        // every other function-macro call pays nothing for it.
+                        std::vector<jiepp::expand_detail::ArgWs> arg_ws;
+                        if (fm->stringizes_va()) {
+                            arg_ws.reserve(params.size());
+                            for (const auto& p : params)
+                                arg_ws.push_back({!p.empty() && (p.front().type & Token::MASK_WS) != 0,
+                                                  !p.empty() && (p.back().type & Token::MASK_WS) != 0});
+                        }
+
+                        for (auto& p : params)
+                            p = ts_flatten(std::move(p));
+
+                        Token::HideSet new_hs = Token::HideSet::intersect(t.hs, rp_token.hs).with(t.text);
+
+                        // task_slug arg-expand-once (D2): a memo is allocated only when
+                        // this macro has at least one parameter spelled >= 2 times in its
+                        // body (fm->num_arg_slots() > 0); otherwise nullptr is passed and
+                        // subst() takes its original per-occurrence expand() path for
+                        // every parameter, with no allocation. fm must stay valid across
+                        // this call (already required; see symtab.hpp F14).
+                        std::optional<ArgExpansionMemo> arg_memo;
+                        if (fm->num_arg_slots() > 0) {
+                            arg_memo.emplace(ArgExpansionMemo{
+                                &fm->arg_slots(), fm->arg_slot_uses(),
+                                std::vector<std::optional<std::vector<Token>>>(
+                                    static_cast<std::size_t>(fm->num_arg_slots()))});
+                        }
+                        replaced = subst(fm->body(), fm->args(), params,
                                          arg_ws.empty() ? nullptr : &arg_ws, new_hs, env,
                                          /*va_sep_ws=*/false,
                                          arg_memo ? &*arg_memo : nullptr);
-                    // A macro replacement never contributes source lines: a newline
-                    // in it is either a decoded $n in the body or a copy of an
-                    // argument newline, whose source line the call newline token
-                    // below already re-emits.
-                    ts_mark_output_only(replaced);
+                        // A macro replacement never contributes source lines: a newline
+                        // in it is either a decoded $n in the body or a copy of an
+                        // argument newline, whose source line the call newline token
+                        // below already re-emits.
+                        ts_mark_output_only(replaced);
+                    }
 
                     const int source_lines = sum_num_of_lines - sum_output_only;
                     if (sum_output_only > 0) {

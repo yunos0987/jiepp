@@ -530,3 +530,35 @@ TEST_F(SmokeTest, SmallRecursionLimitHasOneMiBFloor) {
     EXPECT_TRUE(output_has_line(r.out, nested_macro_expected_line(kDepth)))
         << "expected line not found\nstdout: " << r.out;
 }
+
+// ---- R14/R15: PP34 recovery (task_slug argcount-error-output) through the
+// CLI -- a function-macro call with the wrong argument count is not
+// expanded; the call becomes just the macro name, and the dropped argument
+// list's own directive side effects (collected once during argument
+// collection, independently of the call's own fate) still take effect and
+// are still echoed under -dD.
+
+TEST_F(SmokeTest, ArgCountMismatchDoesNotExpandUnderDD) {
+    fs::path input = tmp_dir_ / "argcount_dd.iec";
+    write_file(input, "{#define P(x) x}P(1,{#define Q 9}2) Q");
+
+    auto r = run("-dD -P \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(r.out, "{#define P(x) x}{#define Q 9}P 9");
+    EXPECT_NE(r.err.find("PP34"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1)
+        << "stderr should have exactly one PP34 line: " << r.err;
+}
+
+TEST_F(SmokeTest, ArgCountMismatchContinuesAndExitsNonZero) {
+    fs::path input = tmp_dir_ / "argcount_continue.iec";
+    write_file(input, "{#define P(x) x+1}\nX P(2,3) Y\nZ");
+
+    auto r = run("-P \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_TRUE(output_has_line(r.out, "X P Y")) << "stdout: " << r.out;
+    EXPECT_TRUE(output_has_line(r.out, "Z")) << "stdout: " << r.out;
+    EXPECT_NE(r.err.find("PP34"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1)
+        << "stderr should have exactly one PP34 line: " << r.err;
+}
