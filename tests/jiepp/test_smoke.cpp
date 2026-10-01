@@ -392,35 +392,14 @@ TEST_F(SmokeTest, DeeplyNestedFunctionMacroExpansion) {
     fs::path input = tmp_dir_ / "nested_fmacro.iec";
     constexpr int kDepth = 100;
 
-    std::string src = "{#define I(a) (a)+1}\nprogram Main\n{st}\n";
-    for (int i = 0; i < kDepth; ++i)
-        src += "I(";
-    src += "0";
-    for (int i = 0; i < kDepth; ++i)
-        src += ")";
-    src += ";\n{end}\nend_program\n";
-    write_file(input, src);
+    write_file(input, nested_macro_source(kDepth));
 
     auto r = run("\"" + input.generic_string() + "\"");
     EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
 
-    std::string expected;
-    expected += std::string(kDepth, '(');
-    expected += "0";
-    for (int i = 0; i < kDepth; ++i)
-        expected += ")+1";
-    expected += ";";
-
-    std::istringstream lines(r.out);
-    std::string line;
-    bool found = false;
-    while (std::getline(lines, line)) {
-        if (line == expected) {
-            found = true;
-            break;
-        }
-    }
-    EXPECT_TRUE(found) << "expected line: " << expected << "\nstdout: " << r.out;
+    std::string expected = nested_macro_expected_line(kDepth);
+    EXPECT_TRUE(output_has_line(r.out, expected))
+        << "expected line: " << expected << "\nstdout: " << r.out;
 }
 
 // ---- 11. Default stack size (8 MiB) and the PP63 stack guard ----
