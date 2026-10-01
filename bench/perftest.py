@@ -218,9 +218,17 @@ def cmd_run(args) -> int:
     if not cases_dir.is_dir():
         print(f"ERROR: --cases not found: {cases_dir}", file=sys.stderr)
         return 1
+    # Resolve to an absolute path: the scratch output directory below is
+    # derived from cases_dir's parent, and a relative --cases path would
+    # otherwise point at the wrong place once compared across cwd changes.
+    cases_dir = cases_dir.resolve()
 
     results_dir = Path(args.results)
     results_dir.mkdir(parents=True, exist_ok=True)
+    # Resolve to an absolute path: --results is a user-facing cache variable
+    # (JIEPP_PERF_RESULTS_DIR) that may be relative to an unrelated cwd, and
+    # keeping it relative would make the TSV path below ambiguous.
+    results_dir = results_dir.resolve()
 
     display_build_type = args.build_type if args.build_type else "unknown"
     is_release = (args.build_type == "Release")
@@ -241,7 +249,13 @@ def cmd_run(args) -> int:
         print("ERROR: no perf test input files found (0 cases)", file=sys.stderr)
         return 1
 
-    out_dir = results_dir.parent / "out"
+    # Scratch output lives beside the cases directory, not beside --results:
+    # --results may be an unrelated user-supplied cache directory (e.g.
+    # JIEPP_PERF_RESULTS_DIR pointed at $HOME/results), and deleting
+    # "<that dir>/../out" would recursively remove whatever happens to sit
+    # next to it. cases_dir is always the perftest cases tree, so its parent
+    # is a safe place to scope the scratch "out" directory to.
+    out_dir = cases_dir.parent / "out"
     if out_dir.exists():
         shutil.rmtree(out_dir)
 
