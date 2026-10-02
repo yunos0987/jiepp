@@ -351,7 +351,7 @@ DEBUG('%d', 1);     (* → printf('%d', 1); *)
 
 ```
 {#define T(...) X @@ __VA_ARGC__}
-T(a, b);              (* → X2; ("a,b" ではなく引数の個数) *)
+T(a, b);              (* → X2; ("a, b" ではなく引数の個数) *)
 T();                  (* → X0; *)
 
 {#define S(...) @__VA_ARGC__}
@@ -380,7 +380,7 @@ LOG(x);   (* → g(x,); カンマが残る（GNU の comma-swallowing 拡張と�
 ```
 {#define LOG(fmt, ...) write_log(fmt __VA_OPT__(,) __VA_ARGS__)}
 LOG('error');          (* → write_log('error') — 末尾コンマなし *)
-LOG('code=%d', 42);    (* → write_log('code=%d', 42) *)
+LOG('code=%d', 42);    (* → write_log('code=%d' , 42) — 本体の `fmt` の後の空白がカンマの前に残る（clang と同じ） *)
 ```
 
 - 可変長引数マクロ（`...` または名前付き可変長引数 `args...` を持つマクロ）の本体内でのみ使用可能
