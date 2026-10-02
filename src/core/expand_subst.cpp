@@ -7,6 +7,7 @@
 
 #include "../macro/macro.hpp"
 #include "../util/iec_61131-3.hpp"
+#include "../util/text.hpp"
 
 #include <algorithm>
 #include <set>
@@ -72,15 +73,17 @@ std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts) {
 // quadratic in the input (clang echoes only the pair formed by each paste and
 // stops after -ferror-limit errors; jiepp has no such limit). Bound each
 // echoed operand instead: keep at most kPasteEchoMax bytes and mark the cut
-// with "...". The code and severity of the diagnostic are unchanged.
+// with "...". The cut is moved to a UTF-8 character boundary so a multibyte
+// character is never split. The code and severity of the diagnostic are
+// unchanged.
 constexpr std::size_t kPasteEchoMax = 64;
 
 static std::string paste_echo_head(const std::string& s) {
-    return s.size() <= kPasteEchoMax ? s : s.substr(0, kPasteEchoMax) + "...";
+    return s.size() <= kPasteEchoMax ? s : std::string(Util::utf8_head(s, kPasteEchoMax)) + "...";
 }
 
 static std::string paste_echo_tail(const std::string& s) {
-    return s.size() <= kPasteEchoMax ? s : "..." + s.substr(s.size() - kPasteEchoMax);
+    return s.size() <= kPasteEchoMax ? s : "..." + std::string(Util::utf8_tail(s, kPasteEchoMax));
 }
 
 void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
