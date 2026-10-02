@@ -245,6 +245,8 @@ cmake --build --preset linux-portable-sandbox-release
 
 バグ報告・機能要望は [GitHub Issues](https://github.com/yunos0987/jiepp/issues) で受け付けています。
 
+脆弱性は公開の Issue に書かず、[SECURITY.md](SECURITY.md) の手順で非公開に報告してください。
+
 ## ライセンス / License
 
 MIT ライセンス — 詳細は [LICENSE](LICENSE) を参照してください。
