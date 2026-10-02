@@ -184,7 +184,22 @@ Token read_pragma_body(const std::string& text,
                     // Like C, a '//' comment ends at the raw newline; drop it
                     // so it cannot swallow the rest of the directive once the
                     // newline has been folded into whitespace below.
-                    body.resize(lc.line_comment_start());
+                    // A "//!" document comment is kept, as the block comment
+                    // the single-line form is rewritten to (see
+                    // line_comments_to_block_comments() in
+                    // core/directive_handlers.cpp), with "*/" inside the text
+                    // written "*|" so it stays one comment.
+                    const std::size_t cs = lc.line_comment_start();
+                    if (body.compare(cs, 3, "//!") == 0) {
+                        std::string doc = body.substr(cs + 2);
+                        for (std::size_t q = doc.find("*/"); q != std::string::npos;
+                             q = doc.find("*/", q + 2))
+                            doc[q + 1] = '|';
+                        body.resize(cs);
+                        body += "/*" + doc + "*/";
+                    } else {
+                        body.resize(cs);
+                    }
                     lc.end_line_comment();
                 }
             }

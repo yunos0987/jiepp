@@ -925,6 +925,19 @@ TEST_F(DirectiveTest, LineCommentRewriteEscapesCommentCloser) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(DirectiveTest, DocLineCommentInMultiLineDirectiveIsKept) {
+    // A "//!" comment ended by a raw newline inside the directive is kept like
+    // the single-line form, as a "/*! ... */" block comment ("*/" -> "*|");
+    // an ordinary "//" comment is still dropped.
+    EXPECT_NE(std::string::npos, pp("{#define A x //! doc\n y}[A]").find("[x /*! doc*/  y]"));
+    EXPECT_NE(std::string::npos, pp("{#define A x //! d */ e\n y}[A]").find("[x /*! d *| e*/  y]"));
+    EXPECT_NE(std::string::npos, pp("{#token z //! tk\n q}").find("z /*! tk*/  q"));
+    EXPECT_NE(std::string::npos, pp("{#define A x // plain\n y}[A]").find("[x  y]"));
+    // The newline ending the comment is still counted.
+    EXPECT_NE(std::string::npos, pp("{#define A x //! doc\n y}\n__LINE__").find("3"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(DirectiveTest, LineCommentInDdModeEcho) {
     // B7: -dD echoes the normalized body -- the comment is gone, not just
     // hidden by the macro's own expansion.
