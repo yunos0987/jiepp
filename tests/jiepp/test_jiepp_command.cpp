@@ -366,8 +366,12 @@ TEST_F(JieppCommandTest, RemoveCommentsOn) {
 }
 
 TEST_F(JieppCommandTest, BoostPreprocessorIntegration) {
-    if (!fs::exists(jiepp_root_dir() /I_DIR / "boost"))
-        GTEST_SKIP() << "Boost test input directory not found; skipping test";
+    // The Boost.Preprocessor corpus is tracked in the repository, so a
+    // missing directory is a broken checkout, not a reason to skip.
+    if (!fs::exists(jiepp_root_dir() / I_DIR / "boost"))
+        FAIL() << "Boost test input directory not found: "
+               << (jiepp_root_dir() / I_DIR / "boost").generic_string()
+               << " (it is tracked in the repository; check the checkout)";
 #ifdef NDEBUG
     run_e2e("boost", {I_DIR.generic_string()});
 #endif
