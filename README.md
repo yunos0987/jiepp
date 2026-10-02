@@ -98,6 +98,8 @@ ctest --preset windows-clang-ninja-debug            # test
 
 Release プリセットでは clang の ThinLTO (`-O3 -flto=thin`) が有効になります（Windows は常時有効、Linux では `ld.lld` が見つかった場合のみ有効で、見つからない場合は configure 時に警告が出て ThinLTO なしでビルドされます）。
 
+どのプリセットでも、攻撃への耐性を高める防御的ビルドオプションが付きます。Linux はスタックプロテクタとフル RELRO（Release 系ではさらに `_FORTIFY_SOURCE=2`）、Windows は Control Flow Guard です。詳細は [ARCHITECTURE.md](ARCHITECTURE.md#依存管理言語標準コンパイラ要件) を参照してください。
+
 ### 性能測定 / Benchmark
 
 Release ビルドに `bench` ターゲットを用意しています。詳細は [CONTRIBUTING.md の性能測定](CONTRIBUTING.md#性能測定--benchmark) を参照してください。

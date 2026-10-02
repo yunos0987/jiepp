@@ -28,6 +28,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - Clang 17 以上（Windows / Linux 共通、公式プリセット）。Linux では GCC 13 以上でも可だが、プリセット外の手動設定が必要
 - Release ビルドは ThinLTO (`-O3 -flto=thin`) 有効
 - `linux-portable-release` は `-static` で libc/libstdc++/libgcc を静的リンク
+- 防御的ビルドオプション（`CMakeLists.txt` の `jiepp_harden_target`。`jiepp_lib` / `jiepp` / `jiepp_test` に適用）: Linux は `-fstack-protector-strong`、最適化ビルド（Release 系）のみ `-D_FORTIFY_SOURCE=2`、リンク時 `-z relro -z now`（フル RELRO）。PIE は動的リンクではツールチェーン既定のままで、`linux-portable-release`（完全静的）は非 PIE。Windows は Control Flow Guard（コンパイル `-Xclang -cfguard`、リンク `/guard:cf`）。ASLR（`/DYNAMICBASE`・`/HIGHENTROPYVA`）と DEP（`/NXCOMPAT`）は lld-link の既定で有効
 
 ## モジュール構成
 

@@ -54,6 +54,39 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ---- Compiler / linker hardening ----
+# jiepp may be fed untrusted input (see SECURITY.md), so every target built here
+# (library, executable, tests) gets exploit mitigations:
+#   Linux (gcc/clang): stack protector, _FORTIFY_SOURCE=2 (optimized configs
+#     only: glibc rejects it at -O0), and full RELRO (-z relro -z now). PIE is
+#     left at the toolchain default for dynamic builds; the fully static
+#     linux-portable build stays non-PIE on purpose.
+#   Windows (clang++ targeting MSVC, linked by lld-link): Control Flow Guard.
+#     ASLR (/DYNAMICBASE, /HIGHENTROPYVA) and DEP (/NXCOMPAT) are lld-link
+#     defaults and are not repeated here.
+# The flags are added per target, never to the generated flex/bison sources'
+# warning settings.
+function(jiepp_harden_target target)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_options(${target} PRIVATE
+            -fstack-protector-strong
+            "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:-U_FORTIFY_SOURCE>"
+            "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:-D_FORTIFY_SOURCE=2>")
+        get_target_property(_jiepp_type ${target} TYPE)
+        if(NOT _jiepp_type STREQUAL "STATIC_LIBRARY")
+            target_link_options(${target} PRIVATE "LINKER:-z,relro,-z,now")
+        endif()
+    elseif(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT MSVC)
+        # clang++ (GNU-style driver) takes the CC1 flag through -Xclang;
+        # clang-cl would take /guard:cf instead.
+        target_compile_options(${target} PRIVATE "SHELL:-Xclang -cfguard")
+        get_target_property(_jiepp_type ${target} TYPE)
+        if(NOT _jiepp_type STREQUAL "STATIC_LIBRARY")
+            target_link_options(${target} PRIVATE "LINKER:/guard:cf")
+        endif()
+    endif()
+endfunction()
+
 # vcpkg toolchain sets this up; if using vcpkg, GTest is found via find_package
 find_package(GTest CONFIG QUIET)
 
@@ -161,6 +194,8 @@ set_target_properties(jiepp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 target_link_libraries(jiepp PRIVATE jiepp_lib)
+jiepp_harden_target(jiepp_lib)
+jiepp_harden_target(jiepp)
 
 # ---- Tests ----
 if(GTest_FOUND OR TARGET GTest::gtest)
@@ -171,6 +206,7 @@ if(GTest_FOUND OR TARGET GTest::gtest)
     if(TEST_SOURCES)
         add_executable(jiepp_test ${TEST_SOURCES})
         target_compile_options(jiepp_test PRIVATE -Wall -Wextra)
+        jiepp_harden_target(jiepp_test)
         # Disable linker pruning for test registration (MSVC only)
         if (MSVC)
             target_link_options(jiepp_test PRIVATE "/OPT:NOREF" "/INCREMENTAL:NO")
