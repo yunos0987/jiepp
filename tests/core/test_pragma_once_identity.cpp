@@ -211,3 +211,19 @@ TEST(FileIdTest, SameFileSameIdDifferentFilesDifferentIds) {
     EXPECT_FALSE(Util::file_id("", none));
     fs::remove_all(d, ec);
 }
+
+// Some file systems report a zero file index / inode for every file. That is
+// no identity: all such files would look like one file, so {#pragma once}
+// would skip every later one. file_id() treats it as unavailable, and
+// FileContext then compares the path text only.
+TEST(FileIdTest, ZeroIndexMeansIdentityUnavailable) {
+    Util::FileId id{7, 7};
+    EXPECT_FALSE(Util::make_file_id(1, 0, id));
+    EXPECT_EQ(7u, id.volume);  // untouched on failure
+    EXPECT_EQ(7u, id.index);
+    ASSERT_TRUE(Util::make_file_id(1, 42, id));
+    EXPECT_EQ(1u, id.volume);
+    EXPECT_EQ(42u, id.index);
+    // A zero volume with a non-zero index is a valid identity.
+    EXPECT_TRUE(Util::make_file_id(0, 5, id));
+}

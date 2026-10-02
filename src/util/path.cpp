@@ -36,6 +36,14 @@ std::string Util::canonical_path(std::string_view path_text) {
     return Util::absolute_path(path_text);
 }
 
+bool Util::make_file_id(unsigned long long volume, unsigned long long index, FileId& out) {
+    if (index == 0)
+        return false;
+    out.volume = volume;
+    out.index  = index;
+    return true;
+}
+
 bool Util::file_id(std::string_view path_text, FileId& out) {
 #ifdef _WIN32
     // Access 0 + full sharing: only the file information is queried, so this
@@ -51,15 +59,14 @@ bool Util::file_id(std::string_view path_text, FileId& out) {
     CloseHandle(h);
     if (!ok)
         return false;
-    out.volume = info.dwVolumeSerialNumber;
-    out.index  = (static_cast<unsigned long long>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
-    return true;
+    return make_file_id(info.dwVolumeSerialNumber,
+                        (static_cast<unsigned long long>(info.nFileIndexHigh) << 32) | info.nFileIndexLow,
+                        out);
 #else
     struct stat st;
     if (::stat(std::string(path_text).c_str(), &st) != 0)
         return false;
-    out.volume = static_cast<unsigned long long>(st.st_dev);
-    out.index  = static_cast<unsigned long long>(st.st_ino);
-    return true;
+    return make_file_id(static_cast<unsigned long long>(st.st_dev),
+                        static_cast<unsigned long long>(st.st_ino), out);
 #endif
 }

@@ -25,7 +25,16 @@ struct FileId {
     bool operator==(const FileId&) const = default;
 };
 
-// Returns false when path_text cannot be opened/stat'ed (then `out` is unset).
+// Returns false when path_text cannot be opened/stat'ed (then `out` is unset),
+// and when the file system reports no usable identity: a zero file index /
+// inode (some file systems return 0 for every file, which would make all of
+// them look like one file) counts as "identity unavailable", so callers fall
+// back to comparing path text.
 bool file_id(std::string_view path_text, FileId& out);
+
+// The validity rule of file_id(), split out so it can be tested without a file
+// system that reports a zero index: stores the pair in `out` and returns true
+// unless `index` is 0.
+bool make_file_id(unsigned long long volume, unsigned long long index, FileId& out);
 
 }
