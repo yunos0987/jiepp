@@ -874,7 +874,7 @@ L 3;
 
 条件コンパイルの構造的エラーコード（`PP24`〜`PP27`、§16）を `{#ignore}` で抑制しても、条件コンパイル処理自体は不安定にならない。診断メッセージは抑制されるが、対応する構文異常は内部で安全に無視され、抑制対象の行以降のコンテンツも通常どおり出力される。
 
-SEVERE のコード（例: `PP63`）は `{#ignore}` を書いても抑制されない（§16「重大度」）。
+SEVERE のコード（例: `PP63`・`PP64`）は `{#ignore}` を書いても抑制されない（§16「重大度」）。
 
 ---
 
@@ -887,12 +887,23 @@ SEVERE のコード（例: `PP63`）は `{#ignore}` を書いても抑制され�
 | `{#max_include_depth N}` | `--max-include-depth N` | 100 | インクルード最大ネスト深度 |
 | `{#max_expansion_depth N}` | `--max-expansion-depth N` | 256 | マクロ展開深度上限 |
 | `{#max_if_nesting N}` | `--max-if-nesting N` | 256 | 条件分岐ネスト深度上限 |
+| （ディレクティブなし） | `--max-expansion-steps N` | 16777216（2^24） | マクロ展開の仕事量の上限（ステップ数）。`0` で無制限。下記「展開ステップ数の上限」参照 |
 | `{#max_blank_lines N}` / `{#max-blank-lines N}` | `--max-blank-lines N` | 7 | 連続空行の圧縮閾値（`0` で圧縮を無効化、§1・§9） |
 | `{#pp_output_pragma_style STYLE}` | `--pp-output-pragma-style STYLE` | `annotated` | プラグマ出力スタイル |
 
 CLI オプションで設定した値はソースコード内のディレクティブで上書きできない（ロックされる）。
 
+**例外**: `--max-expansion-steps` にはディレクティブ形式がない。入力ソースが自分で上限を引き上げられないようにするためである（上のほかの制限はすべてディレクティブ形式を持つ）。
+
 `{#max_*}` のオペランドは 10 進整数 1 個で、前後のコメントは空白として扱う。整数の後ろに余分な文字やトークンがある場合（`2x`・`2 3`・`2.9` など）は `INVALID_LIMIT_OPERAND` (`PP43`) エラーになり、値は変わらない。
+
+**展開ステップ数の上限（`PP64`）**: マクロ展開で行う仕事量にも上限があり、指数的に膨らむ入力（マクロの本体が自分より小さいマクロを 2 回使う段を重ねた「倍々爆弾」など）でも、メモリを使い尽くす前に止まる。仕事量は次の 3 か所で「ステップ」として数える。
+
+- 展開の作業スタックから取り出したトークン 1 個につき `1 + 長さ/64` ステップ（ファイル、繰り返した `{#include}`、標準入力、スキップされた `{#if 0}` の中、ディレクティブ、マクロの引数を含む）
+- マクロ本体の置換結果に追加したトークンと、`@@` で連結したトークン 1 個につき `1 + 長さ/64` ステップ（`__VA_ARGS__`・`__VA_OPT__`・`@` 文字列化・`$n` の複製を含む）
+- ディレクティブやプラグマのオペランド（`{#if}`・`{#include}` のパス・メッセージ・`{#string}`・`{#line}`・プラグマ本体）は 1 バイトにつき 1 ステップ
+
+上限は既定で 16777216（2^24）ステップ、`0` で無制限。通常ビルドでもサンドボックスビルドでも同じ既定値である。超えると `MAX_EXPANSION_STEPS_EXCEEDED`（`PP64`、SEVERE）を出して処理を中断する（`{#ignore}`・`-w`・`--silent` でも止まり、終了コードは `1`）。出力は `PP60`・`PP63` と同じ規則に従う（§16「重大度」）。数える範囲は 1 回の `preprocess()` / `preprocess_text()` 呼び出し、または jiepp コマンド 1 回（`-include` ファイルと主入力で共通）で、呼び出しごとに 0 から数え直す。
 
 **スタック残量の検査**: マクロ展開は入れ子 1 段ごとにスタックを使う（関数マクロで Release ビルド約 2 KiB）。jiepp コマンドは展開に入るたびにスタックの残りを調べ、256 KiB を下回ると `STACK_EXHAUSTED`（`PP63`、SEVERE）を出して処理を中断する。この検査は `PP60` の判定より先に行う。既定（深度上限 256、スタック 8 MiB）では先に `PP60` が出るので、`PP63` が出るのは `--max-expansion-depth`/`{#max_expansion_depth}` を大きくしたとき、`{#ignore PP60}` を使ったとき、または `--recursion-limit` でスタックを小さくしたときに限られる。`--recursion-limit` でスタックを大きくすれば、より深い入れ子を処理できる。ライブラリとして使う場合（`preprocess()` 等）はこの検査を行わない。
 
@@ -1052,6 +1063,7 @@ jiepp [filepath] [options]
 | `-MT TARGET` | 依存関係ルールのターゲット名（`-MF` は出力先のみ変更しターゲット名には影響しない）。**指定した文字列はエスケープなしでそのまま出力**（後述） | 入力ファイル名（拡張子を `.output` に変更、Make エスケープ適用済み） |
 | `--max-include-depth N` | インクルード深度上限 | 100 |
 | `--max-expansion-depth N` | マクロ展開深度上限 | 256 |
+| `--max-expansion-steps N` | マクロ展開の仕事量の上限（ステップ数、§11）。`0` で無制限。0〜2147483647 の整数で、負数・数字以外・範囲外は `INVALID_OPTION_VALUE` (`PP71`)、値なしは `MISSING_OPTION_VALUE` (`PP72`)。深度系オプションの上限 2^24（`PP04`）は適用されない。ディレクティブ形式はない | 16777216 |
 | `--max-if-nesting N` | 条件分岐ネスト深度上限 | 256 |
 | `--max-blank-lines N` | 圧縮せず出力する連続空行の最大数（`0` で圧縮を無効化） | 7 |
 | `--pp-output-pragma-style STYLE` | プラグマ出力スタイル (`annotated` / `standard`)。不正な値は `INVALID_OPTION_VALUE` (`PP71`) エラー | `annotated` |
@@ -1163,6 +1175,10 @@ jiepp -- -unusual-name.iec
 | `{#ignore}` | エラー抑制の防止 |
 | `__has_include` | ファイルシステム探査の防止。`__has_include(…)` の形で使うと `PP62`。`{#ifdef __has_include}` / `defined(__has_include)` は `PP62` にならず、偽になる |
 
+### 展開ステップ数の上限 / Expansion Step Cap
+
+マクロ展開の仕事量の上限（`PP64`、§11）はサンドボックスビルドでも有効で、既定値は同じ 16777216 である。`{#ignore}` はサンドボックスでは使えない。運用側は `--max-expansion-steps` でより小さい値（例: `4194304`）を渡して、1 リクエストの処理時間とメモリをさらに絞れる。
+
 ### 情報の扱い / Information Handling
 
 サンドボックスは、渡したファイルパスを隠さない。`__FILE__` や診断メッセージにはパスが指定どおりに表示されるため、秘密にしたいパスは jiepp に渡さないこと。
@@ -1271,7 +1287,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 
 **jiepp コマンドラインでの継続モード**: jiepp コマンド（`jiepp_command()`。CLI 本体）は、ライブラリの既定動作と別に、gcc と同じ「エラーが出ても最後まで処理を続ける」モードで動く。
 
-- 中断するのは SEVERE（`PP63` など）と `PP10`（`FILE_ERROR`）・`PP11`（`FILE_NOT_FOUND`）・`PP12`（`MAX_INCLUDE_DEPTH_EXCEEDED`）・`PP13`（`INVALID_COMMAND`）・`PP14`（`INCLUDE_TARGET_IS_DIRECTORY`）・`PP60`（`MAX_EXPANSION_DEPTH_EXCEEDED`）・`PP61`（`MAX_IF_NESTING_EXCEEDED`）だけ。gcc がまだ中断しない場合でも jiepp は中断する（例: インクルード深度超過を許すと処理量が指数的に増えかねないため）
+- 中断するのは SEVERE（`PP63`・`PP64` など）と `PP10`（`FILE_ERROR`）・`PP11`（`FILE_NOT_FOUND`）・`PP12`（`MAX_INCLUDE_DEPTH_EXCEEDED`）・`PP13`（`INVALID_COMMAND`）・`PP14`（`INCLUDE_TARGET_IS_DIRECTORY`）・`PP60`（`MAX_EXPANSION_DEPTH_EXCEEDED`）・`PP61`（`MAX_IF_NESTING_EXCEEDED`）だけ。gcc がまだ中断しない場合でも jiepp は中断する（例: インクルード深度超過を許すと処理量が指数的に増えかねないため）
 - 上記以外の ERROR（`{#error}` を含む）はメッセージを出してエラー件数を 1 増やし処理を続ける。`-Werror` で昇格した WARNING も、元のコードが中断コードでなければ同様に件数へ加算するだけ
 - `--silent`/`-w` は表示だけを抑制し件数には影響しない。`{#ignore}` で抑制した診断は表示も件数加算も行わない
 - 終了コードは、処理を中断した場合、またはエラー件数が 1 件以上ある場合に `1`
@@ -1295,7 +1311,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 |--------|----------|--------|-----------|------|
 | PP01 | `FATAL` | SEVERE | A fatal error occurred. | 内部致命的エラー |
 | PP02 | `OPERATION_NOT_ALLOWED` | SEVERE | Operation not allowed | 禁止された操作（`defined` の再定義等） |
-| PP04 | `PARAMETER_VALUE_OVERFLOW` | SEVERE | Parameter value exceeds maximum (2^24) | パラメータ値が上限（2^24）を超過 |
+| PP04 | `PARAMETER_VALUE_OVERFLOW` | SEVERE | Parameter value exceeds maximum (2^24) | パラメータ値が上限（2^24）を超過（深度系の制限値が対象。`--max-expansion-steps` は仕事量の個数なので対象外） |
 | PP10 | `FILE_ERROR` | ERROR | An error occurred with the file | ファイル操作エラー |
 | PP11 | `FILE_NOT_FOUND` | ERROR | No such file or directory | ファイルが見つからない |
 | PP12 | `MAX_INCLUDE_DEPTH_EXCEEDED` | ERROR | Maximum include depth exceeded | インクルード深度上限超過 |
@@ -1338,6 +1354,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP61 | `MAX_IF_NESTING_EXCEEDED` | ERROR | Maximum conditional nesting depth exceeded | 条件分岐ネスト深度上限超過 |
 | PP62 | `SANDBOX_RESTRICTED_DIRECTIVE` | ERROR | Directive is restricted in sandbox mode | サンドボックスモードで禁止されたディレクティブ |
 | PP63 | `STACK_EXHAUSTED` | SEVERE | Stack nearly exhausted | マクロ展開の入れ子が深く、スタックの残りが 256 KiB を下回った。処理を中断する（クラッシュはしない）。`--recursion-limit` でスタックを大きくできる（§11・§13）。jiepp コマンドだけが発行する |
+| PP64 | `MAX_EXPANSION_STEPS_EXCEEDED` | SEVERE | Maximum expansion steps exceeded | マクロ展開の仕事量（ステップ数）が上限を超えた。処理を中断する。`--max-expansion-steps N` で上限を変えられる（`0` で無制限、§11・§13） |
 | PP70 | `UNKNOWN_OPTION` | ERROR | Unknown command-line option | 未知のコマンドラインオプション |
 | PP71 | `INVALID_OPTION_VALUE` | ERROR | Invalid option value | オプション値が不正（正の整数でない等） |
 | PP72 | `MISSING_OPTION_VALUE` | ERROR | Option requires a value | オプションに値が指定されていない |

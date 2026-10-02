@@ -1,5 +1,6 @@
 #pragma once
 #include "param_constants.hpp"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,6 +28,28 @@ public:
     int  get_max_expansion_depth() const;
     bool set_max_expansion_depth(int depth);
     bool fix_max_expansion_depth(int depth);
+
+    // ---- Expansion work budget (steps; 0 = no limit) ----
+    // The count is per preprocess()/preprocess_text() call (reset on entry);
+    // jiepp_command() uses a fresh Env, so -include files and the main input
+    // share one budget. There is deliberately no in-source directive: input
+    // must not be able to raise its own limit.
+    void          set_max_expansion_steps(std::uint64_t n) {
+        max_expansion_steps_ = n;
+        step_limit_          = (n == 0) ? UINT64_MAX : n;
+    }
+    std::uint64_t get_max_expansion_steps() const { return max_expansion_steps_; }
+    std::uint64_t expansion_steps() const { return expansion_steps_; }
+    void          reset_expansion_steps() { expansion_steps_ = 0; }
+    // Hot path: one add and one compare against the precomputed limit (0 is
+    // mapped to UINT64_MAX, so "no limit" needs no extra branch). The count
+    // stays above the limit after a hit, so a swallowed exception cannot let
+    // expansion carry on for free.
+    void charge_expansion_steps(std::uint64_t n) {
+        expansion_steps_ += n;
+        if (expansion_steps_ > step_limit_) [[unlikely]]
+            raise_expansion_steps_exceeded();
+    }
 
     // ---- Conditional nesting limit ----
     int  get_max_if_nesting() const { return max_if_nesting_; }
@@ -61,7 +84,13 @@ public:
     void set_cache(std::string key, std::vector<Token> tokens);
 
 private:
-    int         max_include_depth_       = DEFAULT_MAX_INCLUDE_DEPTH;
+    [[noreturn]] void raise_expansion_steps_exceeded() const;
+
+    std::uint64_t expansion_steps_       = 0;
+    std::uint64_t max_expansion_steps_   = DEFAULT_MAX_EXPANSION_STEPS;
+    std::uint64_t step_limit_            = DEFAULT_MAX_EXPANSION_STEPS;
+
+    int         max_include_depth_      = DEFAULT_MAX_INCLUDE_DEPTH;
     bool        max_include_depth_fixed_ = false;
 
     int         expansion_depth_         = 0;

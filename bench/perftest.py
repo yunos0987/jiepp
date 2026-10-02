@@ -57,6 +57,7 @@ _JIEPP_FIXED_FLAGS = (
     "--max-include-depth", "1000000",
     "--max-expansion-depth", "1000000",
     "--max-if-nesting", "1000000",
+    "--max-expansion-steps", "0",
     "--recursion-limit", "4096",
 )
 

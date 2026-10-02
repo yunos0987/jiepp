@@ -18,6 +18,9 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     // pushes), so this only affects library callers of preprocess()/
     // preprocess_text().
     Issue::set_top_lineno(env.get_lineno());
+    // One expansion-step budget (PP64) per call; a previous call's count,
+    // including one that stopped at the limit, does not carry over.
+    env.reset_expansion_steps();
     auto its = iec3_tokens(input, env.get_remove_comments(), 1);
     std::vector<Token> ots;
     // No leading line marker here (unlike the jiepp command line), so tell
@@ -56,6 +59,10 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
 
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
                                          bool report_unterminated) {
+    // Work budget (PP64): one step per byte, charged BEFORE lexing, so an
+    // operand (pragma body, {#if} condition, {#include} path, message, ...)
+    // costs work in proportion to its size even if it expands to nothing.
+    env.charge_expansion_steps(text.size());
     auto its = lex_operand(text, env.get_remove_comments(), report_unterminated);
     // Every newline in an operand is a decoded $n/$l/$r/$0A/$0D escape: the
     // raw newlines of the directive are counted by the lexer separately

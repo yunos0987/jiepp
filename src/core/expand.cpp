@@ -492,6 +492,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
         Token t = std::move(work.back());
         work.pop_back();
 
+        // Work budget (PP64): charged for every token taken off the work
+        // stack, before the active/inactive check below, so skipped
+        // {#if 0} groups, directive tokens and repeated {#include}s cost
+        // steps too. See Param::charge_expansion_steps().
+        env.charge_expansion_steps(1 + t.text.size() / 64);
+
         // PP29 only where the literal is processed (not in a skipped group,
         // like clang; gcc also warns there), before its own "$"+newline
         // continuations advance the counter, so its first line is reported.
@@ -592,9 +598,11 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 bool found_lp = false;
                 while (!work.empty()) {
                     if (work.back().type & Token::MASK_WS) {
+                        env.charge_expansion_steps(1 + work.back().text.size() / 64);
                         pre_lp.push_back(std::move(work.back()));
                         work.pop_back();
                     } else if (work.back().type == Token::LP) {
+                        env.charge_expansion_steps(1);
                         pre_lp.push_back(std::move(work.back()));
                         work.pop_back();
                         found_lp = true;
@@ -650,6 +658,9 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     while (!work.empty()) {
                         Token pt = std::move(work.back());
                         work.pop_back();
+                        // Work budget (PP64): macro arguments are tokens
+                        // popped off the work stack too.
+                        env.charge_expansion_steps(1 + pt.text.size() / 64);
 
                         // PP29 once, as the argument is read (the argument is
                         // expanded at most once per invocation regardless of

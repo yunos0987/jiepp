@@ -98,6 +98,21 @@ bool Param::fix_max_expansion_depth(int depth) {
 }
 
 // ---------------------------------------------------------------------------
+// Expansion work budget
+// ---------------------------------------------------------------------------
+
+void Param::raise_expansion_steps_exceeded() const {
+    ISSUE(MAX_EXPANSION_STEPS_EXCEEDED,
+          "limit " + std::to_string(max_expansion_steps_) +
+          "; use --max-expansion-steps N to raise it (0 = no limit)");
+    // MAX_EXPANSION_STEPS_EXCEEDED is SEVERE: happen() always throws for it
+    // (ignore list, blockings and continue mode cannot stop it). This
+    // explicit throw is defense-in-depth, like the one for STACK_EXHAUSTED,
+    // and keeps the [[noreturn]] contract honest.
+    throw Issue::Exception(Issue::Code::MAX_EXPANSION_STEPS_EXCEEDED);
+}
+
+// ---------------------------------------------------------------------------
 // Conditional nesting limit
 // ---------------------------------------------------------------------------
 

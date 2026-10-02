@@ -243,6 +243,11 @@ static std::size_t collect_va_opt_content(
     return j; // index of matching closing ')'
 }
 
+// Work budget (PP64) cost of one token: 1 + len/64 steps.
+static inline std::uint64_t step_cost(const Token& t) {
+    return 1 + t.text.size() / 64;
+}
+
 // task_slug arg-expand-once (D1/D3): append one occurrence's worth of a
 // memoised expansion `cached` to `result`. keep_sep selects which of the
 // two spellings D3 may have cached (plain vs. the WS-carrying variadic
@@ -253,7 +258,15 @@ static std::size_t collect_va_opt_content(
 // remaining need), tokens are moved out of `cached` instead of copied --
 // safe because this is always the last appender.
 static void append_expanded(std::vector<Token>& result, std::vector<Token>& cached,
-                            bool keep_sep, bool move) {
+                            bool keep_sep, bool move, Env& env) {
+    // Work budget (PP64): charged BEFORE copying, so a huge memoised
+    // expansion cannot be duplicated past the limit once per occurrence.
+    {
+        std::uint64_t n = 0;
+        for (const auto& t : cached)
+            n += step_cost(t);
+        env.charge_expansion_steps(n);
+    }
     result.reserve(result.size() + cached.size());
     for (auto& t : cached) {
         if (t.va_sep && !keep_sep)
@@ -308,7 +321,21 @@ std::vector<Token> subst(
         }
     }
 
+    // Work budget (PP64): result[0, charged) has been charged already.
+    // charge_new() runs once per body element (and once after the loop), and
+    // clamps `charged` because the @@ path can pop_back() below it.
+    std::size_t charged = 0;
+    auto charge_new = [&]() {
+        if (charged > result.size())
+            charged = result.size();
+        std::uint64_t n = 0;
+        for (; charged < result.size(); ++charged)
+            n += step_cost(result[charged]);
+        env.charge_expansion_steps(n);
+    };
+
     for (std::size_t i = 0; i < body.size(); ++i) {
+        charge_new();
         const Token& t = body[i];
 
         // §subst case: IS is ## • T • IS' (paste)
@@ -374,6 +401,13 @@ std::vector<Token> subst(
                     result.push_back(std::move(tk));
                 pending_placemarker = item.empty();
             } else {
+                // Work budget (PP64): every token merged by @@ is charged
+                // before it is merged (a merge grows result.back() in place,
+                // which charge_new() above cannot see).
+                std::uint64_t merge_cost = 0;
+                for (const auto& it : item)
+                    merge_cost += step_cost(it);
+                env.charge_expansion_steps(merge_cost);
                 glue_tokens(result, item);
                 pending_placemarker = false;
             }
@@ -540,7 +574,9 @@ std::vector<Token> subst(
                     }
                     const bool last =
                         (--memo->remaining[static_cast<std::size_t>(slot)] == 0);
-                    append_expanded(result, *cached, /*keep_sep=*/va_sep_ws, /*move=*/last);
+                    append_expanded(result, *cached, /*keep_sep=*/va_sep_ws, /*move=*/last, env);
+                    // Already charged (before the copy) by append_expanded().
+                    charged = result.size();
                     pending_placemarker = false;
                 }
                 continue;
@@ -552,6 +588,7 @@ std::vector<Token> subst(
         result.push_back(t.clone());
     }
 
+    charge_new();
     hsadd(hs, result);
     return result;
 }

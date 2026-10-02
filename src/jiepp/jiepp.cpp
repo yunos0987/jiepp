@@ -122,7 +122,8 @@ void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostr
 // directive/lexical errors, and a -Werror-promoted WARNING) is counted via
 // Issue::error_count_ instead of aborting. Deliberately excludes PP62
 // (SANDBOX_RESTRICTED_DIRECTIVE): plan.md unit E's abort set is exactly
-// SEVERE + {10,11,12,13,14,60,61}.
+// SEVERE + {10,11,12,13,14,60,61}. PP64 (MAX_EXPANSION_STEPS_EXCEEDED) is
+// SEVERE, so it stops processing without being listed here.
 std::set<Issue::Code> jiepp_continue_abort_codes() {
     return {
         Issue::Code::FILE_ERROR,
@@ -261,6 +262,8 @@ int jiepp_command(const JieppOptions& opts)
             env.fix_max_include_depth(*opts.max_include_depth);
         if (opts.max_expansion_depth)
             env.fix_max_expansion_depth(*opts.max_expansion_depth);
+        if (opts.max_expansion_steps)
+            env.set_max_expansion_steps(static_cast<std::uint64_t>(*opts.max_expansion_steps));
         if (opts.max_if_nesting)
             env.fix_max_if_nesting(*opts.max_if_nesting);
         if (opts.max_blank_lines)

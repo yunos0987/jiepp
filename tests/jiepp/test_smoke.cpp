@@ -1,5 +1,6 @@
 #include "test_helper.hpp"
 #include <algorithm>
+#include <chrono>
 
 inline fs::path jiepp_exe_path() {
 #ifdef JIEPP_EXE_PATH
@@ -541,3 +542,120 @@ TEST_F(SmokeTest, ArgCountMismatchContinuesAndExitsNonZero) {
     EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1)
         << "stderr should have exactly one PP34 line: " << r.err;
 }
+
+// ---- PP64: the expansion-step cap through the CLI ----
+
+namespace {
+
+// Doubling bomb: D<n> expands to 2^n tokens. Preceded by an ordinary line so
+// the partial output is observable.
+std::string step_bomb_source(int n, const std::string& prefix = "") {
+    std::string s = prefix + "before_bomb\n{#define D0 1}\n";
+    for (int i = 1; i <= n; ++i)
+        s += "{#define D" + std::to_string(i) + " D" + std::to_string(i - 1) +
+             " + D" + std::to_string(i - 1) + "}\n";
+    s += "D" + std::to_string(n) + "\n";
+    return s;
+}
+
+} // namespace
+
+TEST_F(SmokeTest, HelpListsMaxExpansionSteps) {
+    auto r = run("--help");
+    EXPECT_NE(r.out.find("  --max-expansion-steps N  Maximum macro expansion work in steps "
+                         "(default: 16777216; 0 = no limit)\n"),
+              std::string::npos)
+        << "stdout: " << r.out;
+}
+
+TEST_F(SmokeTest, ExpansionStepsLimitStopsWithPP64AndPartialOutput) {
+    fs::path input = tmp_dir_ / "steps_bomb.iec";
+    write_file(input, step_bomb_source(24));
+
+    auto r = run("--max-expansion-steps 10000 -P \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("PP64"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("limit 10000; use --max-expansion-steps N to raise it (0 = no limit)"),
+              std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("before_bomb"), std::string::npos) << "stdout: " << r.out;
+}
+
+TEST_F(SmokeTest, ExpansionStepsSilentStillExitsOne) {
+    fs::path input = tmp_dir_ / "steps_bomb_silent.iec";
+    write_file(input, step_bomb_source(24));
+
+    auto r = run("--silent --max-expansion-steps 10000 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, ExpansionStepsStopsEvenAfterOtherErrors) {
+    // Continue mode keeps going past PP34 but PP64 (SEVERE) still stops it.
+    fs::path input = tmp_dir_ / "steps_bomb_continue.iec";
+    write_file(input, step_bomb_source(24, "{#define P(x) x}\nP(1,2)\n"));
+
+    auto r = run("--max-expansion-steps 10000 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("PP34"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP64"), std::string::npos) << "stderr: " << r.err;
+}
+
+#ifndef JIEPP_SANDBOX
+TEST_F(SmokeTest, ExpansionStepsIgnoreCannotSuppressPP64) {
+    fs::path input = tmp_dir_ / "steps_bomb_ignore.iec";
+    write_file(input, step_bomb_source(24, "{#ignore PP64}\n"));
+
+    auto r = run("--max-expansion-steps 10000 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("PP64"), std::string::npos) << "stderr: " << r.err;
+}
+#endif
+
+TEST_F(SmokeTest, ExpansionStepsStopDoesNotCreateOrTouchOutputFile) {
+    fs::path input = tmp_dir_ / "steps_bomb_o.iec";
+    write_file(input, step_bomb_source(24));
+
+    fs::path fresh = tmp_dir_ / "fresh_out.iec";
+    auto r = run("--max-expansion-steps 10000 -o \"" + fresh.generic_string() + "\" \"" +
+                 input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("PP64"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_FALSE(fs::exists(fresh));
+    EXPECT_TRUE(r.out.empty()) << "stdout: " << r.out;
+
+    fs::path existing = tmp_dir_ / "existing_out.iec";
+    write_file(existing, "old content\n");
+    auto r2 = run("--max-expansion-steps 10000 -o \"" + existing.generic_string() + "\" \"" +
+                  input.generic_string() + "\"");
+    EXPECT_EQ(r2.exit_code, 1);
+    EXPECT_EQ(read_file(existing), "old content\n");
+}
+
+TEST_F(SmokeTest, ExpansionStepsZeroMeansNoLimit) {
+    fs::path input = tmp_dir_ / "steps_no_limit.iec";
+    write_file(input, step_bomb_source(16));
+
+    // 2^16 tokens: over a 10000-step limit, fine with 0.
+    auto stopped = run("--max-expansion-steps 10000 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(stopped.exit_code, 1);
+    auto r = run("--max-expansion-steps 0 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+}
+
+#ifdef NDEBUG
+// C8: with the default limit (16777216 steps) a 2^30 doubling bomb stops
+// quickly with PP64 instead of exhausting memory. Release only: a Debug
+// build is several times slower.
+TEST_F(SmokeTest, DefaultStepLimitStopsDoublingBombQuickly) {
+    fs::path input = tmp_dir_ / "steps_bomb_default.iec";
+    write_file(input, step_bomb_source(30));
+
+    const auto t0 = std::chrono::steady_clock::now();
+    auto r = run("\"" + input.generic_string() + "\"");
+    const auto secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("PP64"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("limit 16777216;"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_LE(secs, 10.0) << "took " << secs << " s";
+}
+#endif

@@ -135,6 +135,35 @@ TEST_F(SandboxDirectiveTest, WarningAllowed) {
     EXPECT_EQ(Issue::Code::WARNING_MESSAGE, code());
 }
 
+// ---- Expansion-step cap (PP64) applies in sandbox builds too ----
+
+class SandboxExpansionStepsTest : public JieppTest {};
+
+TEST_F(SandboxExpansionStepsTest, DefaultLimitIs2To24) {
+    Env env = setup();
+    EXPECT_EQ(16777216u, env.get_max_expansion_steps());
+}
+
+TEST_F(SandboxExpansionStepsTest, LowerLimitStopsBomb) {
+    Env env = setup();
+    env.set_max_expansion_steps(262144);
+    EXPECT_EQ(262144u, env.get_max_expansion_steps());
+    std::string src = "{#define D0 1}\n";
+    for (int i = 1; i <= 30; ++i)
+        src += "{#define D" + std::to_string(i) + " D" + std::to_string(i - 1) +
+               " + D" + std::to_string(i - 1) + "}\n";
+    src += "D30\n";
+    EXPECT_THROW(pp(src, env), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MAX_EXPANSION_STEPS_EXCEEDED, code());
+}
+
+TEST_F(SandboxExpansionStepsTest, IgnoreStillBlockedAndNoDirective) {
+    // {#ignore} is a sandbox-restricted directive, so it cannot be used to
+    // suppress PP64 either.
+    EXPECT_THROW(pp("{#ignore PP64}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
+}
+
 // ---- Info disclosure prevention ----
 
 class SandboxInfoLeakTest : public JieppTest {};

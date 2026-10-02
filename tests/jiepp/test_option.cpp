@@ -124,6 +124,54 @@ TEST_F(OptionTest, ParseArgsMaxOptions) {
     EXPECT_EQ(*opts.max_if_nesting, 16);
 }
 
+TEST_F(OptionTest, ParseArgsMaxExpansionSteps) {
+    {
+        char* argv[] = {const_cast<char*>("jiepp"),
+                        const_cast<char*>("--max-expansion-steps"), const_cast<char*>("5")};
+        auto opts = parse_args(3, argv);
+        ASSERT_TRUE(opts.max_expansion_steps.has_value());
+        EXPECT_EQ(*opts.max_expansion_steps, 5);
+    }
+    {
+        // Snake-case alias; 0 (no limit) is valid, unlike the depth options.
+        char* argv[] = {const_cast<char*>("jiepp"),
+                        const_cast<char*>("--max_expansion_steps"), const_cast<char*>("0")};
+        auto opts = parse_args(3, argv);
+        ASSERT_TRUE(opts.max_expansion_steps.has_value());
+        EXPECT_EQ(*opts.max_expansion_steps, 0);
+    }
+    {
+        // Above 2^24 (PP04's cap for depth-like options does not apply).
+        char* argv[] = {const_cast<char*>("jiepp"),
+                        const_cast<char*>("--max-expansion-steps"), const_cast<char*>("2147483647")};
+        auto opts = parse_args(3, argv);
+        ASSERT_TRUE(opts.max_expansion_steps.has_value());
+        EXPECT_EQ(*opts.max_expansion_steps, 2147483647);
+    }
+    {
+        char* argv[] = {const_cast<char*>("jiepp")};
+        auto opts = parse_args(1, argv);
+        EXPECT_FALSE(opts.max_expansion_steps.has_value());
+    }
+}
+
+TEST_F(OptionTest, ParseArgsMaxExpansionStepsInvalidValues) {
+    for (const char* bad : {"-1", "abc", "3x", "2147483648"}) {
+        char* argv[] = {const_cast<char*>("jiepp"),
+                        const_cast<char*>("--max-expansion-steps"), const_cast<char*>(bad)};
+        EXPECT_THROW(parse_args(3, argv), Issue::Exception) << bad;
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size()) << bad;
+        EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << bad << ": " << msgs[0];
+    }
+}
+
+TEST_F(OptionTest, ParseArgsMaxExpansionStepsMissingValue) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("--max-expansion-steps")};
+    EXPECT_THROW(parse_args(2, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
 TEST_F(OptionTest, ParseArgsSnakeCaseVariants) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("--max_include_depth"), const_cast<char*>("5")};

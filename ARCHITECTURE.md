@@ -100,7 +100,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 - 入出力: `input_filepaths`, `output_filepath`, `disppath`（表示用パス。既定値・stdin 時の挙動は [SPECIFICATION.md §13](SPECIFICATION.md#13-cli-リファレンス--cli-reference)）
 - マクロ: `define_macros`(`-D`), `undef_macros`(`-U`), `include_filepaths`(`-include`), `syspaths`(`-I`)
-- 上限値: `max_include_depth`, `max_expansion_depth`, `max_if_nesting`, `max_blank_lines`, `recursion_limit`
+- 上限値: `max_include_depth`, `max_expansion_depth`, `max_expansion_steps`(`--max-expansion-steps`、展開の仕事量の上限・`PP64`・ディレクティブなし), `max_if_nesting`, `max_blank_lines`, `recursion_limit`
 - 依存関係: `dep_mode`(`-M`/`-MM`), `dep_file`(`-MF`), `dep_target`(`-MT`), `MD`/`MMD`(`-MD`/`-MMD`)
 - 出力形式: `pp_output_pragma_style`, `no_line_markers`(`-P`), `dM`(`-dM`), `dD`(`-dD`), `remove_comments`(`-nC`)
 - 診断: `silent`, `suppress_warnings`(`-w`), `werror`(`-Werror`)
