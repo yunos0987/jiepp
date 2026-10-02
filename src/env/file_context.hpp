@@ -1,8 +1,10 @@
 #pragma once
 #include "lineno.hpp"
 
+#include <set>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 class FileContext {
@@ -76,5 +78,8 @@ private:
     std::vector<std::string> syspaths_;
     LineNo lineno_ = 1;
     std::vector<Dependency> deps_;
-    std::unordered_set<std::string> once_files_;  // files marked with {#pragma once}
+    std::unordered_set<std::string> once_files_;  // files marked with {#pragma once}, by path text
+    // The same files by identity (volume, file index), so another spelling of
+    // the path (case, 8.3 name, symlink, hard link) is recognised too.
+    std::set<std::pair<unsigned long long, unsigned long long>> once_ids_;
 };
