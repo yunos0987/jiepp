@@ -19,7 +19,7 @@ if(NOT _jiepp_vcpkg_version STREQUAL JIEPP_VERSION)
 endif()
 
 # ---- Sandbox mode for web deployment ----
-option(JIEPP_SANDBOX "Enable sandbox mode: disable file-system directives and mask server paths" OFF)
+option(JIEPP_SANDBOX "Enable sandbox mode: disable file-system directives and blank __TIMESTAMP__ (file paths are not hidden)" OFF)
 
 # ---- Portable static binary (for deployment on older Linux servers) ----
 # Produces a self-contained binary with no GLIBC/GLIBCXX version requirements.

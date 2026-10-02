@@ -14,11 +14,11 @@ Jiepp は **Windows** と **Linux / WSL** に対応し、CMake プリセット�
 
 | プラットフォーム | コンパイラ | ビルドシステム | 主なプリセット |
 |---|---|---|---|
-| Windows | Clang (`clang++`) | Ninja | `windows-clang-ninja-debug`, `windows-clang-ninja-release` |
-| Linux / WSL | Clang (`clang++`) | Make | `linux-makefiles-debug`, `linux-makefiles-release` |
-| Linux（サーバー配布） | Clang (`clang++`) | Make | `linux-portable-release`（完全静的リンク） |
+| Windows | Clang (`clang++`) | Ninja | `windows-clang-ninja-debug`, `windows-clang-ninja-release`（サンドボックス: `windows-clang-ninja-sandbox-debug`, `windows-clang-ninja-sandbox-release`） |
+| Linux / WSL | Clang (`clang++`) | Make | `linux-makefiles-debug`, `linux-makefiles-release`（サンドボックス: `linux-makefiles-sandbox-debug`, `linux-makefiles-sandbox-release`） |
+| Linux（サーバー配布） | Clang (`clang++`) | Make | `linux-portable-release`（完全静的リンク）（サンドボックス: `linux-portable-sandbox-release`） |
 
-configure/build/test コマンドは [`README.md`](README.md#ビルドとテスト--build--test) と [`CONTRIBUTING.md`](CONTRIBUTING.md#build--test) を参照。サンドボックスビルド（`*-sandbox-*` プリセット、`JIEPP_SANDBOX=ON`） は「[サンドボックスモード](#サンドボックスモード-jiepp_sandbox)」を参照。
+configure/build/test コマンドは [`README.md`](README.md#ビルドとテスト--build--test) と [`CONTRIBUTING.md`](CONTRIBUTING.md#build--test) を参照。サンドボックスビルド（`*-sandbox-*` プリセット、`JIEPP_SANDBOX=ON`）は「[サンドボックスモード](#サンドボックスモード-jiepp_sandbox)」を参照。
 
 ### 依存管理・言語標準・コンパイラ要件
 
