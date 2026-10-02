@@ -974,3 +974,25 @@ TEST_F(FuncMacroTest, ArgSlotsDoNotAffectEqual) {
 }
 
 
+
+// A `//` comment inside a macro argument keeps the newline that ends it, like
+// clang -CC (gcc rewrites it to a block comment). Flattening that newline to a
+// space would comment out the rest of the line in the expansion.
+TEST_F(FuncMacroTest, LineCommentInArgumentKeepsNewline) {
+    // A call spanning two source lines prints both lines, so the output keeps
+    // the newline of the last source line (no trailing token after the call).
+    EXPECT_EQ("\n[a // c\nb]\n", pp("{#define W(x) [x]}\nW(a // c\nb)"));
+    // The text after "//" is not interpreted: "*/" does not open "/*".
+    EXPECT_EQ("\n[a // x */ y\nb]\n", pp("{#define W(x) [x]}\nW(a // x */ y\nb)"));
+    // Argument pasted with @@ and variadic arguments.
+    EXPECT_EQ("\nx // c\nyz\n", pp("{#define P(a,b) a@@b}\nP(x // c\ny, z)"));
+    EXPECT_EQ("\n<a // c\nb, d>\n", pp("{#define V(...) <__VA_ARGS__>}\nV(a // c\nb, d)"));
+    // Passed on through a second macro.
+    EXPECT_EQ("\n\n[a // c\nb]\n\n", pp("{#define W(x) [x]}\n{#define N(x) W(x)}\nN(a // c\nb)"));
+    // Unchanged: stringize flattens the newline, a trailing comment is trimmed,
+    // and a block comment stays on its line.
+    EXPECT_EQ("\n'a b'\n", pp("{#define S(x) @x}\nS(a // c\nb)"));
+    EXPECT_EQ("\n[a]\n", pp("{#define W(x) [x]}\nW(a // c\n)"));
+    EXPECT_EQ("\n[a /* c */ b]", pp("{#define W(x) [x]}\nW(a /* c */ b)"));
+    EXPECT_TRUE(empty());
+}

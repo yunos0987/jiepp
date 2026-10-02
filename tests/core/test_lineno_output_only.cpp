@@ -115,6 +115,15 @@ TEST_F(OutputOnlyLinesTest, MultiLineStringArgument) {
               pp("{#define F(x) x}\nF('a$\nb');\n__LINE__;\n\n\n\n\n\n\n\n\n\n__LINE__;"));
 }
 
+TEST_F(OutputOnlyLinesTest, LineCommentNewlineInMacroArgument) {
+    // The newline ending a `//` comment in a macro argument is printed (like
+    // clang -CC), so the call spans one more printed line than source lines:
+    // __LINE__ stays the source line and a marker resyncs the printed lines.
+    EXPECT_EQ("\n[a // c\nb]\n(*{#:2}*)\n;\n4;",
+              pp("{#define W(x) [x]}\nW(a // c\nb);\n__LINE__;"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(OutputOnlyLinesTest, RegressionWatchpoints) {
     // Identical redefinition: no PP35; a different amount of whitespace
     // (one vs two newlines) is still "identical" (C17 6.10.3p2).

@@ -72,6 +72,11 @@ Token Token::clone() const {
 }
 
 Token& Token::flatten() {
+    // Keep the newline that ends a `//` comment (like clang -CC); flattening it
+    // to a space would comment out the rest of the line. `//!` (DOCUMENT) is
+    // not in MASK_WS and is therefore already kept as is.
+    if (type == Token::C && text.starts_with("//"))
+        return *this;
     if ((type & Token::MASK_WS || type == Token::ANY) && num_of_lines != 0) {
         std::replace(text.begin(), text.end(), '\n', ' ');
         num_of_lines = 0;
