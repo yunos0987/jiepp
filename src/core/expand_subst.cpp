@@ -67,6 +67,22 @@ std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts) {
 
 // ── §glue — paste last of left side with first of right side ──────
 
+// A failed paste still concatenates, so repeated bad pastes in one body make
+// the left operand grow, and echoing it whole in every PP32 message is
+// quadratic in the input (clang echoes only the pair formed by each paste and
+// stops after -ferror-limit errors; jiepp has no such limit). Bound each
+// echoed operand instead: keep at most kPasteEchoMax bytes and mark the cut
+// with "...". The code and severity of the diagnostic are unchanged.
+constexpr std::size_t kPasteEchoMax = 64;
+
+static std::string paste_echo_head(const std::string& s) {
+    return s.size() <= kPasteEchoMax ? s : s.substr(0, kPasteEchoMax) + "...";
+}
+
+static std::string paste_echo_tail(const std::string& s) {
+    return s.size() <= kPasteEchoMax ? s : "..." + s.substr(s.size() - kPasteEchoMax);
+}
+
 void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
     if (src.empty()) {
         for (auto& t : item)
@@ -81,7 +97,8 @@ void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
 
     if (prev.type != Token::ANY || next.type != Token::ANY)
         if (prev.type != next.type)
-            ISSUE(INVALID_TOKEN_PASTING, prev.text + " @@ " + next.text);
+            ISSUE(INVALID_TOKEN_PASTING,
+                  paste_echo_tail(prev.text) + " @@ " + paste_echo_head(next.text));
 
     prev.hs = Token::HideSet::intersect(prev.hs, next.hs);
     prev.text += next.text;

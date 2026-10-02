@@ -185,3 +185,49 @@ TEST_F(GlueTest, PasteLines) {
 }
 
 
+
+// ---- bounded PP32 diagnostics ----
+
+// Repeated invalid pastes keep concatenating, so echoing the accumulated left
+// operand made the diagnostics quadratic in the input. Each message now echoes
+// at most a fixed-size piece of each operand.
+TEST_F(GlueTest, InvalidPasteDiagnosticsAreLinear) {
+    constexpr int n = 2000;
+    std::string body = "@x";
+    for (int i = 0; i < n; ++i)
+        body += "@@y";
+    const std::string def = "{#define A(x,y) " + body + "}\n";
+    {
+        Issue::ContinueMode guard({});
+        auto env = setup();
+        pp(def + "A(a,bcdefghij)\n", env);
+    }
+    auto msgs = messages();
+    EXPECT_GE(msgs.size(), static_cast<std::size_t>(n) / 2);
+    std::size_t total = 0;
+    for (const auto& m : msgs) {
+        EXPECT_EQ(Issue::Code::INVALID_TOKEN_PASTING, PlainTextMessage::parse_code(m));
+        total += m.size();
+        EXPECT_LT(m.size(), 400u);
+    }
+    // A quadratic echo would be on the order of n*n*9/2 = 18 MB here.
+    EXPECT_LT(total, static_cast<std::size_t>(n) * 400u);
+}
+
+TEST_F(GlueTest, InvalidPasteDiagnosticsBoundLargeOperands) {
+    // A single huge operand pasted repeatedly must not be echoed whole.
+    const std::string big(100000, 'z');
+    std::string body = "@x";
+    for (int i = 0; i < 50; ++i)
+        body += "@@y";
+    {
+        Issue::ContinueMode guard({});
+        auto env = setup();
+        pp("{#define A(x,y) " + body + "}\nA(a," + big + ")\n", env);
+    }
+    auto msgs = messages();
+    ASSERT_FALSE(msgs.empty());
+    for (const auto& m : msgs)
+        EXPECT_LT(m.size(), 400u);
+    EXPECT_NE(std::string::npos, msgs.front().find("..."));
+}
