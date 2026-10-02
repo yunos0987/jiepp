@@ -13,7 +13,20 @@ static const fs::path O_DIR = "tests/jiepp/output";
 // run and lets a Debug and a Release ctest run without racing on the same
 // files (each build directory has its own e2e-actual/). Created on first use
 // below, since CMake does not pre-create it.
-static const fs::path ACTUAL_DIR = JIEPP_E2E_ACTUAL_DIR;
+static const fs::path ACTUAL_ROOT_DIR = JIEPP_E2E_ACTUAL_DIR;
+
+// Several tests run the same testid (for example "include"), and `ctest -j`
+// runs each test in its own process, so a path derived from the testid alone
+// would be written by several processes at once. Put every test's actual
+// output in a subdirectory named after the current gtest test
+// (e2e-actual/<TestName>/<testid>.piec) so the paths never collide while the
+// files stay inspectable after a run.
+static fs::path actual_dir() {
+    const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
+    if (info == nullptr)
+        return ACTUAL_ROOT_DIR;
+    return ACTUAL_ROOT_DIR / info->name();
+}
 
 // Strip debug source location suffix from error messages (format: @file.cpp:line)
 static std::string strip_debug_suffix(const std::string& text) {
@@ -43,11 +56,12 @@ static void run_e2e(const std::string& testid,
     // C8: testid may itself contain subdirectory components (e.g. "dM/dM"),
     // which tests/jiepp/input already has checked in; e2e-actual/ does not,
     // so create them here.
-    fs::path actual_testid_path = ACTUAL_DIR / testid;
+    const fs::path actual_base = actual_dir();
+    fs::path actual_testid_path = actual_base / testid;
     fs::create_directories(actual_testid_path.parent_path());
-    std::string actual_out_filepath = (ACTUAL_DIR / (testid + ".piec")).generic_string();
-    std::string actual_log_filepath = (ACTUAL_DIR / (testid + ".log")).generic_string();
-    std::string actual_dep_filepath = (ACTUAL_DIR / (testid + ".d")).generic_string();
+    std::string actual_out_filepath = (actual_base / (testid + ".piec")).generic_string();
+    std::string actual_log_filepath = (actual_base / (testid + ".log")).generic_string();
+    std::string actual_dep_filepath = (actual_base / (testid + ".d")).generic_string();
 
     std::ofstream actual_log_file(actual_log_filepath, std::ios::binary);
     Issue::initialize(actual_log_file);
@@ -594,8 +608,8 @@ TEST_F(JieppCommandTest, DMOrderStableAcrossUndefRedefine) {
     // C8: this test writes its own ephemeral output directly (not through
     // run_e2e()) and only reads it back for the assertions below -- send it
     // to the build tree too, like run_e2e()'s actual output.
-    fs::create_directories(ACTUAL_DIR / "dM");
-    std::string output_filepath = (ACTUAL_DIR / "dM/dM_order_undef_redefine.piec").generic_string();
+    fs::create_directories(actual_dir() / "dM");
+    std::string output_filepath = (actual_dir() / "dM/dM_order_undef_redefine.piec").generic_string();
 
     char* argv[] = {
         const_cast<char*>("jiepp"),

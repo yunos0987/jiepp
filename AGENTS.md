@@ -12,7 +12,7 @@
 - Run with `ctest --preset <name>`, using the same preset name you configured with.
 - `BoostPreprocessorIntegration` (`tests/jiepp/test_jiepp_command.cpp`) is wrapped in `#ifdef NDEBUG`, so it is a no-op under any `-debug` preset (it passes trivially without running its body). Run a `*-release` ctest (`windows-clang-ninja-release`, `linux-makefiles-release`, or `linux-portable-release`) at least once before finishing any task that could affect preprocessing behavior — a Debug-only ctest pass does not exercise this test.
 - Sandbox-only tests (`tests/core/test_sandbox.cpp`, `#ifdef JIEPP_SANDBOX`) only run in a sandbox-preset build (`JIEPP_SANDBOX=ON`). Conversely, many ordinary tests are *expected* to fail in a sandbox build, since filesystem-access directives are intentionally disabled there — do not treat those failures as regressions when testing sandbox mode specifically.
-- The `tests/jiepp/` end-to-end tests write actual output under `build/<preset>/e2e-actual/`, not into the source tree, so a Debug and a Release ctest no longer race on the same files and can run concurrently.
+- The `tests/jiepp/` end-to-end tests write actual output under `build/<preset>/e2e-actual/<TestName>/<testid>.*` (one subdirectory per gtest test name, since several tests share a testid), not into the source tree, so a Debug and a Release ctest, and `ctest -j` processes, no longer race on the same files and can run concurrently.
 
 ## Benchmarking
 
