@@ -8,16 +8,18 @@
 // Include stack
 // ---------------------------------------------------------------------------
 
-void FileContext::push_file(std::string filepath) {
+void FileContext::push_file(std::string filepath, bool from_disk) {
     lineno_stack_.push_back(lineno_);
     const std::string p(Util::absolute_path(filepath));
     file_stack_.push_back(p);
+    from_disk_stack_.push_back(from_disk ? 1 : 0);
     lineno_ = 1;
 }
 
 void FileContext::pop_file() {
     if (!file_stack_.empty() && !lineno_stack_.empty()) {
         file_stack_.pop_back();
+        from_disk_stack_.pop_back();
         lineno_ = lineno_stack_.back();
         lineno_stack_.pop_back();
     }
@@ -27,6 +29,10 @@ std::string FileContext::current_file() const {
     if (!file_stack_.empty())
         return file_stack_.back();
     return "";
+}
+
+bool FileContext::current_file_from_disk() const {
+    return !from_disk_stack_.empty() && from_disk_stack_.back() != 0;
 }
 
 int FileContext::num_of_files() const {
@@ -70,7 +76,13 @@ void FileContext::add_dependency(std::string resolved_path, std::string display_
 // The path text stays as the fallback for a file whose identity cannot be
 // read. The identity is read once per recorded file, and once per include
 // only while some file carries {#pragma once}.
-void FileContext::record_pragma_once(const std::string& absolute_path) {
+void FileContext::record_pragma_once(const std::string& absolute_path, bool from_disk) {
+    // A pseudo name such as "<stdin>" is only a label, and nothing can
+    // {#include} it. Recording it would let an unrelated file of that name in
+    // the working directory match, by its identity or just by its path text,
+    // so it is not recorded at all.
+    if (!from_disk)
+        return;
     once_files_.insert(absolute_path);
     Util::FileId id;
     if (Util::file_id(absolute_path, id))

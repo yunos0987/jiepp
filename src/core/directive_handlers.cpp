@@ -636,7 +636,7 @@ void handle_pragma_once(const std::string& raw_arg, Env& env) {
     if (ts.size() > 1)
         ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
               "{#pragma " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
-    env.record_pragma_once(env.current_file());
+    env.record_pragma_once(env.current_file(), env.current_file_from_disk());
 }
 
 } // namespace jiepp::preprocessor_detail

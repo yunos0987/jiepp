@@ -143,6 +143,56 @@ TEST_F(PragmaOnceIdentityTest, IncludedThroughSymlink) {
 
 #endif
 
+// A pseudo source name ("<stdin>") is a label, not a path: its identity must
+// not be read from the filesystem.
+TEST(PragmaOnceNonFileTest, PseudoSourceRecordsNoFileIdentity) {
+    const fs::path d = fs::temp_directory_path() / "jiepp_pragma_once_pseudo";
+    std::error_code ec;
+    fs::remove_all(d, ec);
+    fs::create_directories(d / "s");
+    { std::ofstream(d / "f.iec") << "f"; }
+
+    FileContext fc;
+    fc.push_file((d / "f.iec").generic_string(), /*from_disk=*/false);
+    EXPECT_FALSE(fc.current_file_from_disk());
+    fc.record_pragma_once(fc.current_file(), fc.current_file_from_disk());
+    // Neither the path text nor the identity of a pseudo source is recorded.
+    EXPECT_FALSE(fc.is_pragma_once_seen(fc.current_file()));
+    EXPECT_FALSE(fc.is_pragma_once_seen((d / "s" / ".." / "f.iec").generic_string()));
+    fc.pop_file();
+
+    FileContext real;
+    real.push_file((d / "f.iec").generic_string());
+    EXPECT_TRUE(real.current_file_from_disk());
+    real.record_pragma_once(real.current_file(), real.current_file_from_disk());
+    EXPECT_TRUE(real.is_pragma_once_seen((d / "s" / ".." / "f.iec").generic_string()));
+    fs::remove_all(d, ec);
+}
+
+#ifndef _WIN32
+// A file literally named "<stdin>" in the working directory is an ordinary
+// file: {#pragma once} in the stdin input must not make it look already seen.
+TEST(PragmaOnceNonFileTest, FileNamedStdinIsNotConfusedWithStdinInput) {
+    const fs::path d = fs::temp_directory_path() / "jiepp_pragma_once_stdin_name";
+    std::error_code ec;
+    fs::remove_all(d, ec);
+    fs::create_directories(d);
+    { std::ofstream(d / "<stdin>") << "REAL;\n"; }
+
+    CwdGuard cwd(d);
+    Env env = setup();
+    std::string out;
+    {
+        FileContext::FileScope scope(env, "<stdin>", /*from_disk=*/false);
+        Issue::LineGuard lines(1, "<stdin>");
+        out = pp(std::string("{#pragma once}\n{#include '<stdin>'}\n"), env);
+    }
+    EXPECT_NE(std::string::npos, out.find("REAL;"));
+    fs::current_path(d.parent_path(), ec);
+    fs::remove_all(d, ec);
+}
+#endif
+
 TEST(FileIdTest, SameFileSameIdDifferentFilesDifferentIds) {
     const fs::path d = fs::temp_directory_path() / "jiepp_file_id_test";
     std::error_code ec;

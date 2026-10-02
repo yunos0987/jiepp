@@ -361,7 +361,7 @@ int jiepp_command(const JieppOptions& opts)
                     // wrapper in core/expand.cpp for the declaration-order
                     // rationale), so an ERROR raised while processing stdin
                     // still pops both stacks correctly.
-                    FileContext::FileScope file_guard(env, "<stdin>");
+                    FileContext::FileScope file_guard(env, "<stdin>", /*from_disk=*/false);
                     Issue::LineGuard line_guard(1, dispath);
                     ots.push_back(Token::line_pragma(0, dispath, env.is_standard_pragma_style()));
                     ots.push_back(Token::newline());

@@ -15,9 +15,13 @@ public:
     FileContext& operator=(FileContext&&) noexcept = default;
 
     // ---- Include stack ----
-    void        push_file(std::string filepath);
+    // from_disk is false for a pseudo name such as "<stdin>": the text is
+    // only a label, so it must never be looked up in the filesystem.
+    void        push_file(std::string filepath, bool from_disk = true);
     void        pop_file();
     std::string current_file() const;
+    // True when the innermost source was opened from the filesystem.
+    bool        current_file_from_disk() const;
     int         num_of_files() const;
     int         include_level() const;
 
@@ -33,8 +37,8 @@ public:
     // Issue::pop()+pop_file() pairs exactly (file pushed first, popped
     // last).
     struct FileScope {
-        FileScope(FileContext& fc, std::string filepath) : fc_(fc) {
-            fc_.push_file(std::move(filepath));
+        FileScope(FileContext& fc, std::string filepath, bool from_disk = true) : fc_(fc) {
+            fc_.push_file(std::move(filepath), from_disk);
         }
         ~FileScope() { fc_.pop_file(); }
         FileScope(const FileScope&) = delete;
@@ -68,12 +72,16 @@ public:
 
     // ---- pragma once (for {#pragma once}) ----
     // Record that a file (by its absolute path) has been seen with {#pragma once}.
-    void record_pragma_once(const std::string& absolute_path);
+    // Only a source opened from the filesystem (from_disk) is recorded, by path
+    // text and by on-disk identity; a pseudo source (stdin, in-memory) is not,
+    // since its name could collide with an unrelated real file.
+    void record_pragma_once(const std::string& absolute_path, bool from_disk = true);
     // Returns true if the file was previously marked with {#pragma once}.
     bool is_pragma_once_seen(const std::string& absolute_path) const;
 
 private:
     std::vector<std::string> file_stack_;
+    std::vector<char>        from_disk_stack_;  // parallel to file_stack_
     std::vector<LineNo>      lineno_stack_;
     std::vector<std::string> syspaths_;
     LineNo lineno_ = 1;
