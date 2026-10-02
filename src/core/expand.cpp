@@ -635,6 +635,10 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
 
                     std::vector<std::vector<Token>> params;
                     std::vector<Token> cur;
+                    // `//` comments whose line was already counted when they were
+                    // collected (see the edge-comment handling before ts_flatten below).
+                    struct CountedLineComment { std::size_t param; std::size_t pos; };
+                    std::vector<CountedLineComment> counted_line_comments;
                     int depth = 0;
                     bool found_rp = false;
                     Token rp_token;
@@ -675,6 +679,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                             });
                         }
 
+                        const bool was_counted_comment =
+                            pt.lineno_counted && pt.type == Token::C && pt.text.starts_with("//");
                         sum_num_of_lines += pt.num_of_lines;
                         if (pt.output_only_lines)
                             sum_output_only += pt.num_of_lines;
@@ -765,6 +771,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         if (pt.type == Token::LP || pt.type == Token::LB) ++depth;
                         else if ((pt.type == Token::RP || pt.type == Token::RB) && depth > 0) --depth;
 
+                        if (was_counted_comment)
+                            counted_line_comments.push_back({params.size(), cur.size()});
                         cur.push_back(std::move(pt));
                     }
 
@@ -876,6 +884,28 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                                 arg_ws.push_back({lead, trail,
                                                   j > 0 && j < p.size() && !ends_nl(p[j - 1]),
                                                   trail && !ends_nl(p.back())});
+                            }
+                        }
+
+                        // An edge `//` comment of an argument is dropped by the
+                        // flatten below, and with it the newline that ended it.
+                        // When the comment was already line-counted as it was
+                        // collected here, an enclosing call has kept it (see
+                        // Token::flatten) and re-emits that newline itself;
+                        // counting it again would print a stray line break after
+                        // this inner call. A comment that comes straight from the
+                        // source (not yet counted) still compensates the dropped
+                        // line as before.
+                        for (const auto& c : counted_line_comments) {
+                            const auto& p = params[c.param];
+                            std::size_t lead = 0;
+                            while (lead < p.size() && (p[lead].type & Token::MASK_WS)) ++lead;
+                            std::size_t last = p.size();
+                            while (last > lead && (p[last - 1].type & Token::MASK_WS)) --last;
+                            if (c.pos < lead || c.pos >= last) {
+                                sum_num_of_lines -= p[c.pos].num_of_lines;
+                                if (p[c.pos].output_only_lines)
+                                    sum_output_only -= p[c.pos].num_of_lines;
                             }
                         }
 

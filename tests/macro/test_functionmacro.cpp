@@ -996,3 +996,21 @@ TEST_F(FuncMacroTest, LineCommentInArgumentKeepsNewline) {
     EXPECT_EQ("\n[a /* c */ b]", pp("{#define W(x) [x]}\nW(a /* c */ b)"));
     EXPECT_TRUE(empty());
 }
+
+// A dropped edge `//` comment of a nested call's argument must not leave a
+// line break of its own: the enclosing call has already re-emitted the
+// comment's newline, so the output equals the one for the same text without
+// the comment.
+TEST_F(FuncMacroTest, NestedArgumentEdgeLineCommentDropsItsNewline) {
+    const std::string def = "{#define ID(x) x}\n";
+    EXPECT_EQ(pp(def + "ID(ID(a\n) b)|\n__LINE__"),
+              pp(def + "ID(ID(a // c\n) b)|\n__LINE__"));
+    EXPECT_EQ(pp(def + "ID(ID(a\n) b)|"), pp(def + "ID(ID(a // c\n) b)|"));
+    // Leading edge.
+    EXPECT_EQ(pp(def + "ID(ID(\na) b)|"), pp(def + "ID(ID(// c\na) b)|"));
+    // Unchanged: an interior comment keeps its newline, and an edge comment of
+    // a call straight from the source still compensates its source line.
+    EXPECT_EQ("\n[a // c\nb]\n", pp("{#define W(x) [x]}\nW(a // c\nb)"));
+    EXPECT_EQ(pp(def + "ID(a\n) b|"), pp(def + "ID(a // c\n) b|"));
+    EXPECT_TRUE(empty());
+}
