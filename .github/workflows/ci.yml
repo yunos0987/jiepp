@@ -39,8 +39,18 @@ jobs:
       - name: Bootstrap vcpkg
         run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
 
-      - name: Build and Test
-        run: cmake --workflow --preset ${{ matrix.preset }}
+      # Warnings are errors in CI only. The variable is passed here instead of
+      # being set in CMakePresets.json so local preset builds are unaffected.
+      # This is why the three workflow steps are run individually rather than
+      # with `cmake --workflow` (a workflow preset cannot take -D options).
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
 
   build-linux:
     runs-on: ubuntu-latest
@@ -67,8 +77,15 @@ jobs:
       - name: Bootstrap vcpkg
         run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-      - name: Build and Test
-        run: cmake --workflow --preset ${{ matrix.preset }}
+      # Warnings are errors in CI only (see the Windows job for the rationale).
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
 
   build-linux-sandbox:
     runs-on: ubuntu-latest
@@ -93,7 +110,7 @@ jobs:
         run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
       - name: Configure (sandbox)
-        run: cmake --preset linux-makefiles-sandbox-release
+        run: cmake --preset linux-makefiles-sandbox-release -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 
       - name: Build (sandbox)
         run: cmake --build build/linux-makefiles-sandbox-release --parallel
