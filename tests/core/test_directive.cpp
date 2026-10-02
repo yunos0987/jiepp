@@ -887,6 +887,44 @@ TEST_F(DirectiveTest, LineCommentFromDirectiveBecomesBlockComment) {
     }
 }
 
+// A "*/" inside the rewritten '//' text is written "*|", like gcc -CC (clang
+// leaves it, ending the block comment early), so the result stays one comment.
+TEST_F(DirectiveTest, LineCommentRewriteEscapesCommentCloser) {
+    // {#token} operand.
+    EXPECT_EQ("z /* tk *| q*/ w;", pp("{#token z // tk */ q} w;"));
+    EXPECT_TRUE(empty());
+    // The output is a single comment when read again.
+    EXPECT_EQ("z /* tk *| q*/ w;", pp("z /* tk *| q*/ w;"));
+    EXPECT_TRUE(empty());
+    // "//!" document comment in a macro body.
+    EXPECT_EQ("a /*!doc *| z*/ b;", pp("{#define X a //!doc */ z}X b;"));
+    EXPECT_TRUE(empty());
+    // A trailing ordinary '//' comment of a {#define} body is trimmed with
+    // the trailing whitespace, so only "//!" reaches the rewrite there.
+    EXPECT_EQ("a b;", pp("{#define Y a // c */ x}Y b;"));
+    EXPECT_TRUE(empty());
+    // "//!" in a {#token} operand.
+    EXPECT_EQ("a /*!d *| e*/ b;", pp("{#token a //!d */ e} b;"));
+    EXPECT_TRUE(empty());
+    // Several occurrences.
+    EXPECT_EQ("d /* a *| b *| c*/ e;", pp("{#token d // a */ b */ c} e;"));
+    EXPECT_TRUE(empty());
+    // "*/" at the end of the text and as the whole text.
+    EXPECT_EQ("b /* c *|*/ e;", pp("{#token b // c */} e;"));
+    EXPECT_EQ("e /* *|*/ x;", pp("{#token e // */} x;"));
+    EXPECT_EQ("g /**|*/ x;", pp("{#token g //*/} x;"));
+    EXPECT_TRUE(empty());
+    // "**/": the first '*' stays, the "*/" pair is escaped.
+    EXPECT_EQ("f /* **|*/ x;", pp("{#token f // **/} x;"));
+    EXPECT_TRUE(empty());
+    // A comment ending with '*': the appended "*/" closes it ("**/" is fine).
+    EXPECT_EQ("c /* a **/ x;", pp("{#token c // a *} x;"));
+    EXPECT_TRUE(empty());
+    // "*)" is harmless: the target is "/* */".
+    EXPECT_EQ("h /* a *) b*/ x;", pp("{#token h // a *) b} x;"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(DirectiveTest, LineCommentInDdModeEcho) {
     // B7: -dD echoes the normalized body -- the comment is gone, not just
     // hidden by the macro's own expansion.

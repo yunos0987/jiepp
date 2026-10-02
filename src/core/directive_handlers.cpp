@@ -55,15 +55,22 @@ bool strip_path(const std::string_view raw_path, std::string& path, bool& syspat
 // out the rest of the output line ("{#token a // c} b;" gave "a // c b;").
 // Rewrite it as a block comment, like gcc/clang -CC do for a '//' comment in
 // a macro expansion: "//x" -> "/*x*/", "//!x" -> "/*!x*/". The text is kept
-// as is, like clang (a "*/" inside x ends the block comment early). A '//'
-// comment that already ends with its newline (num_of_lines != 0, from a
-// $n/$r escape) cannot swallow anything and is kept.
+// as is, except that every "*/" inside x is written "*|", like gcc -CC
+// (clang leaves it, so the block comment ends early there); this keeps the
+// result a single comment. A "*" at the end of x is fine: "/*a **/" ends at
+// the appended "*/". A '(* *)' closer inside x is harmless: the target is
+// '/* */', so only "*/" can end it. A '//' comment that already ends with
+// its newline (num_of_lines != 0, from a $n/$r escape) cannot swallow
+// anything and is kept.
 void line_comments_to_block_comments(std::vector<Token>& ts) {
     for (auto& t : ts) {
         if ((t.type != Token::C && t.type != Token::DOCUMENT) || t.num_of_lines != 0 ||
             t.text.compare(0, 2, "//") != 0)
             continue;
-        t.text = "/*" + t.text.substr(2) + "*/";
+        std::string body = t.text.substr(2);
+        for (std::size_t p = body.find("*/"); p != std::string::npos; p = body.find("*/", p + 2))
+            body[p + 1] = '|';
+        t.text = "/*" + body + "*/";
     }
 }
 
