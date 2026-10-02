@@ -1163,7 +1163,9 @@ jiepp -- -unusual-name.iec
 | `{#ignore}` | エラー抑制の防止 |
 | `__has_include` | ファイルシステム探査の防止。`__has_include(…)` の形で使うと `PP62`。`{#ifdef __has_include}` / `defined(__has_include)` は `PP62` にならず、偽になる |
 
-### 情報漏洩防止 / Information Leak Prevention
+### 情報の扱い / Information Handling
+
+サンドボックスは、渡したファイルパスを隠さない。`__FILE__` や診断メッセージにはパスが指定どおりに表示されるため、秘密にしたいパスは jiepp に渡さないこと。
 
 | 対策 | 詳細 |
 |------|------|

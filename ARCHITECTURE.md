@@ -162,7 +162,7 @@ GCC/cpp 同様、組み込みマクロの定義責務をプリプロセッサと
 
 ## サンドボックスモード (`JIEPP_SANDBOX`)
 
-Web サーバーで信頼できない入力を処理する際のコンパイル時セキュリティモード。無効化ディレクティブ・情報漏洩防止・ランタイム制限は [`SPECIFICATION.md` §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode)、ビルドコマンドは [`README.md`](README.md#サンドボックスモード--sandbox-mode) を参照。
+Web サーバーで信頼できない入力を処理する際のコンパイル時セキュリティモード。無効化ディレクティブ・情報の扱い（`__TIMESTAMP__` を空にする等。渡したパスは隠さない）・ランタイム制限は [`SPECIFICATION.md` §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode)、ビルドコマンドは [`README.md`](README.md#サンドボックスモード--sandbox-mode) を参照。
 
 設計方針:
 
