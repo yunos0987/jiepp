@@ -56,19 +56,39 @@ void glue_tokens(std::vector<Token>& src, std::vector<Token>& item);
 // Leading/trailing whitespace-or-comment presence of one actual argument in
 // the macro call's own source, used to reproduce clang's comma spacing when
 // stringizing __VA_ARGS__ (R6).
-struct ArgWs { bool lead = false; bool trail = false; };
+// lead/trail: any whitespace/comment run (newlines included) at that edge --
+// clang's Stringify test (hasLeadingSpace() || isAtStartOfLine()), used when
+// the variable arguments are stringized (R6). lead_sp/trail_sp: clang's
+// Token::LeadingSpace for the token after that run -- true iff the run's last
+// token does not end in a newline -- used for plain substitution (C6).
+struct ArgWs {
+    bool lead = false;
+    bool trail = false;
+    bool lead_sp = false;
+    bool trail_sp = false;
+};
+
+// How select_arg() joins the variable arguments (C6).
+// plain:     one space where lead_sp/trail_sp (non-stringize use).
+// stringize: one space where lead/trail (R6).
+// shared:    the stringize spelling, with each space that plain would not
+//            emit tagged Token::va_sep (D3; one memoised spelling filtered
+//            per consumer by append_expanded()).
+enum class VaJoin { plain, stringize, shared };
 
 // §Support functions: select
-// mark_sep (task_slug arg-expand-once, D3): when true, every R6 comma-joining
-// WS token this call inserts is tagged Token::va_sep = true, so a later
-// consumer can choose to keep or skip it (append_expanded()/subst()) --
-// used only when building the ONE shared spelling of a memoised multi-use
-// variadic parameter's expansion, never for a direct (non-memoised) call.
+// join (see VaJoin): VaJoin::shared (task_slug arg-expand-once, D3) tags the
+// WS tokens that only the stringize consumer keeps (newline-only edges) with
+// Token::va_sep = true, so a later consumer can choose to keep or skip them
+// (append_expanded()/subst()) -- used only when building the ONE shared
+// spelling of a memoised multi-use variadic parameter's expansion, never for
+// a direct (non-memoised) call. ws == nullptr (non-variadic call, or a caller
+// that has no per-actual flags) joins with a bare comma.
 std::vector<Token> select_arg(int idx,
                               const std::vector<std::vector<Token>>& actuals,
                               bool is_va,
                               const std::vector<ArgWs>* ws = nullptr,
-                              bool mark_sep = false);
+                              VaJoin join = VaJoin::plain);
 int argc_from(int idx, const std::vector<std::vector<Token>>& actuals);
 
 // ── §subst — argument-expansion memoisation (task_slug arg-expand-once, D1/D2) ──
@@ -104,13 +124,12 @@ std::string stringize_text(const std::vector<Token>& ts);
 Token stringize_tokens(const std::vector<Token>& ts);
 
 // §subst — substitute args, handle stringize and paste
-// actual_ws: per-actual-argument leading/trailing whitespace flags (R6),
-// non-null only when va_sep_ws is true somewhere in the call chain (i.e.
-// only for a macro whose body stringizes its variable arguments --
-// FunctionMacro::stringizes_va()); nullptr for every other call.
+// actual_ws: per-actual-argument leading/trailing whitespace flags, built by
+// expand.cpp for every call of a variadic macro (nullptr otherwise); they let
+// select_arg() reproduce the call's spacing around the joining commas.
 // va_sep_ws: true only while substituting the content of @__VA_OPT__(...),
-// so select_arg() inserts ArgWs-derived spacing around the variadic commas
-// there too, without ever doing so for ordinary (non-stringize) expansion.
+// where the variadic commas are joined with the stringize spelling (R6:
+// a newline-only edge counts as whitespace) instead of the plain one (C6).
 // memo: non-null only when the macro has at least one multi-use parameter
 // (see ArgExpansionMemo above); forwarded unchanged through every recursive
 // subst() call for __VA_OPT__(...) content, so the single shared expansion

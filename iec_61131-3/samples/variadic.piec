@@ -11,9 +11,9 @@ var
     n: int;
 end_var
 (*{st}*)
-print(1,2,3);
+print(1, 2, 3);
 n := 3;
 n := 10;
-print(2,3);
+print(2, 3);
 (*{end}*)
 end_program

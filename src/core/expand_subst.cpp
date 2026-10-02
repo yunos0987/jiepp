@@ -96,39 +96,51 @@ std::vector<Token> select_arg(int idx,
                               const std::vector<std::vector<Token>>& actuals,
                               bool is_va,
                               const std::vector<ArgWs>* ws,
-                              bool mark_sep) {
+                              VaJoin join) {
     if (!is_va) {
         if (idx < static_cast<int>(actuals.size()))
             return actuals[idx];
         return {};
     }
 
-    // R6: reproduce clang's comma spacing for @__VA_ARGS__/@__VA_OPT__ --
-    // one space before the comma iff the preceding actual had trailing
-    // whitespace/comment in the call, one after iff the following actual
-    // had leading whitespace/comment. Bounds-checked: a missing ws entry
-    // (ws == nullptr, or shorter than actuals) counts as false.
+    // Reproduce clang's comma spacing: one space before the comma iff the
+    // preceding actual had trailing whitespace/comment in the call, one
+    // after iff the following actual had leading whitespace/comment. Which
+    // flag pair counts depends on `join` (plain: lead_sp/trail_sp, a newline
+    // directly before the token is no space; stringize: lead/trail, R6).
+    // Bounds-checked: a missing ws entry (ws == nullptr, or shorter than
+    // actuals) counts as false.
     auto flag = [&](int k, bool ArgWs::*field) {
         return ws && k >= 0 && k < static_cast<int>(ws->size()) && (*ws)[k].*field;
     };
     // D3: when building the one shared spelling for a memoised multi-use
-    // variadic parameter, tag each inserted WS token so append_expanded()
-    // can filter it back out for the plain (non-stringize) consumer.
-    auto ws_token = [&] {
+    // variadic parameter, tag each inserted WS token that plain use would
+    // not emit so append_expanded() can filter it back out for the plain
+    // (non-stringize) consumer.
+    auto put_ws = [&](std::vector<Token>& r, int k, bool ArgWs::*any, bool ArgWs::*sp) {
+        const bool plain_sp = flag(k, sp);
+        if (!(join == VaJoin::plain ? plain_sp : flag(k, any)))
+            return;
         Token t = Token::create(Token::WS, " ");
-        t.va_sep = mark_sep;
-        return t;
+        t.va_sep = (join == VaJoin::shared) && !plain_sp;
+        r.push_back(std::move(t));
     };
 
     std::vector<Token> result;
     for (int k = idx; k < static_cast<int>(actuals.size()); ++k) {
         if (k > idx) {
-            if (flag(k - 1, &ArgWs::trail))
-                result.push_back(ws_token());
+            // The first token produced takes the parameter's own spacing in
+            // the body, like clang, so no space before a leading comma.
+            if (!result.empty())
+                put_ws(result, k - 1, &ArgWs::trail, &ArgWs::trail_sp);
             result.push_back(Token::create(Token::SEP, ","));
-            if (flag(k, &ArgWs::lead))
-                result.push_back(ws_token());
         }
+        // An empty actual adds nothing: its whitespace is the run before the
+        // next comma (trail), or nothing at all if it is the last actual.
+        if (actuals[k].empty())
+            continue;
+        if (k > idx)
+            put_ws(result, k, &ArgWs::lead, &ArgWs::lead_sp);
         for (auto& t : actuals[k])
             result.push_back(t);
     }
@@ -234,7 +246,7 @@ static std::size_t collect_va_opt_content(
 // task_slug arg-expand-once (D1/D3): append one occurrence's worth of a
 // memoised expansion `cached` to `result`. keep_sep selects which of the
 // two spellings D3 may have cached (plain vs. the WS-carrying variadic
-// spelling, see select_arg()'s mark_sep): a va_sep-marked token is dropped
+// spelling, see select_arg()'s VaJoin::shared): a va_sep-marked token is dropped
 // unless keep_sep is true, and is always copied out with the marker
 // cleared, so it can never leak out of subst() even on the moved-out path.
 // When `move` is true (the occurrence that observes the slot's last
@@ -342,8 +354,8 @@ std::vector<Token> subst(
                         if (nb.text == FunctionMacro::VA_ARGC) {
                             item = {va_argc_token(pidx, actual_params)};
                         } else {
-                            item = ts_flatten(select_arg(pidx, actual_params, is_va,
-                                                         va_sep_ws ? actual_ws : nullptr));
+                            item = ts_flatten(select_arg(pidx, actual_params, is_va, actual_ws,
+                                                         va_sep_ws ? VaJoin::stringize : VaJoin::plain));
                         }
                     }
                 }
@@ -401,7 +413,8 @@ std::vector<Token> subst(
                             // spacing always applies here regardless of va_sep_ws
                             // (which only governs the separate @__VA_OPT__(...)
                             // content-substitution recursion above).
-                            auto actual = select_arg(pidx, actual_params, is_va, actual_ws);
+                            auto actual = select_arg(pidx, actual_params, is_va, actual_ws,
+                                                     VaJoin::stringize);
                             result.push_back(stringize_tokens(actual));
                         }
                         i = j;
@@ -459,9 +472,9 @@ std::vector<Token> subst(
                 const int slot = (memo && pidx < static_cast<int>(memo->slots->size()))
                                       ? (*memo->slots)[pidx]
                                       : -1;
-                // D3: a multi-use variadic parameter whose macro stringizes
-                // its variable arguments builds its cached expansion from a
-                // single WS-marked spelling (see select_arg's mark_sep),
+                // D3: a multi-use variadic parameter of a call that carries
+                // ArgWs flags builds its cached expansion from a
+                // single WS-marked spelling (see select_arg's VaJoin::shared),
                 // computed fresh below, regardless of actual_ws -- so the
                 // raw spelling is not needed to seed that cache.
                 const bool slot_needs_marked_spelling = slot >= 0 && is_va && actual_ws;
@@ -483,8 +496,8 @@ std::vector<Token> subst(
                 const std::vector<Token>* actual = nullptr;
                 if (need_raw) {
                     if (is_va) {
-                        actual_va = select_arg(pidx, actual_params, is_va,
-                                               va_sep_ws ? actual_ws : nullptr);
+                        actual_va = select_arg(pidx, actual_params, is_va, actual_ws,
+                                               va_sep_ws ? VaJoin::stringize : VaJoin::plain);
                         actual = &actual_va;
                     } else {
                         actual = (pidx < static_cast<int>(actual_params.size()))
@@ -520,7 +533,7 @@ std::vector<Token> subst(
                         cached.emplace();
                         if (slot_needs_marked_spelling)
                             expand(select_arg(pidx, actual_params, true, actual_ws,
-                                              /*mark_sep=*/true),
+                                              VaJoin::shared),
                                    *cached, env);
                         else
                             expand(*actual, *cached, env);

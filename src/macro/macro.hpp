@@ -160,13 +160,6 @@ public:
     int num_of_params_max() const { return num_params_max_; }
     const std::vector<Token>& body() const { return body_; }
 
-    // True iff the body stringizes its variable arguments (@__VA_ARGS__/@args,
-    // or __VA_ARGS__/args used inside @__VA_OPT__(...)): the only case where
-    // expand.cpp needs to compute per-actual-argument whitespace flags (R6).
-    // Computed once in the constructor from body_/args_, so it cannot affect
-    // equal() and is not compared there.
-    bool stringizes_va() const { return stringizes_va_; }
-
     // task_slug arg-expand-once (D2): per formal index (by pidx, as used in
     // args()), the dense slot for a parameter spelled >= 2 times in the
     // body, or -1 if spelled 0 or 1 times. "Spelled" over-counts (counts
@@ -188,13 +181,8 @@ private:
     std::vector<Token> body_;
     std::vector<std::string> args_list_; // original ordered parameter names
     bool named_variadic_ = false;
-    bool stringizes_va_ = false;
     std::vector<int> arg_slots_;     // size == number of formals; -1 or slot index
     std::vector<int> arg_slot_uses_; // size == number of slots; spelling count
-
-    static bool compute_stringizes_va(
-        const std::vector<Token>& body,
-        const std::unordered_map<std::string, std::pair<int, bool>>& args);
 
     // task_slug arg-expand-once (D2). num_formals is the number of distinct
     // formal-parameter slots in args() (regular params plus, for a

@@ -123,10 +123,11 @@ TEST_F(StringizeWhitespaceTest, VaOptStringize) {
               pp("{#define VO2(...) @__VA_OPT__(__VA_ARGS__)} ;VO2(a ,  b);"));
     EXPECT_EQ(" ;'<a ,b>';",
               pp("{#define VO4(...) @__VA_OPT__(<__VA_ARGS__>)} ;VO4( a ,b );"));
-    // Pins: non-stringize __VA_OPT__/__VA_ARGS__ output is unchanged (D3).
-    EXPECT_EQ(" ;g(a , b,c);",
+    // Pins: non-stringize __VA_OPT__/__VA_ARGS__ output reproduces the call's
+    // comma spacing like clang (C6).
+    EXPECT_EQ(" ;g(a , b ,c);",
               pp("{#define L(f, ...) g(f __VA_OPT__(,) __VA_ARGS__)} ;L(a, b ,c);"));
-    EXPECT_EQ(" ;[a,b];",
+    EXPECT_EQ(" ;[a , b];",
               pp("{#define P(...) [__VA_ARGS__]} ;P(a ,  b);"));
     EXPECT_TRUE(empty());
 }

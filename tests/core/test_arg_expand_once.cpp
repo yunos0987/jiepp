@@ -66,7 +66,7 @@ TEST_F(ArgExpandOnceTest, T8_TwoIndependentDoubleUseParameters) {
 // ---- T9-T14: variadic parameters, __VA_OPT__, __VA_ARGC__ ----
 
 TEST_F(ArgExpandOnceTest, T9_VariadicDoubleUse) {
-    EXPECT_EQ("0,1 | 0,1",
+    EXPECT_EQ("0, 1 | 0, 1",
               pp("{#define V(...) __VA_ARGS__ | __VA_ARGS__}V(__COUNTER__, __COUNTER__)"));
     EXPECT_TRUE(empty());
 }
@@ -84,17 +84,21 @@ TEST_F(ArgExpandOnceTest, T11_StringizedVaOptContentSharesPlainUse) {
 }
 
 TEST_F(ArgExpandOnceTest, T12_SharedVariadicSpellingKeepsR6Spacing_Guard) {
-    // Guard: the stringized __VA_OPT__ content (R6 comma spacing from the
-    // call site) and the plain, un-spaced use must still differ in
-    // whitespace even though they now share one underlying expansion
-    // (D3: a single va_sep-tagged spelling, filtered per consumer).
-    EXPECT_EQ("'a , b' | a,b",
+    // Guard: the stringized __VA_OPT__ content (R6: a newline counts as
+    // whitespace) and the plain use (clang LeadingSpace: a newline directly
+    // before the token is not a space) must still differ in whitespace even
+    // though they share one underlying expansion (D3: a single
+    // va_sep-tagged spelling, filtered per consumer).
+    EXPECT_EQ("'a , b' | a, b\n",
+              pp("{#define X(...) @__VA_OPT__(__VA_ARGS__) | __VA_ARGS__}X(a\n, b)"));
+    // Same-whitespace input: both consumers agree.
+    EXPECT_EQ("'a , b' | a , b",
               pp("{#define X(...) @__VA_OPT__(__VA_ARGS__) | __VA_ARGS__}X(a , b)"));
     EXPECT_TRUE(empty());
 }
 
 TEST_F(ArgExpandOnceTest, T13_NamedVariadicDoubleUsePlusArgc) {
-    EXPECT_EQ("0,1 | 2 | 0,1",
+    EXPECT_EQ("0, 1 | 2 | 0, 1",
               pp("{#define NV(args...) args | __VA_ARGC__ | args}"
                  "NV(__COUNTER__, __COUNTER__)"));
     EXPECT_TRUE(empty());

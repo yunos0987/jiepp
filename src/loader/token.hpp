@@ -23,8 +23,9 @@ struct Token {
     using HideSet = ::HideSet;
 
     int         type   = ANY;
-    // True only for an R6 whitespace token that select_arg() inserted around a
-    // joining comma of the variable arguments, for the shared memoised
+    // True only for a whitespace token that select_arg() inserted around a
+    // joining comma of the variable arguments and that only the stringize
+    // consumer keeps (a newline-only edge, R6), for the shared memoised
     // expansion of a multi-use variadic parameter (task_slug arg-expand-once,
     // expand_subst.cpp D3). Never leaves subst(): consumers either keep it
     // (stringize context) or skip it (plain use). Placed here, directly after

@@ -132,7 +132,6 @@ FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Tok
     }
 
     body_ = normalize(std::move(body), args_);
-    stringizes_va_ = compute_stringizes_va(body_, args_);
     const int num_formals = regular_count + (has_va ? 1 : 0);
     compute_arg_slots(body_, args_, num_formals, arg_slots_, arg_slot_uses_);
 }
@@ -165,27 +164,6 @@ void FunctionMacro::compute_arg_slots(
             out_slot_uses.push_back(count);
         }
     }
-}
-
-bool FunctionMacro::compute_stringizes_va(
-    const std::vector<Token>& body,
-    const std::unordered_map<std::string, std::pair<int, bool>>& args) {
-    for (std::size_t i = 0; i < body.size(); ++i) {
-        if (body[i].type != Token::STRINGIZE)
-            continue;
-        std::size_t j = i + 1;
-        while (j < body.size() && (body[j].type & Token::MASK_WS))
-            ++j;
-        if (j >= body.size() || body[j].type != Token::ANY)
-            continue;
-        const std::string& text = body[j].text;
-        if (text == VA_OPT)
-            return true;
-        auto it = args.find(text);
-        if (it != args.end() && it->second.second && text != VA_ARGC)
-            return true;
-    }
-    return false;
 }
 
 std::vector<Token> FunctionMacro::normalize(

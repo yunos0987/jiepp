@@ -741,13 +741,13 @@ TEST_F(FuncMacroTest, Replace) {
 // GNU named variadic parameter, like gcc/clang: it receives the variable
 // arguments in place of __VA_ARGS__.
 TEST_F(FuncMacroTest, GnuNamedVariadicSubstitution) {
-    EXPECT_EQ(";[];[1];[1,2,3];",
+    EXPECT_EQ(";[];[1];[1,2, 3];",
               pp("{#define F(args...) [args]};F();F(1);F(1,2, 3);"));
     EXPECT_EQ(";[|];[1|];[1|];[1|2,3];",
               pp("{#define G(a, args...) [a|args]};G();G(1);G(1,);G(1,2,3);"));
     // Whitespace may separate the name from '...'; call-side whitespace
-    // around a variadic separator is not preserved (U1, pre-existing).
-    EXPECT_EQ(";<x,y>;",
+    // around a variadic separator is reproduced like clang (C6).
+    EXPECT_EQ(";<x , y>;",
               pp("{#define H( args ... ) <args>};H(x , y);"));
     EXPECT_EQ(";[1|2];",
               pp("{#define I(a,args...) [a|args]};I(1,2);"));
@@ -759,7 +759,7 @@ TEST_F(FuncMacroTest, GnuNamedVariadicSubstitution) {
 // §17) exactly as for a plain '...' variadic -- each IEC multi-dimensional
 // array argument reaches the named variadic's own name intact.
 TEST_F(FuncMacroTest, GnuNamedVariadicPreservesArraySubscriptCommas) {
-    EXPECT_EQ(";[a[x,y],b[1,2]];",
+    EXPECT_EQ(";[a[x,y], b[1,2]];",
               pp("{#define F(args...) [args]};F(a[x,y], b[1,2]);"));
     EXPECT_TRUE(empty());
 }

@@ -843,17 +843,29 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         if (!unterminated_call)
                             ots.push_back(std::move(t));
                     } else {
-                        // R6: per-actual-argument leading/trailing whitespace/comment
+                        // Per-actual-argument leading/trailing whitespace/comment
                         // presence, from the raw (pre-flatten) argument tokens -- needed
-                        // only for a macro that stringizes its variable arguments
-                        // (@__VA_ARGS__/@args or __VA_ARGS__ inside @__VA_OPT__(...)), so
-                        // every other function-macro call pays nothing for it.
+                        // only for a variadic macro, whose select_arg() reproduces the
+                        // call's spacing around the joining commas (C6, and R6 when the
+                        // variable arguments are stringized); every other
+                        // function-macro call pays nothing for it.
                         std::vector<jiepp::expand_detail::ArgWs> arg_ws;
-                        if (fm->stringizes_va()) {
+                        if (fm->args().count(FunctionMacro::VA_SYM)) {
+                            auto is_ws = [](const Token& tk) { return (tk.type & Token::MASK_WS) != 0; };
+                            auto ends_nl = [](const Token& tk) {
+                                return !tk.text.empty() &&
+                                       (tk.text.back() == '\n' || tk.text.back() == '\r');
+                            };
                             arg_ws.reserve(params.size());
-                            for (const auto& p : params)
-                                arg_ws.push_back({!p.empty() && (p.front().type & Token::MASK_WS) != 0,
-                                                  !p.empty() && (p.back().type & Token::MASK_WS) != 0});
+                            for (const auto& p : params) {
+                                std::size_t j = 0;
+                                while (j < p.size() && is_ws(p[j])) ++j;
+                                const bool lead = !p.empty() && is_ws(p.front());
+                                const bool trail = !p.empty() && is_ws(p.back());
+                                arg_ws.push_back({lead, trail,
+                                                  j > 0 && j < p.size() && !ends_nl(p[j - 1]),
+                                                  trail && !ends_nl(p.back())});
+                            }
                         }
 
                         for (auto& p : params)

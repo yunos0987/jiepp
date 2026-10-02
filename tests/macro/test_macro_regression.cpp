@@ -66,7 +66,7 @@ TEST_F(MacroRegressionTest, RenamedParameterIsDifferentDefinition) {
 // ---- B: IEC multi-dimensional array arguments pass intact ----
 
 TEST_F(MacroRegressionTest, ArrayArgumentCommasDoNotSplitVariadicArgs) {
-    EXPECT_EQ(";<2:a[1,2],b>;",
+    EXPECT_EQ(";<2:a[1,2], b>;",
               pp("{#define V(...) <__VA_ARGC__:__VA_ARGS__>};V(a[1,2], b);"));
     EXPECT_TRUE(empty());
 }
