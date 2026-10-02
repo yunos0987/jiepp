@@ -76,7 +76,12 @@ function(jiepp_harden_target target)
         if(NOT _jiepp_type STREQUAL "STATIC_LIBRARY")
             target_link_options(${target} PRIVATE "LINKER:-z,relro,-z,now")
         endif()
-    elseif(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT MSVC)
+    elseif(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT MSVC
+           AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+        # Only for clang++ targeting the MSVC ABI (CMAKE_CXX_SIMULATE_ID is
+        # "MSVC", i.e. an *-windows-msvc triple linked by lld-link). A clang
+        # targeting MinGW (GNU triple) has no SIMULATE_ID and its linker does
+        # not accept /guard:cf, so it must not take this branch.
         # clang++ (GNU-style driver) takes the CC1 flag through -Xclang;
         # clang-cl would take /guard:cf instead.
         target_compile_options(${target} PRIVATE "SHELL:-Xclang -cfguard")
