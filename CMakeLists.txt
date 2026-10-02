@@ -221,6 +221,9 @@ if(GTest_FOUND OR TARGET GTest::gtest)
         )
         target_link_libraries(jiepp_test PRIVATE jiepp_lib GTest::gtest_main)
         target_include_directories(jiepp_test PRIVATE tests)
+        # Some tests run the jiepp executable (JIEPP_EXE_PATH below), so building
+        # only jiepp_test must also rebuild jiepp, not run a stale executable.
+        add_dependencies(jiepp_test jiepp)
 
         # Test data path
         target_compile_definitions(jiepp_test PRIVATE
