@@ -6,3 +6,8 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+  # vcpkg is a git submodule; this keeps its pinned commit up to date.
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "monthly"
