@@ -1,5 +1,5 @@
 (*{#:0 'iec_61131-3/samples/pragma.iec'}*)
-(* pragma.iec - Preprocessor control directives *)
+(* pragma.iec - Runtime limit directives ({#max_*}) *)
 
 
 
