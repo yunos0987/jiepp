@@ -2,8 +2,9 @@
 {#ifndef ALARM_CODES_INCLUDED}
 {#define ALARM_CODES_INCLUDED 1}
 
-var_global constant
-    ALARM_DOOR_OPEN: int := 16#0101;
-    ALARM_OVER_PRESSURE: int := 16#0102;
-end_var
+type AlarmCode : int (
+    door_open := 16#0101,
+    over_pressure := 16#0102
+);
+end_type
 {#endif}
