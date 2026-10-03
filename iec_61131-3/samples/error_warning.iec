@@ -13,6 +13,8 @@
 
 {#warning 'This is a compile-time warning'}
 
+{#info 'This is an informational message'}
+
 program Main
 {st}
 {end}

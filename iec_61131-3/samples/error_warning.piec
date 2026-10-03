@@ -1,6 +1,6 @@
 (*{#:0 'iec_61131-3/samples/error_warning.iec'}*)
 (* error_warning.iec - #error and #warning *)
-(*{#:15 'iec_61131-3/samples/error_warning.iec'}*)
+(*{#:17 'iec_61131-3/samples/error_warning.iec'}*)
 program Main
 (*{st}*)
 (*{end}*)

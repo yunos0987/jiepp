@@ -6,10 +6,12 @@
 program Main
 var
     s1, s2, s3: string[255];
+    ws: wstring;
 end_var
 (*{st}*)
 s1 := 'Hello World';
 s2 := '123 + 456';
-s3 := '12';
+s3 := '13';
+ws := "Hello World";
 (*{end}*)
 end_program
