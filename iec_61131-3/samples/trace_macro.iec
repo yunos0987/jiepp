@@ -1,0 +1,21 @@
+(* trace_macro.iec - Optional arguments with __VA_OPT__ and named variadic parameters *)
+
+{#define TRACE(msg, ...) trace(__FILE_NAME__, __LINE__, msg __VA_OPT__(, __VA_ARGS__))}
+{#define ALARM(code, args...) raise_alarm(code __VA_OPT__(, args))}
+
+function_block Station
+var_input
+    start: bool;
+end_var
+var
+    pressure: real;
+end_var
+{st}
+TRACE('cycle start');
+TRACE('pressure', pressure);
+if not start then
+    ALARM(16#0101);
+    ALARM(16#0102, 'door open', pressure);
+end_if;
+{end}
+end_function_block
