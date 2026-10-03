@@ -114,7 +114,7 @@ VSCode CMake Tools 拡張を使用している場合、`CMakePresets.json` で�
 
 ## Windows バイナリの実行環境 / Windows Runtime Requirements
 
-Windows で配布バイナリ (`jiepp.exe`) を実行する場合、以下が必要になる場合があります：
+Windows でビルドした `jiepp.exe` を実行する場合、以下が必要になる場合があります：
 
 - **Microsoft Visual C++ Redistributable 2015-2022 (x64)**  
   Windows 10 以降では UCRT（Universal C Runtime）がOS に統合済みのため、個別インストール不要な場合がほとんどです。ただし、古い環境や一部カスタム設定では Redistributable が必要になることがあります。  
@@ -234,7 +234,7 @@ cmake --build --preset linux-portable-sandbox-release
 # 成果物: build/linux-portable-sandbox-release/jiepp
 ```
 
-サーバー側では追加インストール不要です。生成されたバイナリをそのまま配置して使用できます。
+サーバー側では追加インストール不要です。生成されたバイナリをそのまま配置して使用できます。ただし、このバイナリを第三者へ配布する場合は、[静的リンクについて](#静的リンクについて--static-linking-notice)の手順が必要です。
 
 ## 参考 / References
 
@@ -256,16 +256,21 @@ MIT ライセンス — 詳細は [LICENSE](LICENSE) を参照してください
 
 ### 静的リンクについて / Static Linking Notice
 
-`linux-portable-release` プリセットは `libstdc++`・`libgcc`・`glibc` を静的リンクします。各ライブラリのライセンスは次のとおりです。
+`linux-portable-*` プリセットは `libstdc++`・`libgcc`・`glibc` を静的リンクします。
 
-| ライブラリ | ライセンス | 備考 |
+- **自分のサーバーでビルドして自分で使うだけの場合**、ライセンス上の追加義務は生じません。
+- **ビルドしたバイナリを第三者へ配布する場合**、glibc (LGPL v2.1) の条件を満たす必要があります。バイナリに次を添えてください（手順は [`CONTRIBUTING.md`](CONTRIBUTING.md#静的バイナリの配布) を参照）。
+  - glibc を LGPL の下で使用している旨の目立つ表示
+  - LGPL v2.1 の全文と、glibc の著作権・ライセンス表示
+  - 再リンクに必要な資料（対応する glibc のソースと、jiepp のソース・ビルド手順）の入手方法
+
+| ライブラリ | ライセンス | 配布時の扱い |
 |-----------|-----------|------|
-| libstdc++, libgcc | GPL v3 + GCC Runtime Library Exception | 例外条項によりバイナリ配布は任意ライセンスで可 |
-| glibc (GNU C Library) | LGPL v2.1 | 本プロジェクトはオープンソース (MIT) のため再リンク要件を満たす |
-| flex スケルトン | BSD 系 (生成コード向け例外あり) | — |
-| bison スケルトン | GPL v3 (生成パーサー向け例外あり) | — |
+| glibc (GNU C Library) | LGPL v2.1 | 上記の表示・全文・再リンク資料が必要。MIT であること自体は再リンク要件を満たしません |
+| libstdc++, libgcc | GPL v3 + GCC Runtime Library Exception | 例外条項により追加義務なし |
+| flex / bison が生成したコード | スケルトンに生成コード向け例外あり | 追加義務なし |
 
-追加のライセンス表示をバイナリに同梱する必要はありません。
+これは法的助言ではありません。配布の形態によっては、各ライセンスの原文を確認してください。
 
 ### テストデータ / Test Data
 

@@ -104,6 +104,46 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 - TSV 形式: `build/<preset>/perftest/results/stats.<YYYYmmdd_HHMMSS>.tsv`。ヘッダは `case name`, `time_1 [ms]` … `time_N [ms]`, `min [ms]`, `median [ms]`, `mean [ms]`, `stdev [ms]`（小数点以下 3 桁）。
 - 計測値は必ず Release プリセットで取得してください。Debug ビルドでも動作しますが `WARNING` が出力され、数値は代表値になりません。
 
+## 静的バイナリの配布
+
+`linux-portable-*` プリセットでビルドした静的バイナリを第三者へ配布する場合の手順です。自分のサーバーで使うだけなら不要です（背景は [README の「静的リンクについて」](README.md#静的リンクについて--static-linking-notice)）。glibc は LGPL v2.1 で、§6(d) の方式（対応するソースを同じ場所で提供する）を採ります。
+
+以下の例は Ubuntu です。`<tag>`・`<ver>` などは実際の値に置き換えます。
+
+1. **タグからビルドする。** リリース用タグをチェックアウトし、portable プリセットでビルドして Release の ctest を通します。
+   ```bash
+   git checkout <tag>
+   cmake --workflow --preset linux-portable-release
+   # サンドボックス版も配布する場合は linux-portable-sandbox-release
+   ```
+2. **ビルド環境のバージョンを記録する。** `libc.a` を提供したパッケージが、配布するソースの対象です。
+   ```bash
+   ldd --version | head -n 1
+   dpkg-query -W libc6 libc6-dev
+   dpkg -S "$(clang++ -print-file-name=libc.a)"
+   clang++ --version | head -n 1
+   dpkg-query -W libstdc++-<n>-dev libgcc-<n>-dev
+   ```
+3. **`licenses/` に文書を集める。**
+   - LGPL v2.1: `/usr/share/common-licenses/LGPL-2.1`
+   - glibc の著作権表示: `/usr/share/doc/libc6/copyright`
+   - glibc の `LICENSES`: 手順 6 で取得するソースの tarball から取り出す
+   - jiepp の `LICENSE`
+4. **`licenses/BUILD-INFO.txt` を書く。** 次を含めます。
+   - jiepp のタグとコミットハッシュ
+   - 手順 2 のパッケージ版数とコンパイラ版数
+   - 手順 6 のソース tarball の URL
+   - ビルドコマンド（手順 1）
+   - 再リンクの説明: 「このバイナリは glibc の静的ライブラリを含みます。対応する jiepp と glibc のソースを同じ場所から入手でき、glibc を差し替えて再リンクできます。」
+5. **アーカイブ直下に `THIRD_PARTY_NOTICES.md` を置く。** 「このバイナリは GNU C Library (glibc) を LGPL v2.1 の下で静的リンクしている」旨、`licenses/` の案内、ソースの入手先を目立つ形で書きます。
+6. **glibc のソースを同じリリースに添付する。** 手順 2 で調べたパッケージと同じ版の、元ソース tarball と Debian/Ubuntu のパッチ tarball を取得します。
+   ```bash
+   apt-get source glibc   # 要 deb-src。またはディストリビューションのソース公開ページから直接取得
+   ```
+7. **パッケージして公開する。** バイナリ、`licenses/`、`THIRD_PARTY_NOTICES.md` を 1 つのアーカイブにまとめ、手順 6 の tarball と一緒に同じ GitHub Release に添付します。
+
+libstdc++ / libgcc（GCC Runtime Library Exception）と flex / bison の生成コードには、追加の配布義務はありません。
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
