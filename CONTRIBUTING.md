@@ -120,10 +120,12 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
    ```bash
    ldd --version | head -n 1
    dpkg-query -W libc6 libc6-dev
-   dpkg -S "$(clang++ -print-file-name=libc.a)"
+   dpkg -S "$(realpath "$(clang++ -print-file-name=libc.a)")"
    clang++ --version | head -n 1
+   clang++ -v 2>&1 | grep "Selected GCC installation"   # 末尾の数字が <n>
    dpkg-query -W libstdc++-<n>-dev libgcc-<n>-dev
    ```
+   `realpath` が必要なのは、`clang++` が `/lib/...` という usrmerge 前の経路を返し、`dpkg -S` がそのままでは見つけられないためです。`Selected GCC installation` の行は `.../lib/gcc/x86_64-linux-gnu/11` のように出るので、この例では `<n>` は 11 です。
 3. **`licenses/` に文書を集める。**
    - LGPL v2.1: `/usr/share/common-licenses/LGPL-2.1`
    - glibc の著作権表示: `/usr/share/doc/libc6/copyright`
@@ -138,7 +140,7 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 5. **アーカイブ直下に `THIRD_PARTY_NOTICES.md` を置く。** 「このバイナリは GNU C Library (glibc) を LGPL v2.1 の下で静的リンクしている」旨、`licenses/` の案内、ソースの入手先を目立つ形で書きます。
 6. **glibc のソースを同じリリースに添付する。** 手順 2 で調べたパッケージと同じ版の、元ソース tarball と Debian/Ubuntu のパッチ tarball を取得します。
    ```bash
-   apt-get source glibc   # 要 deb-src。またはディストリビューションのソース公開ページから直接取得
+   apt-get source glibc=<手順 2 の libc6-dev の版>   # 要 deb-src。またはディストリビューションのソース公開ページから直接取得
    ```
 7. **パッケージして公開する。** バイナリ、`licenses/`、`THIRD_PARTY_NOTICES.md` を 1 つのアーカイブにまとめ、手順 6 の tarball と一緒に同じ GitHub Release に添付します。
 
