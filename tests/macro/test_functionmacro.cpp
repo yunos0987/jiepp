@@ -8,7 +8,20 @@ static std::vector<Token> ts(const std::string& text) {
 
 // ---- function macro: simple ----
 
-class FuncMacroTest : public JieppTest {};
+class FuncMacroTest : public JieppTest {
+protected:
+    // R3: `{#define <def>}` followed by an {#ifdef F} probe, in continue mode
+    // (caller installs the guard). Asserts F was not defined ("U") and exactly
+    // one PP30 whose text contains `reason`. messages() is read once.
+    void expect_param_list_error(const std::string& def, const std::string& reason) {
+        SCOPED_TRACE(def);
+        EXPECT_EQ("U", pp("{#define " + def + "}{#ifdef F}D{#else}U{#endif}"));
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find(reason)) << msgs[0];
+    }
+};
 
 TEST_F(FuncMacroTest, Simple) {
     EXPECT_EQ(";2+A+ab;", pp("{#define F(a) a+A+ab};F(2);"));
@@ -55,6 +68,102 @@ TEST_F(FuncMacroTest, DuplicateParameter) {
     EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, code());
     EXPECT_THROW(pp("{#define G(x,y,z,x) x}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, code());
+}
+
+// R2: in continue mode, a duplicate parameter name aborts the whole
+// {#define} -- the macro is never defined, so a later call is left as
+// plain, unexpanded text (matching gcc/clang).
+TEST_F(FuncMacroTest, DuplicateParameterNotDefinedInContinueMode) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";F(1,2);", pp("{#define F(x,x) [x]};F(1,2);"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    EXPECT_EQ(1, Issue::error_count_);
+}
+
+// R2: only the *first* duplicate is reported (clang-like), not one per
+// repeated name.
+TEST_F(FuncMacroTest, DuplicateParameterReportedOnce) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";G(1,2,3);", pp("{#define G(a,a,a) [a]};G(1,2,3);"));
+    // messages() (like codes()/message()) drains the diagnostic buffer, so
+    // it must be captured once and both the code and the text checked
+    // against that same snapshot -- calling codes() then message() would
+    // have the second call see an already-drained (empty) buffer.
+    auto msgs1 = messages();
+    ASSERT_EQ(1u, msgs1.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, PlainTextMessage::parse_code(msgs1[0]));
+    EXPECT_NE(std::string::npos, msgs1[0].find('a'));
+
+    EXPECT_EQ(";H(1,2,3,4);", pp("{#define H(a,b,a,b) a};H(1,2,3,4);"));
+    auto msgs2 = messages();
+    ASSERT_EQ(1u, msgs2.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, PlainTextMessage::parse_code(msgs2[0]));
+    EXPECT_NE(std::string::npos, msgs2[0].find('a'));
+
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+// R2: a rejected redefinition leaves the existing definition of the same
+// name untouched -- no MACRO_REDEFINED (PP35), no PP34, and the old
+// definition still expands.
+TEST_F(FuncMacroTest, DuplicateParameterKeepsExistingDefinition) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";;[1];",
+              pp("{#define F(x) [x]};{#define F(y,y) <y>};F(1);"));
+    auto cs1 = codes();
+    ASSERT_EQ(1u, cs1.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs1[0]);
+
+    EXPECT_EQ(";;7;", pp("{#define N 7};{#define N(a,a) a};N;"));
+    auto cs2 = codes();
+    ASSERT_EQ(1u, cs2.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs2[0]);
+}
+
+// R2: under {#ignore PP36}, the diagnostic is suppressed but the macro is
+// still not defined (like {#ignore PP33}).
+TEST_F(FuncMacroTest, DuplicateParameterIgnoredStillNotDefined) {
+    EXPECT_EQ(";F(1,2);",
+              pp("{#ignore PP36}{#define F(x,x) [x]};F(1,2);"));
+    EXPECT_TRUE(empty());
+}
+
+// R2: a duplicate parameter before a trailing '...' is caught the same way
+// as an ordinary duplicate.
+TEST_F(FuncMacroTest, DuplicateParameterVariadicNotDefined) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";V(1,2,3);", pp("{#define V(a,a,...) [a]};V(1,2,3);"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+}
+
+// D4/R2: a regular parameter named __VA_ARGS__/__VA_ARGC__ collides with
+// the implicit name(s) a trailing '...' introduces, so it is a duplicate
+// too and the {#define} is abandoned -- it must not be silently
+// overwritten by the implicit variadic entry (FunctionMacro's args_ map).
+// Without a trailing '...', these names are ordinary parameter names.
+TEST_F(FuncMacroTest, VaArgsNamedParameterClashesWithEllipsis) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";F(1,2);",
+              pp("{#define F(__VA_ARGS__, ...) [__VA_ARGS__]};F(1,2);"));
+    // See DuplicateParameterReportedOnce: capture messages() once (codes()
+    // then message() would drain the buffer twice).
+    auto msgs1 = messages();
+    ASSERT_EQ(1u, msgs1.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, PlainTextMessage::parse_code(msgs1[0]));
+    EXPECT_NE(std::string::npos, msgs1[0].find("__VA_ARGS__"));
+
+    EXPECT_EQ(";C(1,2);",
+              pp("{#define C(__VA_ARGC__, ...) [__VA_ARGC__]};C(1,2);"));
+    auto cs2 = codes();
+    ASSERT_EQ(1u, cs2.size());
+    EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs2[0]);
+
+    EXPECT_EQ(";[3];", pp("{#define H(__VA_ARGS__) [__VA_ARGS__]};H(3);"));
+    EXPECT_TRUE(empty());
 }
 
 // NOTE: Leading/trailing Token::WS is trimmed from macro arguments (Python-compatible).
@@ -257,15 +366,23 @@ PP_ADD(2, 3)
 PP_ADD(PP_ADD(1, 2), PP_ADD(2, 3))
 )";
     const std::string result = pp(input);
-    // collect non-blank, whitespace-trimmed lines
+    // collect non-blank, whitespace-trimmed lines, skipping any injected
+    // line-marker line (the ~40 consecutive {#define ...} lines above collapse
+    // to nothing but blank output lines, which blank-line compaction replaces
+    // with a single (*{#:N}*)/{#:N} marker line once the run exceeds the
+    // default 7-line threshold)
     std::vector<std::string> lines;
     std::istringstream ss(result);
     std::string line;
     while (std::getline(ss, line)) {
         auto first = line.find_first_not_of(" \t\r");
         auto last  = line.find_last_not_of(" \t\r");
-        if (first != std::string::npos)
-            lines.push_back(line.substr(first, last - first + 1));
+        if (first == std::string::npos)
+            continue;
+        std::string trimmed = line.substr(first, last - first + 1);
+        if (trimmed.starts_with("(*{#:") || trimmed.starts_with("{#:"))
+            continue;
+        lines.push_back(trimmed);
     }
     ASSERT_EQ(2u, lines.size());
     EXPECT_EQ("5", lines[0]);  // PP_ADD(2, 3) = 5
@@ -338,17 +455,179 @@ TEST_F(FuncMacroTest, BracketSyntaxComplex2) {
 
 // ---- function macro: define syntax errors ----
 
-// NOTE: '{#define: ...}' (colon after define) is silently consumed without error.
+// NOTE: '{#define: ...}' is the colon form of {#define}; an unterminated
+// parameter list is PP30.
 // '{#define F(() ...}' (invalid param list) triggers INVALID_DEFINE_SYNTAX.
 TEST_F(FuncMacroTest, SyntaxErrorInDefine) {
-    // Fact: define with colon produces no output and no diagnostic
-    EXPECT_EQ("", pp("{#define: F( a}"));
+    // Fact: the colon form still requires a well-formed parameter list --
+    // an unterminated list ('(a' with no ')') is PP30, like any other define.
+    EXPECT_THROW(pp("{#define: F( a}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+    EXPECT_EQ(";[1];", pp("{#define: F(a) [a]};F(1);"));
     EXPECT_TRUE(empty());
 
     // Fact: define with invalid param list (open paren inside params) triggers an error
     EXPECT_THROW(pp("{#define  F(() a}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
     EXPECT_TRUE(empty());
+}
+
+// R3: a parameter is expected but the next token is neither ',' nor ')'.
+TEST_F(FuncMacroTest, ParamListExpectedCommaOrParen) {
+    Issue::ContinueMode guard({});
+    const char* reason = "expected ',' or ')'";
+    expect_param_list_error("F(a b) ok", reason);
+    expect_param_list_error("F(x body text", reason);
+    expect_param_list_error("F(a+b) ok", reason);
+    expect_param_list_error("F(int#1) ok", reason);
+    expect_param_list_error("F(T#1s) ok", reason);
+    expect_param_list_error("F(a (*! d *)) ok", reason);
+    expect_param_list_error("F(a$$b) ok", reason);
+    expect_param_list_error("F(a@@b) ok", reason);
+}
+
+// R3: a parameter name or '...' is expected but the next token is not a
+// valid identifier (iec3_is_identifier).
+TEST_F(FuncMacroTest, ParamListExpectedParameterName) {
+    Issue::ContinueMode guard({});
+    const char* reason = "expected parameter name or '...'";
+    expect_param_list_error("F(a,,b) ok", reason);
+    expect_param_list_error("F(,a) ok", reason);
+    expect_param_list_error("F(a,) ok", reason);
+    expect_param_list_error("F(,) ok", reason);
+    expect_param_list_error("F(1) ok", reason);
+    expect_param_list_error("F(. x) ok", reason);
+    expect_param_list_error("F(..) ok", reason);
+    expect_param_list_error("F(. . .) ok", reason);
+    expect_param_list_error("F('s') ok", reason);
+    expect_param_list_error("F(%IX0.1) ok", reason);
+    expect_param_list_error("F(${x$}) ok", reason);
+    expect_param_list_error("F(${#undef X$}) ok", reason);
+    expect_param_list_error("F(@a) ok", reason);
+    expect_param_list_error("F((a)) ok", reason);
+    expect_param_list_error("F([a]) ok", reason);
+    expect_param_list_error("F(\xE5\xA4\x89\xE6\x95\xB0) ok", reason);
+}
+
+// R3: the parameter list runs out of tokens before a closing ')'.
+TEST_F(FuncMacroTest, ParamListMissingCloseParen) {
+    Issue::ContinueMode guard({});
+    const char* reason = "missing ')'";
+    expect_param_list_error("F(x", reason);
+    expect_param_list_error("F(a,", reason);
+    expect_param_list_error("F(a, body", reason);
+    expect_param_list_error("F(", reason);
+    expect_param_list_error("F(...", reason);
+    expect_param_list_error("F(a, ...", reason);
+    // A raw newline inside the '// c' comment now ends the comment at that
+    // newline, like a C '//' comment ending at the end of a line, so the
+    // rest of the parameter list ('b) [a|b]') is not swallowed and the
+    // {#define} succeeds instead of running out of tokens before ')'
+    // (test_directive.cpp LineCommentInMultiLineDirective and friends).
+    {
+        SCOPED_TRACE("F(a, // c\\n b) [a|b]");
+        EXPECT_EQ("\n[1|2]", pp("{#define F(a, // c\n b) [a|b]}F(1,2)"));
+        EXPECT_TRUE(empty());
+    }
+}
+
+// R3: only the first malformed-list error is reported, like the existing
+// duplicate-parameter and variadic-placement checks (O1-O4 in the design).
+TEST_F(FuncMacroTest, ParamListFirstErrorWins) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("F(1, a, a)");
+        EXPECT_EQ(";F(1,2,3);", pp("{#define F(1, a, a) ok};F(1,2,3);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(a, a, 1)");
+        EXPECT_EQ(";F(1,2,3);", pp("{#define F(a, a, 1) ok};F(1,2,3);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(... 1)");
+        EXPECT_EQ(";F(1);", pp("{#define F(... 1) ok};F(1);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(a, ... x)");
+        EXPECT_EQ(";F(1,2);", pp("{#define F(a, ... x) ok};F(1,2);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(__VA_ARGS__, ...");
+        EXPECT_EQ(";F(1);", pp("{#define F(__VA_ARGS__, ...};F(1);"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    }
+}
+
+// R3: a rejected {#define} leaves an existing definition of the same name
+// untouched (like the R2 duplicate-parameter behavior).
+TEST_F(FuncMacroTest, ParamListErrorKeepsExistingDefinition) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";;[1];", pp("{#define F(x) [x]};{#define F(a b) <a>};F(1);"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, cs[0]);
+    EXPECT_EQ(1, Issue::error_count_);
+}
+
+// R3: {#ignore PP30} silences the diagnostic but F is still not defined.
+TEST_F(FuncMacroTest, ParamListErrorIgnoredStillNotDefined) {
+    EXPECT_EQ("U", pp("{#ignore PP30}{#define F(a b) ok}{#ifdef F}D{#else}U{#endif}"));
+    EXPECT_TRUE(empty());
+}
+
+// R3: in library (non-continue) mode, a malformed parameter list throws.
+TEST_F(FuncMacroTest, ParamListErrorThrowsInLibraryMode) {
+    EXPECT_THROW(pp("{#define F(a b) ok}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+}
+
+// R3: forms that were valid before the change must keep working exactly as
+// before, including jiepp extensions beyond plain C (whitespace/newlines and
+// comments inside the list; the '$n'/'$t' escapes for newline/tab).
+TEST_F(FuncMacroTest, ParamListValidFormsAccepted) {
+    EXPECT_EQ(";2;", pp("{#define F() 2};F();"));
+    EXPECT_EQ(";2;", pp("{#define F( ) 2};F();"));
+    EXPECT_EQ(";[1,2];", pp("{#define F(...) [__VA_ARGS__]};F(1,2);"));
+    EXPECT_EQ(";[1|2,3];", pp("{#define F(a, ...) [a|__VA_ARGS__]};F(1,2,3);"));
+    // a takes "1", the trailing variadic takes just "2" -> __VA_ARGC__ is 1.
+    EXPECT_EQ(";[1];", pp("{#define F(a,  ...  ) [__VA_ARGC__]};F(1,2);"));
+    EXPECT_EQ(";[1|2];", pp("{#define F( a (* c *) , b /* d */ ) [a|b]};F(1,2);"));
+    EXPECT_EQ("[1|2]", pp("{#define F( a $n, $t b ) [a|b]}F(1,2)"));
+    EXPECT_EQ(";[1|2|3];", pp("{#define F(if, var, and) [if|var|and]};F(1,2,3);"));
+    EXPECT_EQ(";[1];", pp("{#define F(defined) [defined]};F(1);"));
+    EXPECT_EQ(";[1|2];", pp("{#define F(_x1, X_2) [_x1|X_2]};F(1,2);"));
+    EXPECT_EQ(";[1];", pp("{#define: F(a) [a]};F(1);"));
+    EXPECT_EQ(";[3];", pp("{#define F(__VA_ARGS__) [__VA_ARGS__]};F(3);"));
+    // Real-newline parameter list (as test_directive.cpp:360): output keeps
+    // the leading newline from inside the list.
+    EXPECT_EQ("\n[1|2]", pp("{#define F( a,\n b ) [a|b]}F(1,2)"));
+    EXPECT_TRUE(empty());
+}
+
+// R3, D7: raw_arg is decoded before the diagnostic is built (a '$n' escape
+// in the source becomes a real newline), so the diagnostic text must be
+// re-escaped to stay on one line, like INVALID_PP_SYNTAX in
+// lexer_pragma.cpp.
+TEST_F(FuncMacroTest, DefineDiagnosticStaysOnOneLine) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("", pp("{#define F('s'$n) x}"));
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find("$n"));
 }
 
 // ---- function macro: redefinition ----
@@ -456,4 +735,282 @@ TEST_F(FuncMacroTest, Replace) {
     EXPECT_TRUE(empty());
 }
 
+// ---- function macro: GNU named variadic (args...) ----
 
+// The last parameter name followed directly by '...' (no comma) is a
+// GNU named variadic parameter, like gcc/clang: it receives the variable
+// arguments in place of __VA_ARGS__.
+TEST_F(FuncMacroTest, GnuNamedVariadicSubstitution) {
+    EXPECT_EQ(";[];[1];[1,2, 3];",
+              pp("{#define F(args...) [args]};F();F(1);F(1,2, 3);"));
+    EXPECT_EQ(";[|];[1|];[1|];[1|2,3];",
+              pp("{#define G(a, args...) [a|args]};G();G(1);G(1,);G(1,2,3);"));
+    // Whitespace may separate the name from '...'; call-side whitespace
+    // around a variadic separator is reproduced like clang (C6).
+    EXPECT_EQ(";<x , y>;",
+              pp("{#define H( args ... ) <args>};H(x , y);"));
+    EXPECT_EQ(";[1|2];",
+              pp("{#define I(a,args...) [a|args]};I(1,2);"));
+    EXPECT_TRUE(empty());
+}
+
+// Regression watchpoint: a comma inside a '[...]' array subscript is
+// protected from being read as an argument separator (Jiepp extension,
+// §17) exactly as for a plain '...' variadic -- each IEC multi-dimensional
+// array argument reaches the named variadic's own name intact.
+TEST_F(FuncMacroTest, GnuNamedVariadicPreservesArraySubscriptCommas) {
+    EXPECT_EQ(";[a[x,y], b[1,2]];",
+              pp("{#define F(args...) [args]};F(a[x,y], b[1,2]);"));
+    EXPECT_TRUE(empty());
+}
+
+// Stringizing (@args) and pasting (a @@ args) work with the named
+// variadic's own name exactly as they do with __VA_ARGS__.
+TEST_F(FuncMacroTest, GnuNamedVariadicStringizeAndPaste) {
+    EXPECT_EQ(";'';'a,b';",
+              pp("{#define S(args...) @args};S();S(a,b);"));
+    EXPECT_EQ(";'';'x y';",
+              pp("{#define S2(a, args...) @ args};S2(1);S2(1,x y);"));
+    EXPECT_EQ(";a;ab;ab,c;",
+              pp("{#define P(a, args...) a @@ args};P(a);P(a,b);P(a,b,c);"));
+    EXPECT_EQ(";_t;u_t;u,v_t;",
+              pp("{#define P2(args...) args @@ _t};P2();P2(u);P2(u,v);"));
+    EXPECT_TRUE(empty());
+}
+
+// Unlike '...', a named variadic does not make __VA_ARGS__ an implicit
+// name -- it is an ordinary identifier in the body (gcc/clang; gcc warns,
+// clang is silent, jiepp follows clang).
+TEST_F(FuncMacroTest, GnuNamedVariadicVaArgsIsOrdinaryIdentifier) {
+    EXPECT_EQ(";<__VA_ARGS__>;<__VA_ARGS__>;",
+              pp("{#define V(args...) <__VA_ARGS__>};V();V(1,2);"));
+    EXPECT_EQ(";<1|2>;",
+              pp("{#define V2(__VA_ARGS__, args...) <__VA_ARGS__|args>};V2(1,2);"));
+    EXPECT_EQ(";<1,2>;",
+              pp("{#define V3(__VA_ARGS__...) <__VA_ARGS__>};V3(1,2);"));
+    EXPECT_TRUE(empty());
+}
+
+// Since __VA_ARGS__ is an ordinary identifier for a named variadic,
+// stringizing it (which requires a formal parameter operand) is PP31, like
+// stringizing any other non-parameter identifier.
+TEST_F(FuncMacroTest, GnuNamedVariadicStringizeVaArgsIsError) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";@__VA_ARGS__;", pp("{#define V4(args...) @__VA_ARGS__};V4(1);"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_STRINGIZING, cs[0]);
+}
+
+// __VA_OPT__ recognizes a named variadic's variable arguments the same way
+// it recognizes __VA_ARGS__'s (gcc/clang warn about this; jiepp does not,
+// to keep the diagnostics for both variadic forms consistent).
+TEST_F(FuncMacroTest, GnuNamedVariadicVaOpt) {
+    EXPECT_EQ(";< >;<x 1>;",
+              pp("{#define O(args...) <__VA_OPT__(x) args>};O();O(1);"));
+    EXPECT_EQ(";<>;<>;<12>;",
+              pp("{#define O2(a, args...) <__VA_OPT__(a @@ args)>};O2();O2(1);O2(1,2);"));
+    EXPECT_EQ(";<''|x>;<'1,2'|x1,2>;",
+              pp("{#define O3(args...) <@__VA_OPT__(args)|x @@ __VA_OPT__(args)>};O3();O3(1,2);"));
+    EXPECT_TRUE(empty());
+}
+
+// __VA_ARGC__ (jiepp extension) still counts the variable arguments for a
+// named variadic.
+TEST_F(FuncMacroTest, GnuNamedVariadicVaArgc) {
+    EXPECT_EQ(";0;1;2;",
+              pp("{#define Q(args...) __VA_ARGC__};Q();Q(1);Q(1,2);"));
+    EXPECT_EQ(";<0>;<1>;<2>;",
+              pp("{#define Q2(a, args...) <__VA_ARGC__>};Q2(1);Q2(1,);Q2(1,2,3);"));
+    EXPECT_EQ(";X2|'2';",
+              pp("{#define Q3(args...) X @@ __VA_ARGC__|@__VA_ARGC__};Q3(a,b);"));
+    EXPECT_TRUE(empty());
+}
+
+// __VA_ARGC__ stays an implicit, reserved name for a named variadic too --
+// using it as a parameter name is PP36, exactly as for a plain '...'.
+TEST_F(FuncMacroTest, GnuNamedVariadicVaArgcIsReserved) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("F(__VA_ARGC__...)");
+        EXPECT_EQ("U", pp("{#define F(__VA_ARGC__...) x}{#ifdef F}D{#else}U{#endif}"));
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, PlainTextMessage::parse_code(msgs[0]));
+        EXPECT_NE(std::string::npos, msgs[0].find("__VA_ARGC__"));
+    }
+    {
+        SCOPED_TRACE("F(__VA_ARGC__, args...)");
+        EXPECT_EQ("U", pp("{#define F(__VA_ARGC__, args...) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    }
+}
+
+// A named variadic must still be the last parameter, with nothing but ')'
+// after its own '...' -- same placement rule as plain '...' (PP33), and the
+// same duplicate-name (PP36) / malformed-list (PP30) checks apply.
+TEST_F(FuncMacroTest, GnuNamedVariadicMustBeLast) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("F(args..., b) x");
+        EXPECT_EQ("U", pp("{#define F(args..., b) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(args... x) x");
+        EXPECT_EQ("U", pp("{#define F(args... x) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    {
+        SCOPED_TRACE("F(args......) x");
+        EXPECT_EQ("U", pp("{#define F(args......) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::INVALID_VARIADIC_PLACEMENT, cs[0]);
+    }
+    expect_param_list_error("F(args...", "missing ')'");
+    {
+        SCOPED_TRACE("F(a, a...) x");
+        EXPECT_EQ("U", pp("{#define F(a, a...) x}{#ifdef F}D{#else}U{#endif}"));
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size());
+        EXPECT_EQ(Issue::Code::DUPLICATE_MACRO_PARAMETER, cs[0]);
+    }
+    expect_param_list_error("F(args. ..) x", "expected ',' or ')'");
+}
+
+// jiepp does not delete the comma before an omitted named variadic's
+// arguments (the GNU `, ## args` idiom) -- same deviation as for '...',
+// documented in SPECIFICATION.md.
+TEST_F(FuncMacroTest, GnuNamedVariadicCommaPasteKeepsComma) {
+    EXPECT_EQ(";g(x,);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x);"));
+    EXPECT_TRUE(empty());
+}
+
+// A named variadic and a C99 '...' are different definitions (clang warns
+// on this too), but two named-variadic (or two '...') definitions that only
+// differ in inconsequential whitespace are the same definition.
+TEST_F(FuncMacroTest, GnuNamedVariadicRedefinition) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("", pp("{#define F(args...) args}{#define F(args ...) args}"));
+    EXPECT_TRUE(codes().empty());
+
+    pp("{#define G(args...) x}{#define G(...) x}");
+    auto cs1 = codes();
+    ASSERT_EQ(1u, cs1.size());
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, cs1[0]);
+
+    pp("{#define W(__VA_ARGS__...) x}{#define W(...) x}");
+    auto cs2 = codes();
+    ASSERT_EQ(1u, cs2.size());
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, cs2[0]);
+
+    pp("{#define K(a, ...) a}{#define K(a, b...) a}");
+    auto cs3 = codes();
+    ASSERT_EQ(1u, cs3.size());
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, cs3[0]);
+}
+
+// ---- function macro: multi-use-parameter slot precomputation (task_slug arg-expand-once, D2) ----
+//
+// FunctionMacro precomputes, once per definition, a dense "slot" index for
+// every formal parameter spelled >= 2 times in the body (over-counting is
+// accepted: @/@@ operands and __VA_OPT__ content are counted even though
+// some never trigger a real expansion). A parameter spelled 0 or 1 times
+// gets no slot (arg_slots()[pidx] == -1). __VA_ARGC__ never counts toward
+// the variadic parameter's use count.
+
+TEST_F(FuncMacroTest, ArgSlotsSingleUseParameterHasNoSlot) {
+    FunctionMacro f({"a"}, ts("a"));
+    ASSERT_EQ(1u, f.arg_slots().size());
+    EXPECT_EQ(-1, f.arg_slots()[0]);
+    EXPECT_EQ(0, f.num_arg_slots());
+    EXPECT_TRUE(f.arg_slot_uses().empty());
+}
+
+TEST_F(FuncMacroTest, ArgSlotsDoubleUseParameterGetsSlot) {
+    FunctionMacro f({"a"}, ts("a a"));
+    ASSERT_EQ(1u, f.arg_slots().size());
+    EXPECT_NE(-1, f.arg_slots()[0]);
+    EXPECT_EQ(1, f.num_arg_slots());
+    ASSERT_EQ(1u, f.arg_slot_uses().size());
+    EXPECT_EQ(2, f.arg_slot_uses()[static_cast<std::size_t>(f.arg_slots()[0])]);
+}
+
+TEST_F(FuncMacroTest, ArgSlotsStringizeOperandCountsTowardOverCount) {
+    // @a a: @a is a stringize operand (never truly expanded) but D2 counts
+    // it anyway, over-counting (accepted: never under-counts a real need).
+    FunctionMacro f({"a"}, ts("@a a"));
+    ASSERT_EQ(1u, f.arg_slots().size());
+    EXPECT_NE(-1, f.arg_slots()[0]);
+    EXPECT_EQ(1, f.num_arg_slots());
+    EXPECT_EQ(2, f.arg_slot_uses()[static_cast<std::size_t>(f.arg_slots()[0])]);
+}
+
+TEST_F(FuncMacroTest, ArgSlotsVaArgcExcludedFromVariadicUseCount) {
+    // __VA_ARGS__ appears twice (counted), __VA_ARGC__ appears once
+    // (excluded): the variadic slot's use count must be 2, not 3.
+    FunctionMacro f({"..."}, ts("__VA_ARGS__ __VA_ARGC__ __VA_ARGS__"));
+    const auto& args = f.args();
+    int va_idx = args.at(FunctionMacro::VA_SYM).first;
+    ASSERT_GT(static_cast<int>(f.arg_slots().size()), va_idx);
+    EXPECT_NE(-1, f.arg_slots()[static_cast<std::size_t>(va_idx)]);
+    EXPECT_EQ(2, f.arg_slot_uses()[static_cast<std::size_t>(f.arg_slots()[static_cast<std::size_t>(va_idx)])]);
+}
+
+TEST_F(FuncMacroTest, ArgSlotsDoNotAffectEqual) {
+    // Slot precomputation is derived data, not part of macro identity.
+    FunctionMacro a({"x"}, ts("x x"));
+    FunctionMacro b({"x"}, ts("x x"));
+    EXPECT_TRUE(a.equal(b));
+    FunctionMacro c({"x"}, ts("x"));
+    EXPECT_FALSE(a.equal(c)); // different body, not because of slots
+}
+
+
+
+// A `//` comment inside a macro argument keeps the newline that ends it, like
+// clang -CC (gcc rewrites it to a block comment). Flattening that newline to a
+// space would comment out the rest of the line in the expansion.
+TEST_F(FuncMacroTest, LineCommentInArgumentKeepsNewline) {
+    // A call spanning two source lines prints both lines, so the output keeps
+    // the newline of the last source line (no trailing token after the call).
+    EXPECT_EQ("\n[a // c\nb]\n", pp("{#define W(x) [x]}\nW(a // c\nb)"));
+    // The text after "//" is not interpreted: "*/" does not open "/*".
+    EXPECT_EQ("\n[a // x */ y\nb]\n", pp("{#define W(x) [x]}\nW(a // x */ y\nb)"));
+    // Argument pasted with @@ and variadic arguments.
+    EXPECT_EQ("\nx // c\nyz\n", pp("{#define P(a,b) a@@b}\nP(x // c\ny, z)"));
+    EXPECT_EQ("\n<a // c\nb, d>\n", pp("{#define V(...) <__VA_ARGS__>}\nV(a // c\nb, d)"));
+    // Passed on through a second macro.
+    EXPECT_EQ("\n\n[a // c\nb]\n\n", pp("{#define W(x) [x]}\n{#define N(x) W(x)}\nN(a // c\nb)"));
+    // Unchanged: stringize flattens the newline, a trailing comment is trimmed,
+    // and a block comment stays on its line.
+    EXPECT_EQ("\n'a b'\n", pp("{#define S(x) @x}\nS(a // c\nb)"));
+    EXPECT_EQ("\n[a]\n", pp("{#define W(x) [x]}\nW(a // c\n)"));
+    EXPECT_EQ("\n[a /* c */ b]", pp("{#define W(x) [x]}\nW(a /* c */ b)"));
+    EXPECT_TRUE(empty());
+}
+
+// A dropped edge `//` comment of a nested call's argument must not leave a
+// line break of its own: the enclosing call has already re-emitted the
+// comment's newline, so the output equals the one for the same text without
+// the comment.
+TEST_F(FuncMacroTest, NestedArgumentEdgeLineCommentDropsItsNewline) {
+    const std::string def = "{#define ID(x) x}\n";
+    EXPECT_EQ(pp(def + "ID(ID(a\n) b)|\n__LINE__"),
+              pp(def + "ID(ID(a // c\n) b)|\n__LINE__"));
+    EXPECT_EQ(pp(def + "ID(ID(a\n) b)|"), pp(def + "ID(ID(a // c\n) b)|"));
+    // Leading edge.
+    EXPECT_EQ(pp(def + "ID(ID(\na) b)|"), pp(def + "ID(ID(// c\na) b)|"));
+    // Unchanged: an interior comment keeps its newline, and an edge comment of
+    // a call straight from the source still compensates its source line.
+    EXPECT_EQ("\n[a // c\nb]\n", pp("{#define W(x) [x]}\nW(a // c\nb)"));
+    EXPECT_EQ(pp(def + "ID(a\n) b|"), pp(def + "ID(a // c\n) b|"));
+    EXPECT_TRUE(empty());
+}

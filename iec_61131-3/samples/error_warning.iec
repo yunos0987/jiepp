@@ -1,4 +1,4 @@
-(* error_warning.iec - #error and #warning *)
+(* error_warning.iec - #error, #warning and #info *)
 
 {#define PLATFORM_DEFINED 1}
 
@@ -12,6 +12,8 @@
 {#endif}
 
 {#warning 'This is a compile-time warning'}
+
+{#info 'This is an informational message'}
 
 program Main
 {st}

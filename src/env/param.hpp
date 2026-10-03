@@ -1,5 +1,6 @@
 #pragma once
 #include "param_constants.hpp"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,10 +29,37 @@ public:
     bool set_max_expansion_depth(int depth);
     bool fix_max_expansion_depth(int depth);
 
+    // ---- Expansion work budget (steps; 0 = no limit) ----
+    // The count is per preprocess()/preprocess_text() call (reset on entry);
+    // jiepp_command() uses a fresh Env, so -include files and the main input
+    // share one budget. There is deliberately no in-source directive: input
+    // must not be able to raise its own limit.
+    void          set_max_expansion_steps(std::uint64_t n) {
+        max_expansion_steps_ = n;
+        step_limit_          = (n == 0) ? UINT64_MAX : n;
+    }
+    std::uint64_t get_max_expansion_steps() const { return max_expansion_steps_; }
+    std::uint64_t expansion_steps() const { return expansion_steps_; }
+    void          reset_expansion_steps() { expansion_steps_ = 0; }
+    // Hot path: one add and one compare against the precomputed limit (0 is
+    // mapped to UINT64_MAX, so "no limit" needs no extra branch). The count
+    // stays above the limit after a hit, so a swallowed exception cannot let
+    // expansion carry on for free.
+    void charge_expansion_steps(std::uint64_t n) {
+        expansion_steps_ += n;
+        if (expansion_steps_ > step_limit_) [[unlikely]]
+            raise_expansion_steps_exceeded();
+    }
+
     // ---- Conditional nesting limit ----
     int  get_max_if_nesting() const { return max_if_nesting_; }
     bool set_max_if_nesting(int n);
     bool fix_max_if_nesting(int n); // set and lock
+
+    // ---- Max consecutive blank lines before compaction (0 = disabled) ----
+    int  get_max_blank_lines() const;
+    bool set_max_blank_lines(int n);
+    bool fix_max_blank_lines(int n); // set and lock
 
     // ---- Pragma style ----
     std::string get_pragma_style() const { return pragma_style_; }
@@ -49,11 +77,20 @@ public:
     void set_dd_mode(bool b) { dd_mode_ = b; }
 
     // ---- Token cache (filepath -> tokens) ----
-    const std::vector<Token>* get_cache(const std::string& key) const;
+    // Returns a shared, immutable view of the cached RAW tokens (comment
+    // removal is applied by the caller, not baked into the cache) so a cache
+    // hit avoids a deep copy of the file's token vector.
+    std::shared_ptr<const std::vector<Token>> get_cache(const std::string& key) const;
     void set_cache(std::string key, std::vector<Token> tokens);
 
 private:
-    int         max_include_depth_       = DEFAULT_MAX_INCLUDE_DEPTH;
+    [[noreturn]] void raise_expansion_steps_exceeded() const;
+
+    std::uint64_t expansion_steps_       = 0;
+    std::uint64_t max_expansion_steps_   = DEFAULT_MAX_EXPANSION_STEPS;
+    std::uint64_t step_limit_            = DEFAULT_MAX_EXPANSION_STEPS;
+
+    int         max_include_depth_      = DEFAULT_MAX_INCLUDE_DEPTH;
     bool        max_include_depth_fixed_ = false;
 
     int         expansion_depth_         = 0;
@@ -62,6 +99,9 @@ private:
 
     int         max_if_nesting_          = DEFAULT_MAX_IF_NESTING;
     bool        max_if_nesting_fixed_    = false;
+
+    int         max_blank_lines_         = DEFAULT_MAX_BLANK_LINES;
+    bool        max_blank_lines_fixed_   = false;
 
     std::string pragma_style_            = VAL_PRAGMA_ANNOTATED;
     bool        pragma_style_fixed_      = false;

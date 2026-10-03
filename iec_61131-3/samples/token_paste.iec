@@ -3,11 +3,18 @@
 {#define VAR_NAME(prefix, n) prefix@@_@@n}
 {#define TYPED(type, suffix) type@@suffix}
 
+(* Unique instance names: the extra level expands __COUNTER__ before pasting *)
+{#define CAT_(a, b) a@@b}
+{#define CAT(a, b) CAT_(a, b)}
+{#define UNIQUE(p) CAT(p, __COUNTER__)}
+
 program Main
 var
     VAR_NAME(sensor, 1): int;
     VAR_NAME(sensor, 2): int;
     v: TYPED(d, int);
+    UNIQUE(ton_): TON;
+    UNIQUE(ton_): TON;
 end_var
 {st}
 VAR_NAME(sensor, 1) := 100;

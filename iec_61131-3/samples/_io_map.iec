@@ -1,0 +1,10 @@
+(* _io_map.iec - I/O map fragment guarded by {#pragma once} *)
+{#pragma once}
+
+type IoMapInfo :
+struct
+    file: string := __FILE_NAME__;
+    level: int := __INCLUDE_LEVEL__;
+    input_count: int := 16;
+end_struct;
+end_type

@@ -6,10 +6,10 @@ TEST_F(StringDirectiveTest, Basic) {
     // Fact: {#string} / {##} stringize their argument and emit a quoted string
     EXPECT_EQ("'xyz'",       pp("{#string xyz}"));
     EXPECT_EQ("'$27xyz$27'", pp("{#string 'xyz'}"));
-    EXPECT_EQ("' x$$y z '",  pp("{#string $ x$$y z }"));
+    EXPECT_EQ("'x$$y z'",    pp("{#string $ x$$y z }"));
     EXPECT_EQ("'xyz'",       pp("{#string: xyz}"));
     EXPECT_EQ("'$27xyz$27'", pp("{#string: 'xyz'}"));
-    EXPECT_EQ("' x$$y z '",  pp("{#string:$ x$$y z }"));
+    EXPECT_EQ("'x$$y z'",    pp("{#string:$ x$$y z }"));
     EXPECT_EQ("'xyz'",       pp("{## xyz}"));
     EXPECT_EQ("'$27xyz$27'", pp("{## 'xyz'}"));
     EXPECT_TRUE(empty());

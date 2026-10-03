@@ -130,13 +130,29 @@ std::vector<Token> tokenize(const std::string& text, int lineno) {
             int tok_type = (c == '\'') ? Token::STRING : Token::WSTRING;
             char quote = c;
             std::size_t start = p++;
+            int dollar_nl = 0;
             while (p < n && text[p] != quote && !is_nl_char(text[p])) {
+                if (text[p] == '$' && p + 1 < n && is_nl_char(text[p + 1])) {
+                    // $-escaped newline (line continuation): consume the full
+                    // newline sequence (\r\n, \r or \n) and count it so the
+                    // running line counter and the token's num_of_lines stay
+                    // in sync with the physical lines this literal spans.
+                    ++p; // skip '$'
+                    dollar_nl += consume_one_nl(text, p);
+                    continue;
+                }
                 if (text[p] == '$') ++p;
                 if (p < n) ++p;
             }
-            if (p < n && text[p] == quote)
+            bool closed = false;
+            if (p < n && text[p] == quote) {
                 ++p;
-            push_string_token(r, tok_type, text.substr(start, p - start));
+                closed = true;
+            }
+            lineno += dollar_nl;
+            // No closing quote (ended by a newline or the end of the input):
+            // never merged with the next literal; core/ reports PP29.
+            push_string_token(r, tok_type, text.substr(start, p - start), dollar_nl, !closed);
             continue;
         }
 
@@ -227,4 +243,77 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
         }
     }
     return tokens;
+}
+
+std::string iec3_blank_out_comments(std::string_view s, bool header_name) {
+    std::string r;
+    r.reserve(s.size());
+    const std::size_t n = s.size();
+    std::size_t p = 0;
+    bool seen_token = false;
+    while (p < n) {
+        const char c = s[p];
+        const char d = (p + 1 < n) ? s[p + 1] : '\0';
+        if (c == '\'' || c == '"') {
+            std::size_t q = p + 1;
+            while (q < n && s[q] != c && !is_nl_char(s[q])) {
+                if (s[q] == '$' && q + 1 < n && is_nl_char(s[q + 1])) {
+                    ++q;
+                    q += (s[q] == '\r' && q + 1 < n && s[q + 1] == '\n') ? 2 : 1;
+                    continue;
+                }
+                if (s[q] == '$') ++q;
+                if (q < n) ++q;
+            }
+            if (q < n && s[q] == c) ++q;
+            r.append(s.substr(p, q - p));
+            p = q;
+            seen_token = true;
+            continue;
+        }
+        if (header_name && !seen_token && c == '<') {
+            std::size_t q = s.find('>', p + 1);
+            q = (q == std::string_view::npos) ? n : q + 1;
+            r.append(s.substr(p, q - p));
+            p = q;
+            seen_token = true;
+            continue;
+        }
+        const bool block = (c == '(' || c == '/') && d == '*';
+        const bool line = (c == '/' && d == '/');
+        if (block || line) {
+            std::size_t look = p + 2;
+            while (look < n && is_ws_char(s[look])) ++look;
+            const bool pragma = look < n && s[look] == '{';
+            const bool doc = p + 2 < n && s[p + 2] == '!';
+            std::size_t end = p + 2;
+            if (line) {
+                while (end < n && !is_nl_char(s[end])) ++end;
+            } else {
+                const char closer = (c == '(') ? ')' : '/';
+                while (end + 1 < n && !(s[end] == '*' && s[end + 1] == closer)) ++end;
+                end = (end + 1 < n) ? end + 2 : n;
+            }
+            seen_token = seen_token || pragma || doc;
+            if (pragma) { r.append(s.substr(p, 2)); p += 2; continue; }
+            if (doc) { r.append(s.substr(p, end - p)); p = end; continue; }
+            r += ' ';
+            p = end;
+            continue;
+        }
+        r += c;
+        if (!is_ws_char(c) && !is_nl_char(c)) seen_token = true;
+        ++p;
+    }
+    return r;
+}
+
+bool iec3_is_identifier(std::string_view s) {
+    if (s.empty() || !is_ident_start(s.front()))
+        return false;
+    for (char c : s.substr(1)) {
+        if (!is_ident_cont(c))
+            return false;
+    }
+    return true;
 }

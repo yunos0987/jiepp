@@ -8,6 +8,25 @@ namespace fs = std::filesystem;
 
 static const fs::path I_DIR = "tests/jiepp/input";
 static const fs::path O_DIR = "tests/jiepp/output";
+// C8: actual (not golden) e2e output goes under the build tree, not into the
+// source tree's input directory -- keeps the source tree clean after a test
+// run and lets a Debug and a Release ctest run without racing on the same
+// files (each build directory has its own e2e-actual/). Created on first use
+// below, since CMake does not pre-create it.
+static const fs::path ACTUAL_ROOT_DIR = JIEPP_E2E_ACTUAL_DIR;
+
+// Several tests run the same testid (for example "include"), and `ctest -j`
+// runs each test in its own process, so a path derived from the testid alone
+// would be written by several processes at once. Put every test's actual
+// output in a subdirectory named after the current gtest test
+// (e2e-actual/<TestName>/<testid>.piec) so the paths never collide while the
+// files stay inspectable after a run.
+static fs::path actual_dir() {
+    const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
+    if (info == nullptr)
+        return ACTUAL_ROOT_DIR;
+    return ACTUAL_ROOT_DIR / info->name();
+}
 
 // Strip debug source location suffix from error messages (format: @file.cpp:line)
 static std::string strip_debug_suffix(const std::string& text) {
@@ -34,9 +53,15 @@ static void run_e2e(const std::string& testid,
     if (!fs::exists(input_filepath))
         FAIL() << "Input file does not exist for testid: " << testid << "; " << input_filepath.generic_string();
 
-    std::string actual_out_filepath = (I_DIR / (testid + ".piec")).generic_string();
-    std::string actual_log_filepath = (I_DIR / (testid + ".log")).generic_string();
-    std::string actual_dep_filepath = (I_DIR / (testid + ".d")).generic_string();
+    // C8: testid may itself contain subdirectory components (e.g. "dM/dM"),
+    // which tests/jiepp/input already has checked in; e2e-actual/ does not,
+    // so create them here.
+    const fs::path actual_base = actual_dir();
+    fs::path actual_testid_path = actual_base / testid;
+    fs::create_directories(actual_testid_path.parent_path());
+    std::string actual_out_filepath = (actual_base / (testid + ".piec")).generic_string();
+    std::string actual_log_filepath = (actual_base / (testid + ".log")).generic_string();
+    std::string actual_dep_filepath = (actual_base / (testid + ".d")).generic_string();
 
     std::ofstream actual_log_file(actual_log_filepath, std::ios::binary);
     Issue::initialize(actual_log_file);
@@ -76,6 +101,11 @@ static void run_e2e(const std::string& testid,
     opts.remove_comments = remove_comments;
     opts.dM = dM;
     opts.dep_mode = DepMode::ALL;
+    // B16 fix: -M/-MM alone now suppress the preprocessed output. This
+    // harness always requests a dependency file (below) for golden-output
+    // coverage, so it must also set -MD to keep "preprocessed output + dep
+    // file" semantics and preserve every existing golden byte-for-byte.
+    opts.MD = true;
     if (!dep_target.empty())
         opts.dep_target = dep_target;
     opts.dep_file = actual_dep_filepath;
@@ -127,7 +157,131 @@ TEST_F(JieppCommandTest, MultipleInputFilesRejected) {
     JieppOptions opts;
     opts.input_filepaths = {"file1.iec", "file2.iec"};
     EXPECT_NE(0, jiepp_command(opts));
-    EXPECT_EQ("<unknown location>:1.0: error: PP13: Invalid command; 'multiple input files not supported'", message());
+    EXPECT_EQ("jiepp: error: PP13: Invalid command; 'multiple input files not supported'", message());
+}
+
+// ---- R4/C4: -D/-U are processed like {#define}/{#undef} ---------------
+
+TEST_F(JieppCommandTest, DOptionRejectsNonIdentifierName) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"1=2"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: error: PP30: Invalid define syntax; "
+              "'macro name must be an identifier: 1 2'",
+              message());
+}
+
+TEST_F(JieppCommandTest, UOptionRejectsNonIdentifierName) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.undef_macros = {"1"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: error: PP30: Invalid define syntax; "
+              "'macro name must be an identifier: 1'",
+              message());
+}
+
+TEST_F(JieppCommandTest, UOptionRejectsDefined) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.undef_macros = {"defined"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+}
+
+// U4: --silent must already be in effect for a diagnostic raised while
+// processing -D/-U, not only for the main input's own expansion.
+TEST_F(JieppCommandTest, SilentSuppressesDOptionDiagnostic) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.silent = true;
+    opts.define_macros = {"=1"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(JieppCommandTest, SuppressWarningsSuppressesDOptionRedefineWarning) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.suppress_warnings = true;
+    opts.define_macros = {"A=1", "A=2"};
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(JieppCommandTest, WerrorPromotesDOptionRedefineWarning) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.werror = true;
+    opts.define_macros = {"A=1", "A=2"};
+    EXPECT_NE(0, jiepp_command(opts));
+}
+
+// ---- R4/C5: a lexer diagnostic raised while processing -D/-U uses the
+// same "jiepp: ..." CLI-stage location as other -D/-U errors -----------
+
+TEST_F(JieppCommandTest, DOptionLexerDiagnosticUsesCliLocation) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A=(* x"};
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: error: PP20: Unclosed comment; '(* x'", message());
+}
+
+// ---- R4 follow-up Q1: -U NAME with extra tokens (PP49) ----------------
+
+// W11
+TEST_F(JieppCommandTest, UOptionExtraTokensWarns) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A=1"};
+    opts.undef_macros = {"A B"};
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: warning: PP49: Extra tokens at end of directive; '{#undef A B}'", message());
+}
+
+// W12
+TEST_F(JieppCommandTest, WerrorPromotesUOptionExtraTokensWarning) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A=1"};
+    opts.undef_macros = {"A B"};
+    opts.werror = true;
+    EXPECT_NE(0, jiepp_command(opts));
+}
+
+// W13
+TEST_F(JieppCommandTest, SuppressWarningsSuppressesUOptionExtraTokensWarning) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A=1"};
+    opts.undef_macros = {"A B"};
+    opts.suppress_warnings = true;
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+}
+
+// ---- R4 follow-up Q2: -D NAME.suffix=... with no whitespace/'(' (PP38) ----
+
+// S7
+TEST_F(JieppCommandTest, DOptionMissingWhitespaceWarns) {
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
+    opts.define_macros = {"A.B=1"};
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("jiepp: warning: PP38: Missing whitespace after the macro name; 'A.B 1'", message());
 }
 
 TEST_F(JieppCommandTest, Regular) {
@@ -226,11 +380,77 @@ TEST_F(JieppCommandTest, RemoveCommentsOn) {
 }
 
 TEST_F(JieppCommandTest, BoostPreprocessorIntegration) {
-    if (!fs::exists(jiepp_root_dir() /I_DIR / "boost"))
-        GTEST_SKIP() << "Boost test input directory not found; skipping test";
+    // The Boost.Preprocessor corpus is tracked in the repository, so a
+    // missing directory is a broken checkout, not a reason to skip.
+    if (!fs::exists(jiepp_root_dir() / I_DIR / "boost"))
+        FAIL() << "Boost test input directory not found: "
+               << (jiepp_root_dir() / I_DIR / "boost").generic_string()
+               << " (it is tracked in the repository; check the checkout)";
 #ifdef NDEBUG
     run_e2e("boost", {I_DIR.generic_string()});
 #endif
+}
+
+// ─── B1: samples regeneration guard ────────────────────────────────────────
+
+TEST_F(JieppCommandTest, SamplesRegenerateIdentically) {
+    // Every checked-in iec_61131-3/samples/*.iec (except files starting
+    // with '_', which are includable fragments, not standalone samples)
+    // must regenerate byte-identical to its committed .piec with no -I --
+    // U1 makes {#syspath} relative to the containing file, so samples no
+    // longer need -I to find their own lib/ directory (see
+    // tools/pp_iec61131-3_samples.ps1). Output is written to a scratch
+    // directory outside the repo; nothing under iec_61131-3/samples is ever
+    // touched by this test.
+    fs::current_path(jiepp_root_dir());
+    fs::path samples_dir = jiepp_root_dir() / "iec_61131-3" / "samples";
+    fs::path out_dir = fs::temp_directory_path() / "jiepp_samples_test";
+    std::error_code ec;
+    fs::remove_all(out_dir, ec);
+    fs::create_directories(out_dir);
+
+    int checked = 0;
+    for (const auto& entry : fs::directory_iterator(samples_dir)) {
+        if (!entry.is_regular_file())
+            continue;
+        const fs::path& p = entry.path();
+        if (p.extension() != ".iec")
+            continue;
+        std::string stem = p.stem().generic_string();
+        if (stem.starts_with("_"))
+            continue;
+
+        fs::path out = out_dir / (stem + ".piec");
+        fs::path log = out_dir / (stem + ".log");
+        std::ofstream log_file(log, std::ios::binary);
+        Issue::initialize(log_file);
+
+        // Match how CONTRIBUTING.md / tools/pp_iec61131-3_samples.ps1 invoke
+        // jiepp: the input path is relative to the repo root (CWD), which
+        // also keeps the (*{#:0 '...'}*) line markers in the regenerated
+        // output identical to the committed golden's relative-path form.
+        JieppOptions opts;
+        opts.input_filepaths = {fs::relative(p, jiepp_root_dir()).generic_string()};
+        opts.output_filepath = out.generic_string();
+
+        int rc = jiepp_command(opts);
+        log_file.close();
+        ASSERT_EQ(0, rc) << "sample failed to regenerate without -I: " << p.generic_string();
+
+        fs::path golden = p;
+        golden.replace_extension(".piec");
+        std::ifstream gf(golden, std::ios::binary);
+        ASSERT_TRUE(static_cast<bool>(gf)) << "missing golden: " << golden.generic_string();
+        std::string expect((std::istreambuf_iterator<char>(gf)), std::istreambuf_iterator<char>());
+        std::ifstream af(out, std::ios::binary);
+        std::string actual((std::istreambuf_iterator<char>(af)), std::istreambuf_iterator<char>());
+        EXPECT_EQ(expect, actual) << "sample regenerated differently than its committed .piec: "
+                                   << p.generic_string();
+        ++checked;
+    }
+    EXPECT_GT(checked, 0) << "no iec_61131-3/samples/*.iec files were found to check";
+
+    fs::remove_all(out_dir, ec);
 }
 
 TEST_F(JieppCommandTest, IncludeWithSyspathDirectiveXTag) {
@@ -376,6 +596,45 @@ TEST_F(JieppCommandTest, DMAddDefineMacros) {
             std::nullopt, false, -1, true);
 }
 
+// R8: -dM output order must remain stable across an undef+redefine of the
+// same name: A is undefined and redefined to 3, B is untouched. The -dM
+// listing must show the final value of A (not the stale 1), must not still
+// list A under its old value, and A must still precede B (definition order
+// is preserved; undef+redefine does not move A to the end).
+TEST_F(JieppCommandTest, DMOrderStableAcrossUndefRedefine) {
+    fs::current_path(jiepp_root_dir());
+
+    std::string input_filepath = (I_DIR / "dM/dM_order_undef_redefine.iec").generic_string();
+    // C8: this test writes its own ephemeral output directly (not through
+    // run_e2e()) and only reads it back for the assertions below -- send it
+    // to the build tree too, like run_e2e()'s actual output.
+    fs::create_directories(actual_dir() / "dM");
+    std::string output_filepath = (actual_dir() / "dM/dM_order_undef_redefine.piec").generic_string();
+
+    char* argv[] = {
+        const_cast<char*>("jiepp"),
+        const_cast<char*>("-dM"),
+        const_cast<char*>(input_filepath.c_str()),
+        const_cast<char*>("-o"),
+        const_cast<char*>(output_filepath.c_str()),
+    };
+    JieppOptions opts = parse_args(5, argv);
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output_filepath, std::ios::binary);
+    std::string actual((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+
+    auto pos_a3 = actual.find("{#define A 3}");
+    auto pos_b2 = actual.find("{#define B 2}");
+    EXPECT_NE(pos_a3, std::string::npos) << "expected final value of A (3) in -dM output:\n" << actual;
+    EXPECT_NE(pos_b2, std::string::npos) << "expected B still listed in -dM output:\n" << actual;
+    EXPECT_EQ(actual.find("{#define A 1}"), std::string::npos)
+        << "stale pre-undef value of A must not appear in -dM output:\n" << actual;
+    if (pos_a3 != std::string::npos && pos_b2 != std::string::npos)
+        EXPECT_LT(pos_a3, pos_b2) << "A must still precede B after undef+redefine:\n" << actual;
+}
+
 // ---- New CLI feature tests ----
 
 TEST_F(JieppCommandTest, UndefOption) {
@@ -401,12 +660,16 @@ TEST_F(JieppCommandTest, DepOutputM) {
 // ---- Error format consistency tests ----
 
 TEST_F(JieppCommandTest, ErrorFormatFileError) {
+    // Uses a valid, existing input (B11/B12: -o is now opened only after
+    // expansion succeeds, so an invalid input path would instead surface
+    // FILE_NOT_FOUND for the input before -o is ever touched; use a real
+    // input here so this test still exercises the -o open-failure message).
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
-    opts.input_filepaths = {"nonexistent.iec"};
+    opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
     opts.output_filepath = "/nonexistent/dir/output.iec";
     EXPECT_NE(0, jiepp_command(opts));
-    EXPECT_EQ("<unknown location>:1.0: error: PP10: An error occurred with the file; '/nonexistent/dir/output.iec'", message());
+    EXPECT_EQ("jiepp: error: PP10: An error occurred with the file; '/nonexistent/dir/output.iec'", message());
 }
 
 TEST_F(JieppCommandTest, DepOutputMMExcludesSystem) {
@@ -475,7 +738,7 @@ TEST_F(JieppCommandTest, DepOutputMFWriteFailure) {
     opts.dep_mode = DepMode::ALL;
     opts.dep_file = "/nonexistent/deeply/nested/path/output.d";
     EXPECT_NE(0, jiepp_command(opts));
-    EXPECT_EQ("<unknown location>:1.0: error: PP10: An error occurred with the file; '/nonexistent/deeply/nested/path/output.d'", message());
+    EXPECT_EQ("jiepp: error: PP10: An error occurred with the file; '/nonexistent/deeply/nested/path/output.d'", message());
 }
 
 // -MM Coverage: User includes not excluded
@@ -651,6 +914,36 @@ TEST_F(JieppCommandTest, PDoesNotAffectDeps) {
     };
 
     EXPECT_EQ(read(dep_P), read(dep_noP)) << "-P changed dependency output";
+}
+
+TEST_F(JieppCommandTest, PCollapsesBlankRunsToZero) {
+    // -P runs blank-line compaction in CollapseAll mode: every blank run
+    // (not just runs over the default 7-line threshold) collapses to zero
+    // blank lines, with no marker inserted — matching D6/[A7]. Uses the
+    // §2 worked example: "A;" then 12 indented {#define} lines (which
+    // vanish, leaving only a 13-newline blank run) then "B __LINE__;".
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "blank_lines_P_worked_example.iec";
+    {
+        std::ofstream f(src);
+        f << "A;\n";
+        for (int k = 1; k <= 12; ++k)
+            f << "    {#define M" << k << " " << k << "}\n";
+        f << "B __LINE__;\n";
+    }
+    fs::path output = tmpdir / "blank_lines_P_worked_example.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    EXPECT_EQ("A;\nB 14;\n", content);
 }
 
 TEST_F(JieppCommandTest, PPreservesCommentAfterIncludeNoNewline) {
@@ -1295,4 +1588,1118 @@ TEST_F(JieppCommandTest, VaOptNested) {
 
     ASSERT_NE(0, jiepp_command(opts)) << "expected PP37 error for nested __VA_OPT__";
     EXPECT_NE(std::string::npos, message().find("PP37")) << "PP37 not in error message";
+}
+
+// ─── B11/B12: -o safety (open only after expansion succeeds) ───────────────
+
+TEST_F(JieppCommandTest, OutputSameAsInputRoundTrips) {
+    // B11: -o naming the same path as the input file must not lose the
+    // input content -- the whole preprocessed output is now accumulated in
+    // memory before -o is (re)opened, so the input is fully read before its
+    // own path is truncated.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path self_path = tmpdir / "self_roundtrip.iec";
+    {
+        std::ofstream f(self_path);
+        f << "x := 1;\ny := 2;\n";
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {self_path.generic_string()};
+    opts.output_filepath = self_path.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(self_path, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, content.find("x := 1;")) << "input content lost when -o == input path";
+    EXPECT_NE(std::string::npos, content.find("y := 2;")) << "input content lost when -o == input path";
+}
+
+TEST_F(JieppCommandTest, OutputFileNotTruncatedOnFailure) {
+    // B12: a failing run must not truncate a pre-existing -o target. Since
+    // -o is now opened only after expansion has fully succeeded, a failure
+    // during expansion (before -o is ever opened) leaves the target
+    // completely untouched.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "fail_err.iec";
+    {
+        std::ofstream f(src);
+        f << "before;\n{#error boom}\nafter;\n";
+    }
+    fs::path output = tmpdir / "fail_stale.out";
+    const std::string preexisting = "PREEXISTING\n";
+    {
+        std::ofstream f(output, std::ios::binary);
+        f << preexisting;
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_NE(0, jiepp_command(opts)) << "expected failure for {#error}";
+
+    ASSERT_TRUE(fs::exists(output)) << "-o target should still exist after a failing run";
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(preexisting, content) << "-o target was truncated on a failing run";
+}
+
+TEST_F(JieppCommandTest, DepFileFailureLeavesMainOutputUntouched) {
+    // F2: the separate dependency file (-MF, or auto-named by -MD/-MMD) is
+    // now written before -o is opened, so a failure writing it (e.g. -MF
+    // names a file inside a nonexistent directory) must leave a pre-existing
+    // -o target completely untouched -- not deleted (the old bug: a
+    // perfectly good, just-written -o used to be removed by the catch block
+    // solely because of this unrelated, later failure) and not overwritten
+    // with fresh content either, since -o is never opened at all in this path.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "dep_fail_main.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dep_fail_main.piec";
+    const std::string preexisting = "PREEXISTING\n";
+    {
+        std::ofstream f(output, std::ios::binary);
+        f << preexisting;
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = "/nonexistent/deeply/nested/path/dep_fail_main.d";
+    opts.no_line_markers = true;
+
+    ASSERT_NE(0, jiepp_command(opts)) << "expected failure writing the dep file";
+
+    ASSERT_TRUE(fs::exists(output)) << "-o target should still exist after a dep-file failure";
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(preexisting, content) << "-o target was modified by an unrelated dep-file failure";
+}
+
+TEST_F(JieppCommandTest, OutputOpenFailureRemovesFreshDepFile) {
+    // Companion to DepFileFailureLeavesMainOutputUntouched, covering the
+    // opposite failure order: the separate dependency file (-MD, in this
+    // case) is written successfully first -- per the F2 ordering, the
+    // dep file is always written before -o is opened -- but the later
+    // opening of -o then fails (nonexistent directory). Without cleanup
+    // this would leave a well-formed .d file on disk naming an output that
+    // this run never produced, which a Make-based build could mistake for
+    // proof that the target is already up to date. This run created the
+    // dep file fresh (it did not exist beforehand), so it must be removed;
+    // a dep file left over from an earlier, unrelated run that this run
+    // never touched would not be (see the catch-site comment in jiepp.cpp).
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "output_open_fail.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dep = tmpdir / "output_open_fail.d";
+    std::error_code ec;
+    fs::remove(dep, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = "/nonexistent/deeply/nested/path/output_open_fail.piec";
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep.generic_string();
+
+    ASSERT_NE(0, jiepp_command(opts)) << "expected failure opening -o";
+
+    EXPECT_FALSE(fs::exists(dep)) << "fresh dep file written by this failed run should have been removed";
+}
+
+// ─── B16: -M / -MM / -MD / -MMD / -dM output gating ────────────────────────
+
+TEST_F(JieppCommandTest, MSuppressesPreprocessedOutput) {
+    // B16: plain -M (dep_mode ALL without -MD/-MMD) must suppress the
+    // preprocessed output. F2 addendum: when a separate dep file (-MF) is
+    // also given, -o has nothing left to receive (no preprocessed body, and
+    // no dep rule either -- that went to -MF), so -o must not even be
+    // created; this supersedes the old "created but empty" behavior, which
+    // used to truncate/create a 0-byte -o for no functional reason.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "m_alone.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path output  = tmpdir / "m_alone.piec";
+    fs::path dep_out = tmpdir / "m_alone.d";
+    fs::remove(output);
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    // -o has nothing to write (preprocessed body suppressed by -M, dep rule
+    // already went to -MF) and must not be created at all.
+    EXPECT_FALSE(fs::exists(output)) << "plain -M with -MF must not create -o";
+
+    ASSERT_TRUE(fs::exists(dep_out));
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, dcontent.find(src.generic_string())) << "dep file missing source";
+}
+
+TEST_F(JieppCommandTest, MOnlyWithOutputWritesRuleToOutput) {
+    // F2 addendum: plain -M (no -MD/-MMD) with -o and no -MF has nowhere
+    // else to put the dependency rule, so (matching gcc) the rule itself is
+    // written into -o; the preprocessed body remains suppressed.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "m_only_out.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "m_only_out.d";
+    fs::remove(output);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.dep_mode = DepMode::ALL;
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    ASSERT_TRUE(fs::exists(output));
+    std::ifstream pf(output, std::ios::binary);
+    std::string pout((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(std::string::npos, pout.find("x: INT")) << "preprocessed body must stay suppressed, got: " << pout;
+    EXPECT_NE(std::string::npos, pout.find(src.generic_string())) << "dependency rule should be written to -o, got: " << pout;
+}
+
+TEST_F(JieppCommandTest, MDKeepsPreprocessedOutput) {
+    // -MD combines dependency output with normal preprocessed output --
+    // positive control for the MSuppressesPreprocessedOutput fix above.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "md_keeps.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path output  = tmpdir / "md_keeps.piec";
+    fs::path dep_out = tmpdir / "md_keeps.d";
+    fs::remove(output);
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream pf(output, std::ios::binary);
+    std::string pout((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, pout.find("x: INT")) << "-MD must keep preprocessed output";
+
+    ASSERT_TRUE(fs::exists(dep_out));
+}
+
+TEST_F(JieppCommandTest, DMAloneSuppressesPreprocessedOutput) {
+    // -dM alone (no -M/-MM/-MD/-MMD) must dump macros only, suppressing the
+    // preprocessed body -- SPECIFICATION.md already documents this; the old
+    // not_out formula gated suppression on an unrelated dep-file check.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "dm_alone.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define FOO 1}\nVAR x: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dm_alone.piec";
+    fs::remove(output);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.dM = true;
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream pf(output, std::ios::binary);
+    std::string pout((std::istreambuf_iterator<char>(pf)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, pout.find("{#define FOO 1}")) << "-dM must dump macro definitions";
+    EXPECT_EQ(std::string::npos, pout.find("VAR x: INT")) << "-dM alone must suppress preprocessed body";
+}
+
+// ─── I1: dependency-rule path escaping ──────────────────────────────────────
+
+TEST_F(JieppCommandTest, DepRulePathEscaping) {
+    // I1: a dependency prerequisite path containing a space must be escaped
+    // as "\ " in the generated Makefile rule (gcc/clang convention);
+    // otherwise a consuming make/ninja would misparse the rule.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path inc_dir = tmpdir / "dep escape dir";
+    fs::create_directories(inc_dir);
+    fs::path hdr = inc_dir / "esc_hdr.iec";
+    {
+        std::ofstream f(hdr);
+        f << "VAR h: INT; END_VAR\n";
+    }
+    fs::path src = tmpdir / "dep_escape_main.iec";
+    {
+        std::ofstream f(src);
+        f << "{#include 'dep escape dir/esc_hdr.iec'}\n";
+    }
+    fs::path output  = tmpdir / "dep_escape_main.piec";
+    fs::path dep_out = tmpdir / "dep_escape_main.d";
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    ASSERT_TRUE(fs::exists(dep_out));
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, dcontent.find("dep\\ escape\\ dir/esc_hdr.iec"))
+        << "space in dependency path not escaped: " << dcontent;
+    EXPECT_EQ(std::string::npos, dcontent.find("dep escape dir/esc_hdr.iec"))
+        << "unescaped space present in dep rule: " << dcontent;
+}
+
+TEST_F(JieppCommandTest, DepRulePathTabIsEscaped) {
+    // F13: a dependency path containing a TAB must be escaped as backslash +
+    // an actual TAB byte, mirroring how a space is escaped as backslash + an
+    // actual space byte (gcc/clang mkdeps munge() convention) -- not the
+    // 2-character C-style "\t" sequence the old code emitted. A raw tab
+    // (0x09) is a control character that Win32 itself refuses in real
+    // filenames, so this test cannot use an actual tab-named file/directory
+    // on disk (confirmed: creating one from a POSIX shell silently remaps
+    // the byte into the Private-Use-Area surrogate range, which is not the
+    // same file from a native Win32 program's point of view). --disppath
+    // overrides only the *displayed* dependency path (see expand.cpp's
+    // add_dependency call), independent of the real file read from disk, so
+    // it exercises write_dep_rules()/escape_make_path()'s tab branch through
+    // the real production seam without needing such a file to exist.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "dep_tab_main.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dep_out = tmpdir / "dep_tab_main.d";
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.disppath = "dep\ttab\tname.iec";
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    ASSERT_TRUE(fs::exists(dep_out));
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, dcontent.find("dep\\\ttab\\\tname.iec"))
+        << "TAB in dependency path must be escaped as backslash + an actual TAB byte, got: " << dcontent;
+    EXPECT_EQ(std::string::npos, dcontent.find("\\tname"))
+        << "TAB must not be escaped as the literal 2-character \"\\t\" sequence, got: " << dcontent;
+}
+
+TEST_F(JieppCommandTest, DepTargetFromMTIsVerbatim) {
+    // F10: unlike an auto-derived target, a user-supplied -MT value must be
+    // emitted verbatim in the rule head (gcc/clang convention -- only the
+    // unimplemented -MQ would Make-escape it), even though it contains
+    // Make-special characters ('$' and a space) that would otherwise be
+    // escaped if this were the auto-derived target.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "mt_verbatim.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dep_out = tmpdir / "mt_verbatim.d";
+    fs::remove(dep_out);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep_out.generic_string();
+    opts.dep_target = "my$target with space";
+    opts.no_line_markers = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    ASSERT_TRUE(fs::exists(dep_out));
+    std::ifstream df(dep_out, std::ios::binary);
+    std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(0u, dcontent.find("my$target with space:"))
+        << "-MT value must be emitted verbatim as the rule head, got: " << dcontent;
+    EXPECT_EQ(std::string::npos, dcontent.find("my$$target"))
+        << "-MT value must not be Make-escaped, got: " << dcontent;
+}
+
+// ─── F6: {#max_blank_lines N} directive ────────────────────────────────────
+
+namespace {
+// Counts occurrences of the annotated-style compaction/entry marker prefix
+// in `s`. A run compiled with no compaction beyond the file's own entry
+// marker yields 1; a compacted run adds one marker per compacted run.
+std::size_t count_annotated_markers(const std::string& s) {
+    std::size_t n = 0;
+    for (std::size_t pos = 0; (pos = s.find("(*{#:", pos)) != std::string::npos; pos += 5)
+        ++n;
+    return n;
+}
+} // namespace
+
+TEST_F(JieppCommandTest, MaxBlankLinesDirectiveLowersThreshold) {
+    // F6: {#max_blank_lines N} lowers the compaction threshold below the
+    // built-in default of 7 -- a run of blank lines too short to compact at
+    // the default is compacted once the directive takes effect.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "max_blank_lines_directive_lowers.iec";
+    {
+        std::ofstream f(src);
+        f << "{#max_blank_lines 2}\nA;" << std::string(4, '\n') << "B;\n";
+    }
+    fs::path output = tmpdir / "max_blank_lines_directive_lowers.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(2u, count_annotated_markers(content))
+        << "expected the 4-line blank run to be compacted under the "
+           "directive-lowered threshold (2); output:\n" << content;
+}
+
+TEST_F(JieppCommandTest, MaxBlankLinesDirectiveZeroDisables) {
+    // F6: {#max_blank_lines 0} disables compaction entirely, even for a run
+    // far longer than the default threshold.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "max_blank_lines_directive_zero.iec";
+    {
+        std::ofstream f(src);
+        f << "{#max_blank_lines 0}\nA;" << std::string(20, '\n') << "B;\n";
+    }
+    fs::path output = tmpdir / "max_blank_lines_directive_zero.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(1u, count_annotated_markers(content))
+        << "expected no compaction marker beyond the file's own entry "
+           "marker; output:\n" << content;
+    EXPECT_NE(std::string::npos, content.find(std::string(20, '\n')))
+        << "expected the 20-line blank run to survive verbatim; output:\n" << content;
+}
+
+TEST_F(JieppCommandTest, MaxBlankLinesCliOverridesDirective) {
+    // F6: a CLI --max-blank-lines value locks the parameter (fix_), so a
+    // later {#max_blank_lines} directive attempting to raise it back up is a
+    // silent no-op -- the CLI-supplied threshold keeps governing.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "max_blank_lines_cli_overrides.iec";
+    {
+        std::ofstream f(src);
+        f << "{#max_blank_lines 100}\nA;" << std::string(4, '\n') << "B;\n";
+    }
+    fs::path output = tmpdir / "max_blank_lines_cli_overrides.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.max_blank_lines = 2;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(2u, count_annotated_markers(content))
+        << "expected the CLI-locked threshold (2) to still govern despite "
+           "the in-source directive requesting 100; output:\n" << content;
+}
+
+TEST_F(JieppCommandTest, MaxBlankLinesLastValueWins) {
+    // F6: compact_blank_lines() runs exactly once, after the whole file has
+    // been expanded, reading env.get_max_blank_lines() at that single
+    // point -- so the LAST {#max_blank_lines} directive executed during
+    // expansion governs the ENTIRE output, including blank runs that
+    // occurred earlier in the source, before that directive was even seen.
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "max_blank_lines_last_value_wins.iec";
+    {
+        std::ofstream f(src);
+        f << "A;\n{#max_blank_lines 100}\n" << std::string(3, '\n')
+          << "{#max_blank_lines 1}\nB;\n";
+    }
+    fs::path output = tmpdir / "max_blank_lines_last_value_wins.piec";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream f(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(2u, count_annotated_markers(content))
+        << "expected the 3-line blank run (which occurred while 100 was in "
+           "effect) to be compacted under the LAST effective value (1), "
+           "confirming the whole-output post-pass semantics; output:\n" << content;
+}
+
+// ─── -o - means stdout ─────────────────────────────────────────────────────
+
+TEST_F(JieppCommandTest, OutputDashMeansStdout) {
+    // gcc/clang convention: "-o -" writes the preprocessed output to stdout,
+    // not to a literal file named "-". Captured in-process by swapping
+    // std::cout's streambuf (jiepp_command() always writes through
+    // &std::cout when opts.output_filepath is unset or "-").
+    fs::current_path(jiepp_root_dir());
+    fs::path dash_marker = fs::current_path() / "-";
+    std::error_code rm_ec;
+    fs::remove(dash_marker, rm_ec); // defensive: clear any stray "-" up front
+
+    auto tmpdir = fs::temp_directory_path();
+    fs::path src = tmpdir / "o_dash.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define Z 7}\nout := Z;\n";
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = "-";
+
+    std::ostringstream captured;
+    int rc;
+    {
+        CoutRedirect cout_guard(captured);
+        rc = jiepp_command(opts);
+    }
+
+    ASSERT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, captured.str().find("out := 7"))
+        << "stdout: " << captured.str();
+    EXPECT_FALSE(fs::exists(dash_marker))
+        << "-o - must not create a file literally named '-'";
+}
+
+TEST_F(JieppCommandTest, MDFromStdinWithoutMFOrOutputStillRejected) {
+    // G: jiepp intentionally keeps rejecting -MD/-MMD from stdin with
+    // neither -MF nor -o (PP13) -- verified that GNU cpp 5.3.0 does NOT
+    // error in this exact case: it applies its own "strip directory and
+    // suffix from the input name" rule to the literal placeholder "-" and
+    // silently writes a file named "-.d" to the current directory instead.
+    // The coordinator's instruction was to keep this diagnostic unless gcc
+    // clearly differs, and report the difference rather than chase it; see
+    // unit G's report for the full rationale (an unconditional, unnamed
+    // "-.d" appearing in the user's CWD on every stdin+-MD invocation seems
+    // more likely to surprise than to help).
+    fs::current_path(jiepp_root_dir());
+    JieppOptions opts;
+    opts.input_filepaths = {"-"};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    EXPECT_NE(0, jiepp_command(opts));
+    EXPECT_EQ(Issue::Code::INVALID_COMMAND, code());
+}
+
+TEST_F(JieppCommandTest, MDWithoutOutputDerivesDepFileInCwdNotInputDirectory) {
+    // G: without -o, gcc's own -MD rule strips the input's directory
+    // component (not just its suffix) and resolves the result against the
+    // *current* directory, not the input file's own directory -- verified
+    // against GNU cpp 5.3.0 (see unit G's report): "cpp -MD subdir/in.c"
+    // run from a different CWD writes "in.d" there, not "subdir/in.d". Run
+    // with CWD pointed at a scratch directory (restored afterward) so
+    // nothing lands in the repo.
+    fs::path scratch_dir = fs::temp_directory_path() / "jiepp_md_subdir_test";
+    std::error_code ec;
+    fs::remove_all(scratch_dir, ec);
+    fs::create_directories(scratch_dir / "subdir");
+
+    fs::path src = scratch_dir / "subdir" / "in.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dep_in_cwd = scratch_dir / "in.d";
+    fs::path dep_in_subdir = scratch_dir / "subdir" / "in.d"; // must NOT be used
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    std::ostringstream captured;
+    int rc;
+    {
+        CwdGuard cwd_guard(scratch_dir);
+        CoutRedirect cout_guard(captured);
+        rc = jiepp_command(opts);
+    }
+
+    ASSERT_EQ(0, rc);
+    EXPECT_TRUE(fs::exists(dep_in_cwd))
+        << "expected the auto-derived dep file in the current directory: " << dep_in_cwd.generic_string();
+    EXPECT_FALSE(fs::exists(dep_in_subdir))
+        << "the dep file must not be written next to the input file";
+
+    fs::remove_all(scratch_dir, ec);
+}
+
+TEST_F(JieppCommandTest, MDWithOutputNoSuffixAppendsDotD) {
+    // G: -o with no suffix at all (e.g. "-o out") still gets ".d" appended
+    // wholesale rather than, say, being rejected or left as "out" -- matches
+    // GNU cpp 5.3.0's plain "argument, with a suffix of .d" rule (verified
+    // empirically; see unit G's report).
+    fs::path scratch_dir = fs::temp_directory_path() / "jiepp_md_nosuffix_test";
+    std::error_code ec;
+    fs::remove_all(scratch_dir, ec);
+    fs::create_directories(scratch_dir);
+
+    fs::path src = scratch_dir / "in.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path out_path = scratch_dir / "out"; // no suffix
+    fs::path dep_out = scratch_dir / "out.d";
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    int rc;
+    {
+        CwdGuard cwd_guard(scratch_dir);
+        rc = jiepp_command(opts);
+    }
+
+    ASSERT_EQ(0, rc);
+    EXPECT_TRUE(fs::exists(out_path));
+    EXPECT_TRUE(fs::exists(dep_out)) << "expected 'out.d': " << dep_out.generic_string();
+
+    fs::remove_all(scratch_dir, ec);
+}
+
+TEST_F(JieppCommandTest, OutputDashWithMDDerivesDepFileFromLiteralDashArgument) {
+    // G: -o - combined with -MD (no -MF) does NOT fall back to deriving the
+    // dep name from the input, unlike a bare "no -o at all" -- gcc's own
+    // rule ("if -o is given, use its argument [literally], with a suffix of
+    // .d") does not special-case "-" here the way it does for the main
+    // output. Empirically verified against GNU cpp 5.3.0 (see unit G's
+    // report): "cpp -MD in.c -o -" creates a file literally named "-.d" in
+    // the current directory. Run with CWD pointed at a scratch directory
+    // (restored afterward), not the repo root, since that stray "-.d" is
+    // exactly the kind of file this test must not leave behind.
+    fs::path scratch_dir = fs::temp_directory_path() / "jiepp_dash_md_test";
+    std::error_code ec;
+    fs::remove_all(scratch_dir, ec);
+    fs::create_directories(scratch_dir);
+
+    fs::path src = scratch_dir / "o_dash_md.iec";
+    {
+        std::ofstream f(src);
+        f << "VAR x: INT; END_VAR\n";
+    }
+    fs::path dash_marker = scratch_dir / "-";
+    fs::path dash_dep_marker = scratch_dir / "-.d";
+    fs::path input_derived_dep_marker = scratch_dir / "o_dash_md.d"; // must NOT be used
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = "-";
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    std::ostringstream captured;
+    int rc;
+    {
+        CwdGuard cwd_guard(scratch_dir);
+        CoutRedirect cout_guard(captured);
+        rc = jiepp_command(opts);
+    }
+
+    ASSERT_EQ(0, rc);
+    EXPECT_TRUE(fs::exists(dash_dep_marker))
+        << "-o - -MD (no -MF) should create '-.d' in the current directory, matching GNU cpp 5.3.0";
+    EXPECT_FALSE(fs::exists(input_derived_dep_marker))
+        << "-o - must not fall back to deriving the dep name from the input";
+    EXPECT_FALSE(fs::exists(dash_marker))
+        << "-o - must still never create a file literally named '-' for the main output";
+
+    fs::remove_all(scratch_dir, ec);
+}
+
+// ─── Unit E: continue-after-error mode (U2) ───────────────────────────────
+//
+// Shared helpers below: jiepp_command() only ever writes the preprocessed
+// result through &std::cout when opts.output_filepath is unset or "-", so
+// capturing it in-process just means swapping std::cout's streambuf for the
+// call's duration (same technique as OutputDashMeansStdout above).
+
+namespace {
+
+fs::path write_temp_iec(const std::string& stem, const std::string& content) {
+    fs::path p = fs::temp_directory_path() / (stem + ".iec");
+    std::ofstream f(p, std::ios::binary);
+    f << content;
+    return p;
+}
+
+std::string run_capturing_stdout(const JieppOptions& opts, int& rc) {
+    std::ostringstream captured;
+    {
+        CoutRedirect cout_guard(captured);
+        rc = jiepp_command(opts);
+    }
+    return captured.str();
+}
+
+} // namespace
+
+// E5: a jiepp equivalent of gcc's e2.c torture test (BEFORE;/#error/
+// #if 1/0/#warning/redefinition/AFTER;). Continuing past every non-abort
+// ERROR reaches the end of the file without crashing, still emitting
+// AFTER; -- exit code is 1 either way (U2), and since no -o was given, the
+// destination table's stdout row for the plain preprocessed result (E3)
+// says the full compacted output is still printed despite the errors.
+TEST_F(JieppCommandTest, ContinueModeGccE2Equivalent) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_e2", R"IEC(BEFORE;
+{#error stop}
+{#if 1/0}
+SKIPPED;
+{#endif}
+{#warning careful}
+{#define FOO 1}
+{#define FOO 2}
+AFTER;
+)IEC");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER"))   << out;
+    // {#if 1/0}: division by zero folds to 0 (A3/A4), so this behaves like
+    // any other false {#if} -- its body is skipped, not emitted.
+    EXPECT_EQ(std::string::npos, out.find("SKIPPED")) << out;
+    EXPECT_GE(Issue::error_count_, 2) << "expected #error and 1/0 to both count";
+}
+
+// E3 destination table, row 1 vs row 2: the same continuable error, once
+// with no -o (stdout row, prints in full) and once with -o FILE (silently
+// nothing, and -o is never created).
+TEST_F(JieppCommandTest, ContinueModeErrorCountWithOutputFileWritesNothing) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_e3_file", "{#error stop}\nAFTER;\n");
+    fs::path out_path = fs::temp_directory_path() / "continue_e3_file.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_FALSE(fs::exists(out_path)) << "-o must not be created when error_count_ >= 1";
+}
+
+TEST_F(JieppCommandTest, ContinueModeErrorCountLeavesExistingOutputFileUntouched) {
+    // E5: an existing -o/.d file must stay byte-for-byte identical, not
+    // just "still exist" -- a stale-but-untouched file is exactly what a
+    // Make-based build needs to correctly decide to reprocess it later.
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_e3_existing", "{#error stop}\nAFTER;\n");
+    fs::path out_path = fs::temp_directory_path() / "continue_e3_existing.piec";
+    const std::string sentinel = "PRE-EXISTING CONTENT, MUST NOT CHANGE";
+    {
+        std::ofstream f(out_path, std::ios::binary);
+        f << sentinel;
+    }
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+
+    EXPECT_EQ(1, jiepp_command(opts));
+    std::ifstream f(out_path, std::ios::binary);
+    std::string actual((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(sentinel, actual);
+}
+
+// E3 destination table, row 3 vs row 4: -dM differs from the plain
+// preprocessed result specifically for the stdout case (it is not
+// suppressed by error_count_ >= 1, since the macro table is already
+// complete by the time processing reaches the end) -- but -o FILE is still
+// silently nothing, same as the plain result.
+TEST_F(JieppCommandTest, ContinueModeDMPrintsFullMacroListOnStdoutDespiteError) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_dm_stdout", "{#define FOO 42}\n{#error stop}\n{#define BAR 7}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dM = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("{#define FOO 42}")) << out;
+    EXPECT_NE(std::string::npos, out.find("{#define BAR 7}"))  << out;
+}
+
+// R2: a {#define} rejected for a duplicate parameter name never reaches
+// env.define(), so -dM's macro table must not list it either.
+TEST_F(JieppCommandTest, ContinueModeDuplicateMacroParameterNotInDM) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_dup_param",
+        "{#define F(x) [x]}\n{#define F(y,y) <y>}\n{#define G(a,a) a}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dM = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("{#define F(x) [x]}")) << out;
+    EXPECT_EQ(std::string::npos, out.find("F(y,y)")) << out;
+    EXPECT_EQ(std::string::npos, out.find("{#define G(")) << out;
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+TEST_F(JieppCommandTest, ContinueModeDMWithOutputFileWritesNothing) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_dm_file", "{#define FOO 42}\n{#error stop}\n");
+    fs::path out_path = fs::temp_directory_path() / "continue_dm_file.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+    opts.dM = true;
+
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_FALSE(fs::exists(out_path));
+}
+
+// E3 destination table, row 5: -M/-MM without -MF never prints a partial
+// dependency list on error, even to stdout -- unlike the plain preprocessed
+// result and -dM, a half-built dependency list could make a Make-based
+// build think it already has every prerequisite when it does not.
+TEST_F(JieppCommandTest, ContinueModeMWithoutMFPrintsNothingOnStdoutDespiteError) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_m_stdout", "{#error stop}\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dep_mode = DepMode::ALL;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_TRUE(out.empty()) << out;
+}
+
+// E3 destination table, row 7: -MD behaves like the plain preprocessed
+// result for the main output (full print on the stdout row), but the
+// separate dependency file must not be written when error_count_ >= 1.
+TEST_F(JieppCommandTest, ContinueModeMDPrintsOutputButSkipsDepFile) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_md_stdout", "BEFORE;\n{#error stop}\nAFTER;\n");
+    fs::path dep_out = fs::temp_directory_path() / "continue_md_stdout.d";
+    std::error_code ec;
+    fs::remove(dep_out, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER"))  << out;
+    EXPECT_FALSE(fs::exists(dep_out)) << "-MD's dep file must not be written when error_count_ >= 1";
+}
+
+// E4: a code in the continue-mode abort set (here PP11, a missing
+// #include) still stops processing outright, like a gcc fatal error --
+// but (destination table's stdout row) whatever of the output had already
+// been produced before the abort is still flushed to stdout, unlike the
+// ordinary trailing-error case above where the *whole* file's compacted
+// output is available. -o FILE instead gets nothing, and no file is
+// created.
+TEST_F(JieppCommandTest, AbortedMidExpandPrintsPartialOutputToStdout) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("abort_partial_stdout",
+        "BEFORE;\n{#include 'definitely_does_not_exist.iec'}\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    // Processing stopped at the failed #include: AFTER; was never reached.
+    EXPECT_EQ(std::string::npos, out.find("AFTER")) << out;
+}
+
+TEST_F(JieppCommandTest, AbortedMidExpandWithOutputFileWritesNothing) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("abort_partial_file",
+        "BEFORE;\n{#include 'definitely_does_not_exist.iec'}\nAFTER;\n");
+    fs::path out_path = fs::temp_directory_path() / "abort_partial_file.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_FALSE(fs::exists(out_path));
+}
+
+// E4b: a PP10 raised *after* the preprocessed output was already fully
+// built -- opening the auto-named -MD dependency file, or opening -o --
+// gets the same partial-output treatment as E4/E4a (gcc has already
+// flushed its own output before either of those can fail).
+TEST_F(JieppCommandTest, DepFileOpenFailureAfterBuildPrintsFullOutputToStdout) {
+    // G: without -o, the auto-derived dep path is the input's stem (no
+    // directory) with ".d", resolved against the *current directory* --
+    // not the input file's own directory (verified against GNU cpp 5.3.0;
+    // see unit G's report) -- so this test runs with CWD pointed at a
+    // scratch directory (restored afterward) rather than assuming the dep
+    // file lands next to the input under temp_directory_path().
+    fs::path scratch_dir = fs::temp_directory_path() / "jiepp_e4b_dep_stdout_test";
+    std::error_code ec;
+    fs::remove_all(scratch_dir, ec);
+    fs::create_directories(scratch_dir);
+
+    fs::path src = scratch_dir / "e4b_dep_stdout.iec";
+    {
+        std::ofstream f(src);
+        f << "BEFORE;\nAFTER;\n";
+    }
+    // Occupy the auto-derived dep path (CWD/"e4b_dep_stdout.d") with a
+    // directory of the same name so opening it as a file fails (PP10).
+    fs::path dep_out = scratch_dir / "e4b_dep_stdout.d";
+    fs::create_directory(dep_out, ec);
+    ASSERT_TRUE(fs::is_directory(dep_out));
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    int rc = 0;
+    std::string out;
+    {
+        CwdGuard cwd_guard(scratch_dir);
+        out = run_capturing_stdout(opts, rc);
+    }
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER"))  << out;
+    EXPECT_TRUE(fs::is_directory(dep_out)) << "the blocking directory must be left alone, not removed";
+
+    fs::remove_all(scratch_dir, ec);
+}
+
+TEST_F(JieppCommandTest, DepFileOpenFailureAfterBuildWithOutputFileWritesNothing) {
+    // Same obstruction as above, but with an explicit -o FILE: stdout must
+    // stay empty and -o must never be created (destination table: -o FILE
+    // always prints nothing, dependency-file failure or not).
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("e4b_dep_file", "BEFORE;\nAFTER;\n");
+    fs::path dep_out = fs::temp_directory_path() / "e4b_dep_file.d";
+    std::error_code ec;
+    fs::remove_all(dep_out, ec);
+    fs::create_directory(dep_out, ec);
+    ASSERT_TRUE(fs::is_directory(dep_out));
+    fs::path out_path = fs::temp_directory_path() / "e4b_dep_file.piec";
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_TRUE(out.empty()) << out;
+    EXPECT_FALSE(fs::exists(out_path));
+    EXPECT_TRUE(fs::is_directory(dep_out));
+
+    fs::remove_all(dep_out, ec);
+}
+
+// E4b, -o open failure specifically (as opposed to the dep-file open
+// failure above): per plan.md unit E's own note, an -o FILE that cannot be
+// opened can *never* coincide with a stdout destination (pp_output_to_stdout
+// requires -o to be omitted, or explicitly "-", neither of which ever fails
+// to open) -- so unlike the dep-file-open-failure case above, this always
+// falls into E4b's "else" branch: stdout stays empty, matching plain -o
+// FILE's ordinary error/abort behavior (ErrorFormatFileError et al. above
+// already cover the file-not-created side of this; this test adds the
+// "and stdout printed nothing either" side that only exists post-unit-E).
+TEST_F(JieppCommandTest, OutputOpenFailureAfterBuildPrintsNothingToStdout) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("e4b_o_file", "BEFORE;\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = "/nonexistent/dir/e4b_o.piec";
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_TRUE(out.empty()) << out;
+}
+
+// E2: --silent suppresses the printed diagnostics but not the error count
+// (still exit 1); -w suppresses only unpromoted-warning *output*, not the
+// count either (there is nothing to count here, since no -Werror is set,
+// but the run must still succeed/continue exactly the same).
+TEST_F(JieppCommandTest, SilentStillCountsErrorsAndExitsNonZero) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("continue_silent", "BEFORE;\n{#error stop}\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.silent = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER"))  << out;
+}
+
+// C: PP45 (UNKNOWN_DIRECTIVE) is now ERROR, like gcc's "invalid
+// preprocessing directive": it is not in jiepp_continue_abort_codes(), so
+// continue mode counts it and keeps going, exiting 1 with the rest of the
+// file still emitted.
+TEST_F(JieppCommandTest, UnknownDirectiveIsErrorAndContinues) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("unknown_directive_error", "x;\n{#foo}\ny;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("x;")) << out;
+    EXPECT_NE(std::string::npos, out.find("y;")) << out;
+    EXPECT_NE(std::string::npos, message().find("error: PP45")) << message();
+}
+
+// C3: -w only suppresses WARNING-severity output (Issue::suppress_warnings_
+// checks is_warning(code)); it must not hide PP45 now that it is ERROR.
+TEST_F(JieppCommandTest, UnknownDirectiveNotHiddenByDashW) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("unknown_directive_dash_w", "x;\n{#foo}\ny;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.suppress_warnings = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("x;")) << out;
+    EXPECT_NE(std::string::npos, out.find("y;")) << out;
+    EXPECT_NE(std::string::npos, message().find("error: PP45")) << message();
+}
+
+// C4: {#ignore PP45} suppresses the diagnostic entirely -- no error is
+// counted, so the run exits 0.
+TEST_F(JieppCommandTest, UnknownDirectiveIgnoredExitsZero) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("unknown_directive_ignored", "{#ignore PP45}\nx;\n{#foo}\ny;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("x;")) << out;
+    EXPECT_NE(std::string::npos, out.find("y;")) << out;
+    EXPECT_TRUE(empty());
 }

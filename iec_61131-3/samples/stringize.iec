@@ -5,10 +5,12 @@
 program Main
 var
     s1, s2, s3: string[255];
+    ws: wstring;
 end_var
 {st}
 s1 := STR(Hello World);
 s2 := {## 123 + 456};
 s3 := {## __LINE__};
+ws := {#wstring Hello World};
 {end}
 end_program

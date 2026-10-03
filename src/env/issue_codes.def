@@ -17,7 +17,7 @@ JIEPP_ISSUE_CODE(SUCCESS,                      0, INFO,    "Operation completed 
 // --- System/Fatal (01-09) ---
 JIEPP_ISSUE_CODE(FATAL,                        1, SEVERE,  "A fatal error occurred.")
 JIEPP_ISSUE_CODE(OPERATION_NOT_ALLOWED,        2, SEVERE,  "Operation not allowed")
-JIEPP_ISSUE_CODE(RECURSION_LIMIT_EXCEEDED,     3, SEVERE,  "Failed to set recursion limit")
+// 03: retired (was RECURSION_LIMIT_EXCEEDED, never raised). Do not reuse this number.
 JIEPP_ISSUE_CODE(PARAMETER_VALUE_OVERFLOW,     4, SEVERE,  "Parameter value exceeds maximum (2^24)")
 
 // --- File/IO (10-19) ---
@@ -25,6 +25,7 @@ JIEPP_ISSUE_CODE(FILE_ERROR,                  10, ERROR,   "An error occurred wi
 JIEPP_ISSUE_CODE(FILE_NOT_FOUND,              11, ERROR,   "No such file or directory")
 JIEPP_ISSUE_CODE(MAX_INCLUDE_DEPTH_EXCEEDED,  12, ERROR,   "Maximum include depth exceeded")
 JIEPP_ISSUE_CODE(INVALID_COMMAND,             13, ERROR,   "Invalid command")
+JIEPP_ISSUE_CODE(INCLUDE_TARGET_IS_DIRECTORY, 14, ERROR,   "Include target is a directory")
 
 // --- Lexical/Syntax (20-29) ---
 JIEPP_ISSUE_CODE(UNCLOSED_COMMENT,            20, ERROR,   "Unclosed comment")
@@ -35,6 +36,8 @@ JIEPP_ISSUE_CODE(UNTERMINATED_CONDITIONAL,    24, ERROR,   "Unterminated conditi
 JIEPP_ISSUE_CODE(ELIF_ERROR,                  25, ERROR,   "Unexpected elif directive")
 JIEPP_ISSUE_CODE(ELSE_ERROR,                  26, ERROR,   "Unexpected else directive")
 JIEPP_ISSUE_CODE(ENDIF_ERROR,                 27, ERROR,   "Unexpected endif directive")
+JIEPP_ISSUE_CODE(WHITESPACE_BEFORE_DIRECTIVE, 28, WARNING, "Whitespace between '{' and '#'; treated as an ordinary pragma")
+JIEPP_ISSUE_CODE(UNTERMINATED_STRING_LITERAL, 29, WARNING, "Missing terminating quote character")
 
 // --- Macro (30-39) ---
 JIEPP_ISSUE_CODE(INVALID_DEFINE_SYNTAX,       30, ERROR,   "Invalid define syntax")
@@ -45,6 +48,7 @@ JIEPP_ISSUE_CODE(ARGUMENT_COUNT_MISMATCH,     34, ERROR,   "Argument count misma
 JIEPP_ISSUE_CODE(MACRO_REDEFINED,             35, WARNING, "Macro redefined")
 JIEPP_ISSUE_CODE(DUPLICATE_MACRO_PARAMETER,   36, ERROR,   "Duplicate macro parameter name")
 JIEPP_ISSUE_CODE(INVALID_VA_OPT,              37, ERROR,   "Invalid __VA_OPT__")
+JIEPP_ISSUE_CODE(MISSING_WHITESPACE_AFTER_MACRO_NAME, 38, WARNING, "Missing whitespace after the macro name")
 
 // --- Directive/Operand (40-49) ---
 JIEPP_ISSUE_CODE(INVALID_DEFINED_OPERAND,     40, ERROR,   "Invalid operand for 'defined'")
@@ -52,19 +56,24 @@ JIEPP_ISSUE_CODE(INVALID_SETLINE_OPERAND,     41, ERROR,   "Invalid operand for 
 JIEPP_ISSUE_CODE(INVALID_IGNORE_OPERAND,      42, ERROR,   "Invalid operand for 'ignore'")
 JIEPP_ISSUE_CODE(INVALID_LIMIT_OPERAND,       43, ERROR,   "Invalid operand for limit directive")
 JIEPP_ISSUE_CODE(INVALID_PARAMETER_VALUE,     44, ERROR,   "Invalid parameter value")
-JIEPP_ISSUE_CODE(UNKNOWN_DIRECTIVE,           45, WARNING, "Unknown directive")
+JIEPP_ISSUE_CODE(UNKNOWN_DIRECTIVE,           45, ERROR,   "Unknown directive")
 JIEPP_ISSUE_CODE(INVALID_DIRECTIVE_NAME,      46, ERROR,   "Invalid directive name")
 JIEPP_ISSUE_CODE(INVALID_PATH,                47, ERROR,   "Invalid path")
+JIEPP_ISSUE_CODE(INVALID_PRAGMA_STYLE_OPERAND, 48, WARNING, "Invalid operand for pragma style directive")
+JIEPP_ISSUE_CODE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, 49, WARNING, "Extra tokens at end of directive")
 
 // --- Expression (50-59) ---
 JIEPP_ISSUE_CODE(EXPR_TYPE_ERROR,             50, ERROR,   "Type error in expression")
 JIEPP_ISSUE_CODE(MISSING_EXPRESSION,          51, ERROR,   "Missing expression")
 JIEPP_ISSUE_CODE(INVALID_EXPRESSION,          52, ERROR,   "Invalid expression")
+JIEPP_ISSUE_CODE(COUNTER_OVERFLOW,            53, ERROR,   "__COUNTER__ value exceeds 2147483647")
 
 // --- Runtime/Limit (60-69) ---
 JIEPP_ISSUE_CODE(MAX_EXPANSION_DEPTH_EXCEEDED, 60, ERROR,  "Maximum expansion depth exceeded")
 JIEPP_ISSUE_CODE(MAX_IF_NESTING_EXCEEDED,      61, ERROR,   "Maximum conditional nesting depth exceeded")
 JIEPP_ISSUE_CODE(SANDBOX_RESTRICTED_DIRECTIVE, 62, ERROR,   "Directive is restricted in sandbox mode")
+JIEPP_ISSUE_CODE(STACK_EXHAUSTED,              63, SEVERE,  "Stack nearly exhausted")
+JIEPP_ISSUE_CODE(MAX_EXPANSION_STEPS_EXCEEDED, 64, SEVERE,  "Maximum expansion steps exceeded")
 
 // --- CLI/Option (70-79) ---
 JIEPP_ISSUE_CODE(UNKNOWN_OPTION,               70, ERROR,   "Unknown command-line option")

@@ -14,9 +14,6 @@ $DefaultSamples = @(Get-ChildItem -Path "iec_61131-3/samples/*.iec" -File |
     ForEach-Object { $_.BaseName } |
     Sort-Object)
 
-# Samples that use {#syspath 'lib'} and need -I flag
-$SampleWithLib = @('include', 'syspath')
-
 # Use provided samples or all default samples
 $samplesToBuild = if ($SampleNames -and $SampleNames.Count -gt 0) { $SampleNames } else { $DefaultSamples }
 
@@ -52,15 +49,11 @@ foreach ($sample in $samplesToBuild) {
         continue
     }
     
-    # Build command with appropriate flags
+    # Build command with appropriate flags. {#syspath} directives inside a
+    # sample resolve relative to the sample's own directory, so no -I flag
+    # is needed here even for samples that use {#syspath 'lib'}.
     $cmdArgs = @($inputFile, "-o", $outputFile)
-    
-    # Add library include path for samples that use {#syspath 'lib'}
-    if ($SampleWithLib -contains $sample) {
-        $cmdArgs += "-I"
-        $cmdArgs += "iec_61131-3/samples/lib"
-    }
-    
+
     # Execute
     Write-Host "Generating: $sample.piec"
     & $jiepp @cmdArgs

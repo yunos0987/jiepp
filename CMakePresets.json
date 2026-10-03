@@ -13,7 +13,16 @@
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
         "CMAKE_CXX_STANDARD": "23",
-        "CMAKE_CXX_STANDARD_REQUIRED": "ON"
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "JIEPP_SANDBOX": "OFF"
+      }
+    },
+    {
+      "name": "sandbox-base",
+      "hidden": true,
+      "description": "Mixin: enables JIEPP_SANDBOX. List it FIRST in inherits so it wins over the base OFF default.",
+      "cacheVariables": {
+        "JIEPP_SANDBOX": "ON"
       }
     },
     {
@@ -110,6 +119,36 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "windows-clang-ninja-sandbox-debug",
+      "displayName": "Windows Sandbox Debug (Ninja + clang)",
+      "description": "Sandbox (JIEPP_SANDBOX=ON) debug build for development and testing.",
+      "inherits": ["sandbox-base", "windows-clang-ninja-debug"]
+    },
+    {
+      "name": "windows-clang-ninja-sandbox-release",
+      "displayName": "Windows Sandbox Release (Ninja + clang)",
+      "description": "Sandbox (JIEPP_SANDBOX=ON) release build.",
+      "inherits": ["sandbox-base", "windows-clang-ninja-release"]
+    },
+    {
+      "name": "linux-makefiles-sandbox-debug",
+      "displayName": "Linux Sandbox Debug (Unix Makefiles)",
+      "description": "Sandbox (JIEPP_SANDBOX=ON) debug build.",
+      "inherits": ["sandbox-base", "linux-makefiles-debug"]
+    },
+    {
+      "name": "linux-makefiles-sandbox-release",
+      "displayName": "Linux Sandbox Release (Unix Makefiles)",
+      "description": "Sandbox (JIEPP_SANDBOX=ON) release build.",
+      "inherits": ["sandbox-base", "linux-makefiles-release"]
+    },
+    {
+      "name": "linux-portable-sandbox-release",
+      "displayName": "Linux Portable Sandbox Release (fully static)",
+      "description": "Sandbox (JIEPP_SANDBOX=ON) fully static release build. This is the web server deployment build.",
+      "inherits": ["sandbox-base", "linux-portable-release"]
     }
   ],
   "buildPresets": [
@@ -119,7 +158,12 @@
     { "name": "linux-makefiles-release",      "configurePreset": "linux-makefiles-release" },
     { "name": "linux-portable-release",       "configurePreset": "linux-portable-release" },
     { "name": "windows-clang-ninja",          "configurePreset": "windows-clang-ninja" },
-    { "name": "linux-makefiles",              "configurePreset": "linux-makefiles" }
+    { "name": "linux-makefiles",              "configurePreset": "linux-makefiles" },
+    { "name": "windows-clang-ninja-sandbox-debug", "configurePreset": "windows-clang-ninja-sandbox-debug" },
+    { "name": "windows-clang-ninja-sandbox-release", "configurePreset": "windows-clang-ninja-sandbox-release" },
+    { "name": "linux-makefiles-sandbox-debug", "configurePreset": "linux-makefiles-sandbox-debug" },
+    { "name": "linux-makefiles-sandbox-release", "configurePreset": "linux-makefiles-sandbox-release" },
+    { "name": "linux-portable-sandbox-release", "configurePreset": "linux-portable-sandbox-release" }
   ],
   "testPresets": [
     { "name": "windows-clang-ninja-debug",   "configurePreset": "windows-clang-ninja-debug" },
@@ -128,7 +172,37 @@
     { "name": "linux-makefiles-release",      "configurePreset": "linux-makefiles-release" },
     { "name": "linux-portable-release",       "configurePreset": "linux-portable-release" },
     { "name": "windows-clang-ninja",          "configurePreset": "windows-clang-ninja" },
-    { "name": "linux-makefiles",              "configurePreset": "linux-makefiles" }
+    { "name": "linux-makefiles",              "configurePreset": "linux-makefiles" },
+    {
+      "name": "windows-clang-ninja-sandbox-debug",
+      "configurePreset": "windows-clang-ninja-sandbox-debug",
+      "description": "Runs only the sandbox-specific and robustness tests; ordinary tests are expected to fail in sandbox builds.",
+      "filter": { "include": { "name": "^(Sandbox|RobustnessTest)" } }
+    },
+    {
+      "name": "windows-clang-ninja-sandbox-release",
+      "configurePreset": "windows-clang-ninja-sandbox-release",
+      "description": "Runs only the sandbox-specific and robustness tests; ordinary tests are expected to fail in sandbox builds.",
+      "filter": { "include": { "name": "^(Sandbox|RobustnessTest)" } }
+    },
+    {
+      "name": "linux-makefiles-sandbox-debug",
+      "configurePreset": "linux-makefiles-sandbox-debug",
+      "description": "Runs only the sandbox-specific and robustness tests; ordinary tests are expected to fail in sandbox builds.",
+      "filter": { "include": { "name": "^(Sandbox|RobustnessTest)" } }
+    },
+    {
+      "name": "linux-makefiles-sandbox-release",
+      "configurePreset": "linux-makefiles-sandbox-release",
+      "description": "Runs only the sandbox-specific and robustness tests; ordinary tests are expected to fail in sandbox builds.",
+      "filter": { "include": { "name": "^(Sandbox|RobustnessTest)" } }
+    },
+    {
+      "name": "linux-portable-sandbox-release",
+      "configurePreset": "linux-portable-sandbox-release",
+      "description": "Runs only the sandbox-specific and robustness tests; ordinary tests are expected to fail in sandbox builds.",
+      "filter": { "include": { "name": "^(Sandbox|RobustnessTest)" } }
+    }
   ],
   "workflowPresets": [
     {
@@ -185,6 +259,46 @@
         { "type": "configure", "name": "linux-makefiles" },
         { "type": "build",     "name": "linux-makefiles" },
         { "type": "test",      "name": "linux-makefiles" }
+      ]
+    },
+    {
+      "name": "windows-clang-ninja-sandbox-debug",
+      "steps": [
+        { "type": "configure", "name": "windows-clang-ninja-sandbox-debug" },
+        { "type": "build",     "name": "windows-clang-ninja-sandbox-debug" },
+        { "type": "test",      "name": "windows-clang-ninja-sandbox-debug" }
+      ]
+    },
+    {
+      "name": "windows-clang-ninja-sandbox-release",
+      "steps": [
+        { "type": "configure", "name": "windows-clang-ninja-sandbox-release" },
+        { "type": "build",     "name": "windows-clang-ninja-sandbox-release" },
+        { "type": "test",      "name": "windows-clang-ninja-sandbox-release" }
+      ]
+    },
+    {
+      "name": "linux-makefiles-sandbox-debug",
+      "steps": [
+        { "type": "configure", "name": "linux-makefiles-sandbox-debug" },
+        { "type": "build",     "name": "linux-makefiles-sandbox-debug" },
+        { "type": "test",      "name": "linux-makefiles-sandbox-debug" }
+      ]
+    },
+    {
+      "name": "linux-makefiles-sandbox-release",
+      "steps": [
+        { "type": "configure", "name": "linux-makefiles-sandbox-release" },
+        { "type": "build",     "name": "linux-makefiles-sandbox-release" },
+        { "type": "test",      "name": "linux-makefiles-sandbox-release" }
+      ]
+    },
+    {
+      "name": "linux-portable-sandbox-release",
+      "steps": [
+        { "type": "configure", "name": "linux-portable-sandbox-release" },
+        { "type": "build",     "name": "linux-portable-sandbox-release" },
+        { "type": "test",      "name": "linux-portable-sandbox-release" }
       ]
     }
   ]

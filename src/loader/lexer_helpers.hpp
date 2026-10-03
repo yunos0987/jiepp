@@ -9,7 +9,7 @@ namespace jiepp::detail {
 
 // Character classification
 inline bool is_ws_char(char c) {
-    return (c == ' ') || (c == '\t') || (c == '\f') || (c == '\v') || (static_cast<unsigned char>(c) == 0xa0);
+    return (c == ' ') || (c == '\t') || (c == '\f') || (c == '\v');
 }
 
 inline bool is_nl_char(char c) { return (c == '\n') || (c == '\r'); }
@@ -49,6 +49,7 @@ bool try_push_date_or_time(std::vector<Token>& result,
                            const std::string& text, std::size_t& pos);
 bool try_push_number(std::vector<Token>& result,
                      const std::string& text, std::size_t& pos);
-void push_string_token(std::vector<Token>& result, int type, std::string str);
+void push_string_token(std::vector<Token>& result, int type, std::string str,
+                       int num_of_lines = 0, bool unterminated = false);
 
 } // namespace jiepp::detail

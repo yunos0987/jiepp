@@ -41,6 +41,54 @@ TEST_F(SandboxDirectiveTest, HasIncludeBlocked) {
     EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
 }
 
+// ---- R4 follow-up U8: PP62 only for an actual __has_include(...) use ----
+
+// X1: __has_include reads as undefined in sandbox mode, so {#ifdef}/
+// {#ifndef} do not need the filesystem probe and are not PP62.
+TEST_F(SandboxDirectiveTest, HasIncludeUndefinedForIfdefIfndef) {
+    {
+        auto r = pp("{#ifdef __has_include}y{#else}n{#endif}");
+        EXPECT_EQ("n", r);
+        EXPECT_TRUE(empty());
+    }
+    {
+        auto r = pp("{#ifndef __has_include}y{#else}n{#endif}");
+        EXPECT_EQ("y", r);
+        EXPECT_TRUE(empty());
+    }
+}
+
+// X2: likewise 'defined(__has_include)'/'defined __has_include' are feature
+// tests, not uses, so they are not PP62 either.
+TEST_F(SandboxDirectiveTest, HasIncludeUndefinedForDefined) {
+    {
+        auto r = pp("{#if defined(__has_include)}y{#else}n{#endif}");
+        EXPECT_EQ("n", r);
+        EXPECT_TRUE(empty());
+    }
+    {
+        auto r = pp("{#if defined __has_include}y{#else}n{#endif}");
+        EXPECT_EQ("n", r);
+        EXPECT_TRUE(empty());
+    }
+}
+
+// X3: a user macro whose name happens to end in "__has_include" is not the
+// operator and must not be blocked.
+TEST_F(SandboxDirectiveTest, KeywordSuffixMacroNotBlocked) {
+    auto r = pp("{#define weird__has_include(x) 99}"
+                "{#if weird__has_include('foo') = 99}YES{#else}NO{#endif}");
+    EXPECT_NE(std::string::npos, r.find("YES"));
+    EXPECT_EQ(std::string::npos, r.find("NO"));
+    EXPECT_TRUE(empty());
+}
+
+// X4: regression -- an actual __has_include(...) use is still PP62.
+TEST_F(SandboxDirectiveTest, HasIncludeCallStillBlocked) {
+    EXPECT_THROW(pp("{#if __has_include ('dummy.iec')}YES{#endif}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
+}
+
 TEST_F(SandboxDirectiveTest, MaxExpansionDepthBlocked) {
     EXPECT_THROW(pp("{#max_expansion_depth 100}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
@@ -48,6 +96,11 @@ TEST_F(SandboxDirectiveTest, MaxExpansionDepthBlocked) {
 
 TEST_F(SandboxDirectiveTest, MaxIfNestingBlocked) {
     EXPECT_THROW(pp("{#max_if_nesting 100}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
+}
+
+TEST_F(SandboxDirectiveTest, MaxBlankLinesBlocked) {
+    EXPECT_THROW(pp("{#max_blank_lines 2}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
 }
 
@@ -82,6 +135,35 @@ TEST_F(SandboxDirectiveTest, WarningAllowed) {
     EXPECT_EQ(Issue::Code::WARNING_MESSAGE, code());
 }
 
+// ---- Expansion-step cap (PP64) applies in sandbox builds too ----
+
+class SandboxExpansionStepsTest : public JieppTest {};
+
+TEST_F(SandboxExpansionStepsTest, DefaultLimitIs2To24) {
+    Env env = setup();
+    EXPECT_EQ(16777216u, env.get_max_expansion_steps());
+}
+
+TEST_F(SandboxExpansionStepsTest, LowerLimitStopsBomb) {
+    Env env = setup();
+    env.set_max_expansion_steps(262144);
+    EXPECT_EQ(262144u, env.get_max_expansion_steps());
+    std::string src = "{#define D0 1}\n";
+    for (int i = 1; i <= 30; ++i)
+        src += "{#define D" + std::to_string(i) + " D" + std::to_string(i - 1) +
+               " + D" + std::to_string(i - 1) + "}\n";
+    src += "D30\n";
+    EXPECT_THROW(pp(src, env), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MAX_EXPANSION_STEPS_EXCEEDED, code());
+}
+
+TEST_F(SandboxExpansionStepsTest, IgnoreStillBlockedAndNoDirective) {
+    // {#ignore} is a sandbox-restricted directive, so it cannot be used to
+    // suppress PP64 either.
+    EXPECT_THROW(pp("{#ignore PP64}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
+}
+
 // ---- Info disclosure prevention ----
 
 class SandboxInfoLeakTest : public JieppTest {};
@@ -89,6 +171,15 @@ class SandboxInfoLeakTest : public JieppTest {};
 TEST_F(SandboxInfoLeakTest, TimestampEmpty) {
     auto result = pp("__TIMESTAMP__");
     EXPECT_NE(std::string::npos, result.find("''"));
+    EXPECT_TRUE(empty());
+}
+
+// __BASE_FILE__ and __FILE_NAME__ are not blanked in sandbox builds: they
+// behave exactly like a non-sandbox build and agree with __FILE__.
+TEST_F(SandboxInfoLeakTest, FileNameMacrosNotBlanked) {
+    EXPECT_EQ("'<unknown location>'", pp("__FILE__"));
+    EXPECT_EQ("'<unknown location>'", pp("__BASE_FILE__"));
+    EXPECT_EQ("'<unknown location>'", pp("__FILE_NAME__"));
     EXPECT_TRUE(empty());
 }
 

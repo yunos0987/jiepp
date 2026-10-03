@@ -1,6 +1,8 @@
 #include "preprocessor.hpp"
 #include "../loader/directive_parser.hpp"
 #include "../env/param_constants.hpp"
+#include "line_compaction.hpp"
+#include "preprocessor_internal.hpp"
 
 #include "../loader/lexer.hpp"
 
@@ -8,20 +10,78 @@
 #include <string>
 #include <vector>
 
-void preprocess(const std::string& input_filepath, std::ostream& output, Env& env) {
+void preprocess(std::istream& input, std::ostream& output, Env& env) {
+    // C4: start Issue's top-of-stack line at this call's own Env line, not
+    // wherever a previous preprocess()/preprocess_text() call left it (see
+    // Issue::set_top_lineno()). The CLI path never calls preprocess()
+    // directly (it uses jiepp_command()'s own file-driven loc_stack_
+    // pushes), so this only affects library callers of preprocess()/
+    // preprocess_text().
+    Issue::set_top_lineno(env.get_lineno());
+    // One expansion-step budget (PP64) per call; a previous call's count,
+    // including one that stopped at the limit, does not carry over.
+    env.reset_expansion_steps();
+    auto its = iec3_tokens(input, env.get_remove_comments(), 1);
     std::vector<Token> ots;
-    expand(input_filepath, Loader::LoadType::INCLUDE, ots, env, input_filepath);
+    // No leading line marker here (unlike the jiepp command line), so tell
+    // the compaction which line the stream starts on.
+    const LineNo first_lineno = env.get_lineno();
+    expand(its, ots, env);
+    jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
+                               jiepp::BlankLineMode::Markers, env.is_standard_pragma_style(),
+                               first_lineno);
     for (auto& t : ots)
         output << t.text;
 }
 
-void preprocess(std::istream& input, std::ostream& output, Env& env) {
-    auto its = iec3_tokens(input, env.get_remove_comments(), 1);
+namespace jiepp::preprocessor_detail {
+
+void report_unterminated_literal(Token& t) {
+    if (!t.unterminated)
+        return;
+    t.unterminated = false;
+    // Opening quote to the end of the literal's first line: a "$"+newline
+    // continuation would otherwise put a line break in the diagnostic.
+    ISSUE(UNTERMINATED_STRING_LITERAL, t.text.substr(0, t.text.find_first_of("\r\n")));
+}
+
+std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
+                               bool report_unterminated) {
+    auto ts = iec3_tokens_from_string(text, remove_comments);
+    for (auto& t : ts) {
+        if (report_unterminated)
+            report_unterminated_literal(t);
+        else
+            t.unterminated = false;
+    }
+    return ts;
+}
+
+std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
+                                         bool report_unterminated) {
+    // Work budget (PP64): one step per byte, charged BEFORE lexing, so an
+    // operand (pragma body, {#if} condition, {#include} path, message, ...)
+    // costs work in proportion to its size even if it expands to nothing.
+    env.charge_expansion_steps(text.size());
+    auto its = lex_operand(text, env.get_remove_comments(), report_unterminated);
+    // Every newline in an operand is a decoded $n/$l/$r/$0A/$0D escape: the
+    // raw newlines of the directive are counted by the lexer separately
+    // (the extra newline tokens of read_pragma_body()), so none is a source line.
+    ts_mark_output_only(its);
     std::vector<Token> ots;
     expand(its, ots, env);
-    for (auto& t : ots)
-        output << t.text;
+    return ots;
 }
+
+std::string expand_operand_text(const std::string& text, Env& env,
+                                bool report_unterminated) {
+    std::string r;
+    for (const auto& t : expand_operand_tokens(text, env, report_unterminated))
+        r += t.text;
+    return r;
+}
+
+} // namespace jiepp::preprocessor_detail
 
 std::string preprocess_text(const std::string& input, Env& env) {
     std::istringstream input_stream(input);
@@ -30,7 +90,18 @@ std::string preprocess_text(const std::string& input, Env& env) {
     return output_stream.str();
 }
 
-Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macros) {
+Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macros,
+          bool remove_comments) {
+    // B1: this is the library's public entry point (see preprocessor.hpp),
+    // and the predefine_macros loop below can itself raise a diagnostic
+    // (MACRO_REDEFINED, via handle_define()) before preprocess()/preprocess_text()
+    // is ever called. Seed Issue::loc_stack_'s bottom dummy entry here, unconditionally
+    // and before anything else, so a caller that links jiepp_lib directly without
+    // separately calling Issue::initialize() first does not crash on the first
+    // diagnostic raised during or after setup(). A no-op when already seeded
+    // (in particular, on the CLI path, where main() already called
+    // Issue::initialize() before setup() ever runs).
+    Issue::ensure_location_stack();
 #ifndef JIEPP_VERSION_MAJOR
 #define JIEPP_VERSION_MAJOR 0
 #endif
@@ -46,7 +117,10 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     Env env;
     env.set_max_include_depth(DEFAULT_MAX_INCLUDE_DEPTH);
     env.set_pragma_style("annotated");
-    env.set_remove_comments(false);
+    // Set before -D processing below (U5): -D's body follows the same
+    // comment policy as {#define} (handle_define() reads it via
+    // env.get_remove_comments()).
+    env.set_remove_comments(remove_comments);
 
     env.define("__COUNTER__",           std::make_unique<CounterMacro>());
     env.define("__LINE__",              std::make_unique<LineMacro>());
@@ -87,30 +161,53 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
         define_str("_JIEPP_VERSION",  "'" JIEPP_VERSION "'");
     }
 
-    for (auto& [k, v] : predefine_macros) {
-        auto ts = iec3_tokens_from_string(v, false, 0);
-        env.define(k, std::make_unique<UserDefinedObjectMacro>(ts));
-    }
+    // C4: -D NAME[=VALUE] is {k, v} split at its first '=' (v == "1" if
+    // none, see define_macro_option()). Like gcc's cpp_define()/clang's
+    // DefineBuiltinMacro(), process it as "{#define k v}" instead of
+    // defining an object macro unconditionally: k may be a function-like
+    // head such as "F(x)", is validated the same as any {#define} name, and
+    // redefining an existing macro (including a builtin one already
+    // installed above) with a different body is MACRO_REDEFINED (PP35).
+    for (auto& [k, v] : predefine_macros)
+        jiepp::preprocessor_detail::handle_define(k + " " + v, env);
 
     return env;
+}
+
+void apply_undef_option(const std::string& name, Env& env) {
+    // -U NAME is {#undef NAME}: same name validation, 'defined' guard, and
+    // extra-token warning (PP49, reported as "{#undef ...}", NAME alone is
+    // undefined), like gcc/clang.
+    (void)jiepp::preprocessor_detail::handle_undef(name, env);
 }
 
 // ---------------------------------------------------------------------------
 // dump_macros
 // ---------------------------------------------------------------------------
 
+namespace jiepp::preprocessor_detail {
+
+std::string define_directive_text(const std::string& name, const Macro& macro) {
+    if (auto* om = dynamic_cast<const UserDefinedObjectMacro*>(&macro)) {
+        std::string kv = encode_directive_text(name);
+        std::string vv = encode_directive_text(om->str());
+        return "{#define " + kv + " " + vv + "}";
+    }
+    if (auto* fm = dynamic_cast<const FunctionMacro*>(&macro)) {
+        std::string kv = encode_directive_text(name);
+        std::string vv = encode_directive_text(fm->str());
+        return "{#define " + kv + vv + "}";
+    }
+    return "";
+}
+
+} // namespace jiepp::preprocessor_detail
+
 void dump_macros(Env& env, std::ostream& output) {
     for (auto& [name, macro] : env.symbols()) {
         if (dynamic_cast<DefinedOperator*>(macro)) continue;
-
-        if (auto* om = dynamic_cast<UserDefinedObjectMacro*>(macro)) {
-            std::string kv = encode_directive_text(name);
-            std::string vv = encode_directive_text(om->str());
-            output << "{#define " << kv << " " << vv << "}\n";
-        } else if (auto* fm = dynamic_cast<FunctionMacro*>(macro)) {
-            std::string kv = encode_directive_text(name);
-            std::string vv = encode_directive_text(fm->str());
-            output << "{#define " << kv << vv << "}\n";
-        }
+        std::string line = jiepp::preprocessor_detail::define_directive_text(name, *macro);
+        if (!line.empty())
+            output << line << "\n";
     }
 }

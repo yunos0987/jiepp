@@ -1,0 +1,16 @@
+(* include_guard.iec - Include guards: {#pragma once} and macro guard *)
+
+(* Each fragment is included twice. {#pragma once} skips the whole file on  *)
+(* the second include. A macro guard skips only the text between {#ifndef}  *)
+(* and {#endif}; the header comment before the guard is emitted again.      *)
+{#include '_io_map.iec'}
+{#include '_io_map.iec'}
+{#include '_alarm_codes.iec'}
+{#include '_alarm_codes.iec'}
+
+program Main
+var
+    info: IoMapInfo;
+    alarm: AlarmCode := AlarmCode#door_open;
+end_var
+end_program

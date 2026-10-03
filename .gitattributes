@@ -27,6 +27,9 @@ VERSION text eol=lf
 # Shell scripts
 *.sh text eol=lf
 
+# Python
+*.py text eol=lf
+
 # Windows batch
 *.bat text eol=crlf
 *.cmd text eol=crlf

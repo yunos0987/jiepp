@@ -152,6 +152,14 @@ bool try_push_number(std::vector<Token>& result,
         auto q = p + 1;
         if (q < text.size() && (text[q] == '+' || text[q] == '-'))
             ++q;
+        // Ed.3: one '_' may directly follow '#' (or the sign), preceding
+        // the first digit, e.g. "16#_ff" (§6.1). A trailing/double '_' is
+        // still rejected: the '_' is only consumed here if a digit follows.
+        if (q < text.size() && text[q] == '_'
+            && q + 1 < text.size()
+            && std::isalnum(static_cast<unsigned char>(text[q + 1]))) {
+            ++q;
+        }
         if (q < text.size() && std::isalnum(static_cast<unsigned char>(text[q]))) {
             ++q;
             while (q < text.size()) {
@@ -196,19 +204,25 @@ bool try_push_number(std::vector<Token>& result,
     return true;
 }
 
-void push_string_token(std::vector<Token>& result, int type, std::string str) {
+void push_string_token(std::vector<Token>& result, int type, std::string str,
+                       int num_of_lines, bool unterminated) {
     std::vector<Token> trailing_ws;
     std::size_t scan = result.size();
     while (scan > 0 && result[scan - 1].type == Token::WS) {
         trailing_ws.push_back(std::move(result[scan - 1]));
         --scan;
     }
+    result.resize(scan);
 
-    if (scan > 0 && result[scan - 1].type == type) {
+    // A literal ended by a newline has no closing quote to drop; merging
+    // used to drop its last character ('abc<LF>'def' gave 'abdef').
+    if (scan > 0 && result[scan - 1].type == type && !result[scan - 1].unterminated) {
         Token merged = std::move(result[scan - 1]);
         result.resize(scan - 1);
         merged.text.pop_back();
         merged.text += str.substr(1);
+        merged.num_of_lines += num_of_lines;
+        merged.unterminated = unterminated;
         result.push_back(std::move(merged));
         for (auto it = trailing_ws.rbegin(); it != trailing_ws.rend(); ++it) {
             result.push_back(std::move(*it));
@@ -219,7 +233,9 @@ void push_string_token(std::vector<Token>& result, int type, std::string str) {
     for (auto it = trailing_ws.rbegin(); it != trailing_ws.rend(); ++it) {
         result.push_back(std::move(*it));
     }
-    result.push_back(Token::create(type, std::move(str)));
+    Token t = Token::create(type, std::move(str), num_of_lines);
+    t.unterminated = unterminated;
+    result.push_back(std::move(t));
 }
 
 } // namespace jiepp::detail

@@ -1,5 +1,6 @@
 ﻿#include "option.hpp"
 #include "../env/issue.hpp"
+#include "../env/param_constants.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -9,16 +10,54 @@
 
 namespace {
 
+// Both helpers below keep the actual conversion (std::stoi) as the *only*
+// statement inside the try block. INVALID_OPTION_VALUE is a throwing
+// (ERROR-severity) code, so if the range check were inside the same try (as
+// it used to be), the resulting Issue::Exception would be re-caught by this
+// function's own catch clause and re-issued as a second, contradictory
+// diagnostic ("must be a non-negative integer" immediately followed by
+// "requires a valid integer" for input that in fact parsed fine). Moving the
+// range check outside the try means it throws straight to the caller, so
+// exactly one diagnostic is ever printed per invocation. `pos` additionally
+// guards against trailing garbage (e.g. "3abc"), which std::stoi alone
+// silently accepts by parsing only the leading numeric prefix.
+
 int parse_positive_int(const std::string& arg, const std::string& opt_name) {
+    int val;
+    std::size_t pos = 0;
     try {
-        int val = std::stoi(arg);
-        if (val <= 0)
-            ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be a positive integer");
-        return val;
+        val = std::stoi(arg, &pos);
     } catch (const std::exception&) {
         ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
         return -1;
     }
+    if (pos != arg.size())
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
+    if (val <= 0)
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be a positive integer");
+    return val;
+}
+
+int parse_nonnegative_int(const std::string& arg, const std::string& opt_name) {
+    int val;
+    std::size_t pos = 0;
+    try {
+        val = std::stoi(arg, &pos);
+    } catch (const std::exception&) {
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
+        return -1;
+    }
+    if (pos != arg.size())
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": requires a valid integer");
+    if (val < 0)
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be a non-negative integer");
+    return val;
+}
+
+std::string parse_pragma_style(const std::string& arg, const std::string& opt_name) {
+    if (arg != VAL_PRAGMA_STANDARD && arg != VAL_PRAGMA_ANNOTATED)
+        ISSUE(INVALID_OPTION_VALUE, opt_name + ": must be annotated or standard");
+    return arg;
 }
 
 void require_value(int i, int argc, const std::string& opt_name) {
@@ -45,23 +84,35 @@ void display_help_and_exit(int exit_code = 0) {
         "  -MT TARGET               Set dependency target name\n"
         "  --max-include-depth N    Maximum include depth (default: 100)\n"
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
+        "  --max-expansion-steps N  Maximum macro expansion work in steps (default: 16777216; 0 = no limit)\n"
         "  --max-if-nesting N       Maximum if/elif nesting depth (default: 256)\n"
-        "  --recursion-limit N      Set OS stack size (N * ~8KB frames)\n"
+        "  --max-blank-lines N      Max consecutive blank lines before compaction (default: 7; 0 disables)\n"
+        "  --recursion-limit N      Stack size: N x 8 KiB, at least 1 MiB (default: 8 MiB)\n"
         "  --pp-output-pragma-style STYLE\n"
+        "                           Pragma output style: annotated or standard (default: annotated)\n"
         "  -P                       Suppress line markers in output\n"
         "  --remove-comments / -nC  Remove comments\n"
         "  -dM                      Dump macro definitions\n"
         "  -dD                      Emit {#define}/{#undef} lines inline\n"
         "  --silent                 Suppress all diagnostic output\n"
         "  --                       End of options\n"
-        "  --help                   Show this help\n"
+        "  --help / -h              Show this help\n"
         "  --version                Show version\n";
     std::exit(exit_code);
 }
 
 } // namespace
 
+// Splits -D ARG at its first '=' into {name, value} (value "1" if none).
+// `name` is not validated here -- it may be a function-like head such as
+// "F(x)"; setup() (C4) processes {name, value} as "{#define name value}",
+// which validates it the same as any {#define} name.
 std::pair<std::string, std::string> define_macro_option(const std::string& arg) {
+    // Not tied to a source file; see Issue::CLI_LOCATION. Guarded here too
+    // (not only by jiepp_command(), its only non-test caller) so this
+    // function is independently correct when called directly, e.g. by tests.
+    Issue::CliMode cli_mode_guard;
+
     auto eq = arg.find('=');
     if (eq != std::string::npos) {
         std::string name = arg.substr(0, eq);
@@ -78,6 +129,13 @@ JieppOptions parse_args(int argc, char* argv[]) {
 #ifndef JIEPP_VERSION
 #define JIEPP_VERSION "0.0.0"
 #endif
+    // Diagnostics raised in this function (UNKNOWN_OPTION, INVALID_OPTION_VALUE,
+    // MISSING_OPTION_VALUE, ...) are not tied to a source file; see
+    // Issue::CLI_LOCATION. Guarded here too (not only by main()) so
+    // parse_args() is independently correct when called directly, e.g. by
+    // tests.
+    Issue::CliMode cli_mode_guard;
+
     JieppOptions opts;
     bool end_of_options = false;
 
@@ -110,22 +168,34 @@ JieppOptions parse_args(int argc, char* argv[]) {
         }
 
         if (arg == "-D" && i + 1 < argc) {
-            opts.define_macros.push_back(argv[++i]);
+            std::string spec = argv[++i];
+            if (spec.empty())
+                ISSUE(MISSING_OPTION_VALUE, "-D");
+            opts.define_macros.push_back(spec);
             ++i; continue;
         }
 
         if (arg.size() >= 2 && arg.compare(0, 2, "-D") == 0) {
-            opts.define_macros.push_back(arg.substr(2));
+            std::string spec = arg.substr(2);
+            if (spec.empty())
+                ISSUE(MISSING_OPTION_VALUE, "-D");
+            opts.define_macros.push_back(spec);
             ++i; continue;
         }
 
         if (arg == "-U" && i + 1 < argc) {
-            opts.undef_macros.push_back(argv[++i]);
+            std::string name = argv[++i];
+            if (name.empty())
+                ISSUE(MISSING_OPTION_VALUE, "-U");
+            opts.undef_macros.push_back(name);
             ++i; continue;
         }
 
         if (arg.size() >= 2 && arg.compare(0, 2, "-U") == 0) {
-            opts.undef_macros.push_back(arg.substr(2));
+            std::string name = arg.substr(2);
+            if (name.empty())
+                ISSUE(MISSING_OPTION_VALUE, "-U");
+            opts.undef_macros.push_back(name);
             ++i; continue;
         }
 
@@ -202,15 +272,27 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
+        if (arg == "--max-expansion-steps" || arg == "--max_expansion_steps") {
+            require_value(i, argc, arg);
+            opts.max_expansion_steps = parse_nonnegative_int(argv[++i], arg);
+            ++i; continue;
+        }
+
         if (arg == "--max-if-nesting" || arg == "--max_if_nesting") {
             require_value(i, argc, arg);
             opts.max_if_nesting = parse_positive_int(argv[++i], arg);
             ++i; continue;
         }
 
+        if (arg == "--max-blank-lines" || arg == "--max_blank_lines") {
+            require_value(i, argc, arg);
+            opts.max_blank_lines = parse_nonnegative_int(argv[++i], arg);
+            ++i; continue;
+        }
+
         if (arg == "--pp-output-pragma-style" || arg == "--pp_output_pragma_style") {
             require_value(i, argc, arg);
-            opts.pp_output_pragma_style = argv[++i];
+            opts.pp_output_pragma_style = parse_pragma_style(argv[++i], arg);
             ++i; continue;
         }
 
@@ -261,12 +343,14 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
-        // Unknown option: error and exit (gcc-compatible behavior)
-        try {
-            ISSUE(UNKNOWN_OPTION, arg);
-        } catch (...) {
-            display_help_and_exit(1);
-        }
+        // Unknown option: exactly one diagnostic line on stderr and exit 1
+        // -- no usage dump (matches gcc/clang, e.g. clang's "unknown
+        // argument" error, neither of which print --help on this path).
+        // ISSUE() throws Issue::Exception; it is deliberately left
+        // unhandled here so it propagates to main()'s
+        // catch (const Issue::Exception&), which returns 1 without
+        // re-printing anything (happen() already emitted the PP70 line).
+        ISSUE(UNKNOWN_OPTION, arg);
     }
     return opts;
 }

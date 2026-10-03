@@ -67,6 +67,14 @@ struct CfValue {
     }
 };
 
+// Internal-only signal thrown by type_error() (constfold.y) after the
+// EXPR_TYPE_ERROR diagnostic has been issued (or suppressed via
+// {#ignore PP50}). Distinct from Issue::Exception so eval_const_expr()
+// (constfold.cpp) can always unwind the parser and return a value instead of
+// letting an unrelated exception type escape uncaught when the diagnostic
+// was ignored and Issue::happen() returned normally.
+struct CfTypeError {};
+
 inline std::uint64_t bit_mask(BitKind kind) {
     switch (kind) {
     case BitKind::BYTE:  return 0xffull;

@@ -9,7 +9,7 @@ var
     x, y, result: int;
 end_var
 (*{st}*)
-result := if (x) > (y) then (x) else (y) end_if;
-result := if (0) > (if (x) > (100) then (100) else (x) end_if) then (0) else (if (x) > (100) then (100) else (x) end_if) end_if;
+result := SEL((x) > (y), (y), (x));
+result := SEL((0) > (SEL((x) > (100), (x), (100))), (SEL((x) > (100), (x), (100))), (0));
 (*{end}*)
 end_program

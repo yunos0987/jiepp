@@ -1,0 +1,2 @@
+{#syspath 'sub2'}
+{#sinclude 'inner_s.iec'}

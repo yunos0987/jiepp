@@ -124,6 +124,54 @@ TEST_F(OptionTest, ParseArgsMaxOptions) {
     EXPECT_EQ(*opts.max_if_nesting, 16);
 }
 
+TEST_F(OptionTest, ParseArgsMaxExpansionSteps) {
+    {
+        char* argv[] = {const_cast<char*>("jiepp"),
+                        const_cast<char*>("--max-expansion-steps"), const_cast<char*>("5")};
+        auto opts = parse_args(3, argv);
+        ASSERT_TRUE(opts.max_expansion_steps.has_value());
+        EXPECT_EQ(*opts.max_expansion_steps, 5);
+    }
+    {
+        // Snake-case alias; 0 (no limit) is valid, unlike the depth options.
+        char* argv[] = {const_cast<char*>("jiepp"),
+                        const_cast<char*>("--max_expansion_steps"), const_cast<char*>("0")};
+        auto opts = parse_args(3, argv);
+        ASSERT_TRUE(opts.max_expansion_steps.has_value());
+        EXPECT_EQ(*opts.max_expansion_steps, 0);
+    }
+    {
+        // Above 2^24 (PP04's cap for depth-like options does not apply).
+        char* argv[] = {const_cast<char*>("jiepp"),
+                        const_cast<char*>("--max-expansion-steps"), const_cast<char*>("2147483647")};
+        auto opts = parse_args(3, argv);
+        ASSERT_TRUE(opts.max_expansion_steps.has_value());
+        EXPECT_EQ(*opts.max_expansion_steps, 2147483647);
+    }
+    {
+        char* argv[] = {const_cast<char*>("jiepp")};
+        auto opts = parse_args(1, argv);
+        EXPECT_FALSE(opts.max_expansion_steps.has_value());
+    }
+}
+
+TEST_F(OptionTest, ParseArgsMaxExpansionStepsInvalidValues) {
+    for (const char* bad : {"-1", "abc", "3x", "2147483648"}) {
+        char* argv[] = {const_cast<char*>("jiepp"),
+                        const_cast<char*>("--max-expansion-steps"), const_cast<char*>(bad)};
+        EXPECT_THROW(parse_args(3, argv), Issue::Exception) << bad;
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size()) << bad;
+        EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << bad << ": " << msgs[0];
+    }
+}
+
+TEST_F(OptionTest, ParseArgsMaxExpansionStepsMissingValue) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("--max-expansion-steps")};
+    EXPECT_THROW(parse_args(2, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
 TEST_F(OptionTest, ParseArgsSnakeCaseVariants) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("--max_include_depth"), const_cast<char*>("5")};
@@ -149,6 +197,126 @@ TEST_F(OptionTest, ParseArgsPragmaStyle) {
     EXPECT_EQ(*opts.pp_output_pragma_style, "annotated");
 }
 
+TEST_F(OptionTest, ParseArgsPragmaStyleInvalid) {
+    // Unlike the in-source {#pp-output-pragma-style} directive (a non-fatal
+    // WARNING), an invalid CLI value is a hard startup ERROR, matching
+    // gcc/clang's convention for bad enum-like option arguments.
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--pp-output-pragma-style"),
+                    const_cast<char*>("bogus")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_OPTION_VALUE, code());
+}
+
+// ---- F5: --max-blank-lines CLI option ----
+
+TEST_F(OptionTest, ParseArgsMaxBlankLines) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("4")};
+    auto opts = parse_args(3, argv);
+    ASSERT_TRUE(opts.max_blank_lines.has_value());
+    EXPECT_EQ(*opts.max_blank_lines, 4);
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesZero) {
+    // 0 is a valid, meaningful value (disables compaction entirely), unlike
+    // the positive-only max-include-depth/max-expansion-depth/max-if-nesting.
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("0")};
+    auto opts = parse_args(3, argv);
+    ASSERT_TRUE(opts.max_blank_lines.has_value());
+    EXPECT_EQ(*opts.max_blank_lines, 0);
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesNegative) {
+    // F4: exactly one diagnostic, not the old double/contradictory pair
+    // ("must be a non-negative integer" followed by "requires a valid
+    // integer" for input that in fact parsed fine). Note: messages()/code()/
+    // message() all drain the same DiagBox buffer on read, so capture
+    // messages() exactly once and derive every assertion from that snapshot.
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("-3")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size()) << "expected exactly one diagnostic";
+    EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("must be a non-negative integer")) << msgs[0];
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesNonNumeric) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("abc")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size()) << "expected exactly one diagnostic";
+    EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("requires a valid integer")) << msgs[0];
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesTrailingGarbage) {
+    // F4: std::stoi alone would silently accept "3abc" as 3; the added
+    // pos == arg.size() check rejects trailing non-numeric garbage.
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max-blank-lines"), const_cast<char*>("3abc")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size()) << "expected exactly one diagnostic";
+    EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("requires a valid integer")) << msgs[0];
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesMissingValue) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("--max-blank-lines")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
+TEST_F(OptionTest, ParseArgsMaxBlankLinesUnderscoreAlias) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max_blank_lines"), const_cast<char*>("2")};
+    auto opts = parse_args(3, argv);
+    ASSERT_TRUE(opts.max_blank_lines.has_value());
+    EXPECT_EQ(*opts.max_blank_lines, 2);
+}
+
+// ---- F8: -D/-U missing-value diagnostics ----
+
+TEST_F(OptionTest, ParseArgsDefineMissingValueIsError) {
+    // F8: a bare trailing -D (no name, no value) must fail fast with
+    // MISSING_OPTION_VALUE, symmetric with -U's existing check, instead of
+    // silently pushing an empty spec that only surfaces later (and with a
+    // misleading "malformed macro" message) via define_macro_option().
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("-D")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
+TEST_F(OptionTest, ParseArgsDefineEmptyArgvValueIsError) {
+    // "-D" followed by a separate, empty-string argv token (e.g. `-D ""`
+    // from a shell) previously slipped past the empty-spec check above,
+    // which only looked at the glued form ("-Dxxx"): the separate-argv
+    // branch pushed the empty string straight into define_macros without
+    // any check. Symmetric with the glued "-D" bare-trailing case, this
+    // must also raise MISSING_OPTION_VALUE.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("-D"), const_cast<char*>("")};
+    EXPECT_THROW(parse_args(4, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
+TEST_F(OptionTest, ParseArgsDefineEmptyNameStillInvalidMacroDef) {
+    // "-D=1" has a non-empty spec ("=1"), so it is not caught by the
+    // empty-spec check above; it must still reach define_macro_option() and
+    // fail there as an empty macro *name*, INVALID_MACRO_DEF -- this is a
+    // parse_args()-then-jiepp_command() split, not testable via parse_args()
+    // alone, so it is exercised directly against define_macro_option().
+    auto arg = std::string("=1");
+    EXPECT_THROW(define_macro_option(arg), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_MACRO_DEF, code());
+}
+
 // ---- New CLI options ----
 
 TEST_F(OptionTest, ParseArgsUJoined) {
@@ -164,6 +332,29 @@ TEST_F(OptionTest, ParseArgsUSeparate) {
     auto opts = parse_args(3, argv);
     ASSERT_EQ(opts.undef_macros.size(), 1u);
     EXPECT_EQ(opts.undef_macros[0], "BAR");
+}
+
+TEST_F(OptionTest, UndefMissingValueIsError) {
+    // B14: "-U" with no following value (e.g. the very last argv token) must
+    // raise a diagnostic, mirroring how -I/-o require a value, instead of
+    // silently pushing an empty undef name that is a harmless no-op downstream.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("-U")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
+TEST_F(OptionTest, ParseArgsUndefEmptyArgvValueIsError) {
+    // "-U" followed by a separate, empty-string argv token (e.g. `-U ""`
+    // from a shell) previously slipped past the empty-spec check that only
+    // covers the glued form ("-Uxxx"/bare trailing "-U"): the separate-argv
+    // branch pushed the empty string straight into undef_macros without any
+    // check. Symmetric with UndefMissingValueIsError, this must also raise
+    // MISSING_OPTION_VALUE.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("-U"), const_cast<char*>("")};
+    EXPECT_THROW(parse_args(4, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
 }
 
 TEST_F(OptionTest, ParseArgsIncludeFile) {
@@ -310,4 +501,30 @@ TEST_F(OptionTest, CLICodeSeverityClassification) {
     EXPECT_TRUE(Issue::is_error(Issue::Code::RECURSION_LIMIT_RANGE));
     EXPECT_TRUE(Issue::is_error(Issue::Code::THREAD_CREATE_FAILED));
     EXPECT_TRUE(Issue::is_error(Issue::Code::STACK_LIMIT_FAILED));
+}
+
+// ---- D1/D2: unknown option -- single diagnostic, no --help dump ----
+
+TEST_F(OptionTest, ParseArgsUnknownOption) {
+    // D1: an unknown option must propagate Issue::Exception like every
+    // other option-parsing error in this file, instead of printing the full
+    // --help usage text to stdout and calling std::exit() itself (which
+    // would previously have terminated the whole test binary here).
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("--foo")};
+    EXPECT_THROW(parse_args(2, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::UNKNOWN_OPTION, code());
+}
+
+TEST_F(OptionTest, ParseArgsUnknownOptionMessageFormat) {
+    // D2: diagnostics not tied to a source file (PP70-76, PP13, PP10 for
+    // -o/-MF open failures, PP11 for the top-level input, PP01 from main)
+    // render as "jiepp: error: PPxx: message", not the string-input
+    // preprocess()/preprocess_text() API's "<unknown location>:N.0: ..."
+    // form -- exercised here for UNKNOWN_OPTION via parse_args() called
+    // directly, with no ambient jiepp_command()/main() context.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("--foo")};
+    EXPECT_THROW(parse_args(2, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ("jiepp: error: PP70: Unknown command-line option; '--foo'", msgs[0]);
 }

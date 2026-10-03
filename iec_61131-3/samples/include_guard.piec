@@ -1,0 +1,41 @@
+(*{#:0 'iec_61131-3/samples/include_guard.iec'}*)
+(* include_guard.iec - Include guards: {#pragma once} and macro guard *)
+
+(* Each fragment is included twice. {#pragma once} skips the whole file on  *)
+(* the second include. A macro guard skips only the text between {#ifndef}  *)
+(* and {#endif}; the header comment before the guard is emitted again.      *)
+(*{#:0 '_io_map.iec'}*)
+(* _io_map.iec - I/O map fragment guarded by {#pragma once} *)
+
+
+type IoMapInfo :
+struct
+    file: string := '_io_map.iec';
+    level: int := 1;
+    input_count: int := 16;
+end_struct;
+end_type
+(*{#:6 'iec_61131-3/samples/include_guard.iec'}*)
+(*{#:7 'iec_61131-3/samples/include_guard.iec'}*)
+(*{#:0 '_alarm_codes.iec'}*)
+(* _alarm_codes.iec - Alarm code fragment guarded by a classic macro guard *)
+
+
+
+type AlarmCode : int (
+    door_open := 16#0101,
+    over_pressure := 16#0102
+);
+end_type
+
+(*{#:8 'iec_61131-3/samples/include_guard.iec'}*)
+(*{#:0 '_alarm_codes.iec'}*)
+(* _alarm_codes.iec - Alarm code fragment guarded by a classic macro guard *)
+(*{#:9 'iec_61131-3/samples/include_guard.iec'}*)
+
+program Main
+var
+    info: IoMapInfo;
+    alarm: AlarmCode := AlarmCode#door_open;
+end_var
+end_program

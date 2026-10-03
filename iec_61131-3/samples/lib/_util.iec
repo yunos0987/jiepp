@@ -1,4 +1,4 @@
 (* _util.iec — Utility included via syspath *)
 
 {#define UTIL_LOADED 1}
-{#define ABS(x) if (x) >= 0 then (x) else -(x) end_if}
+{#define ABS_OF(x) SEL((x) >= 0, -(x), (x))}

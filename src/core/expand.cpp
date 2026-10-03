@@ -6,10 +6,13 @@
 #include "expand_helpers.hpp"
 #include "preprocessor.hpp"
 #include "../loader/loader.hpp"
+#include "../loader/lexer.hpp"
 #include "../loader/directive_parser.hpp"
 #include "preprocessor_internal.hpp"
 
 #include "../macro/macro.hpp"
+#include "../util/stack_guard.hpp"
+#include "../util/text.hpp"
 
 #include <algorithm>
 #include <optional>
@@ -22,18 +25,52 @@ using namespace jiepp::expand_detail;
 
 namespace {
 
-void err_set_lineno(int ln) {
+// True if body starts with a run of one-or-more whitespace characters
+// (the lexer already collapses embedded newlines to a single space in
+// non-directive pragma bodies) immediately followed by '#'. Such a body
+// came from a '{'/'(*{'/'/*{'/'//{' opener followed by whitespace or a
+// newline and then '#': the lexer treated it as an ordinary pragma rather
+// than a directive (see lexer_pragma.cpp), and PP28 flags it here.
+bool has_whitespace_before_hash(const std::string& body) {
+    std::size_t i = 0;
+    while (i < body.size() &&
+           (body[i] == ' ' || body[i] == '\t' || body[i] == '\f' || body[i] == '\v'))
+        ++i;
+    return (i > 0) && (i < body.size()) && (body[i] == '#');
+}
+
+void err_set_lineno(LineNo ln) {
     std::string fp = Issue::filepath();
     Issue::pop();
     Issue::push({ln, fp});
 }
 
-void advance_lineno(int delta, Env& env) {
+void advance_lineno(LineNo delta, Env& env) {
     if (delta == 0)
         return;
-    int nl = env.get_lineno() + delta;
-    env.set_lineno(nl);
-    err_set_lineno(nl);
+    // item a: set_lineno() applies the 32-bit wrap (wrap_lineno(), see
+    // lineno.hpp); err_set_lineno() must be given that *wrapped* value, not
+    // env.get_lineno() + delta recomputed separately -- otherwise the Issue
+    // location stack and env's own counter could disagree right after a
+    // wrap.
+    env.set_lineno(env.get_lineno() + delta);
+    err_set_lineno(env.get_lineno());
+}
+
+// Like clang's CheckEndOfDirective() for {#else}/{#endif}: `lex_operand`
+// itself raises PP29 for each unterminated literal in the operand (a side
+// effect of lexing it), and this then raises PP49 (EXTRA_TOKENS_AT_END_OF_
+// DIRECTIVE) if a non-whitespace token remains after that. Comments are
+// whitespace (silent); a document comment `(*! *)` is a token and counts.
+// Callers gate whether this is even called; an empty raw_arg needs no scan.
+void check_end_of_directive(const char* name, const std::string& raw_arg) {
+    if (raw_arg.empty())
+        return;
+    auto ts = ts_trim(jiepp::preprocessor_detail::lex_operand(raw_arg, /*remove_comments=*/true));
+    if (!ts.empty())
+        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
+              std::string("{#") + name + " " +
+                  Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
 }
 
 // ── jiepp extension: directive dispatch (not in Prosser) ──────────
@@ -42,21 +79,52 @@ void dispatch_directive(const Token& t,
                         std::vector<CtrlState>& ctrl,
                         Env& env,
                         std::vector<Token>& ots) {
-    auto [key, raw_arg] = parse_directive(t.text);
+    // Decode without raising PP21 yet (the 2-arg overload): whether this
+    // directive's escape is worth reporting depends on whether the
+    // directive is active/reachable at all, which is only known below, and
+    // a directive is decoded here at most once (UD2/UD3: previously each of
+    // key/value decoding, and any earlier re-parse by the macro-argument
+    // collector in this file, could each raise its own PP21).
+    std::optional<std::string> invalid_escape;
+    auto [key, raw_arg] = parse_directive(t.text, invalid_escape);
     int kind = DirectiveToken::name_to_kind(key);
-    if (kind == -1)
-        return;
-
-    if (kind & DirectiveToken::MASK_CTRLEX) {
-        if (kind == DirectiveToken::IFDEF) {
-            raw_arg = "defined(" + raw_arg + ")";
-        } else if (kind == DirectiveToken::IFNDEF) {
-            raw_arg = "\\not\\ defined(" + raw_arg + ")";
-        }
-        kind = DirectiveToken::IF;
-    }
 
     bool active = ctrl_is_active(ctrl);
+
+    if (kind == -1) {
+        // B1: PP45 (UNKNOWN_DIRECTIVE, ERROR) / PP46 (INVALID_DIRECTIVE_NAME,
+        // ERROR) are reported here, at dispatch time, instead of at lex time
+        // (the former DirectiveToken::ready(), which no longer diagnoses
+        // this). Dispatch time has the correct line number and correctly
+        // suppresses the diagnostic for a directive inside an inactive
+        // {#if 0} block, matching gcc (see classify_unknown_directive()).
+        if (active) {
+            if (invalid_escape)
+                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+            // `key` is decoded, so a $n/$r escape in the source is a real
+            // line break here; re-escape it so the UNKNOWN_DIRECTIVE/
+            // INVALID_DIRECTIVE_NAME diagnostic stays on one line, like the
+            // directive-operand diagnostics in directive_handlers.cpp.
+            Issue::happen(classify_unknown_directive(key), Util::escape_line_breaks(key));
+            // Like gcc/clang, an unrecognised but active directive's operand
+            // is still scanned for PP29 (only reached in continue mode: the
+            // happen() call above throws otherwise).
+            if (!raw_arg.empty())
+                (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
+        }
+        return;
+    }
+
+    // C2: {#ifdef}/{#ifndef} are evaluated directly (eval_ifdef below), like
+    // clang's HandleIfdefDirective -- NAME is not macro-expanded and a
+    // missing/non-identifier NAME is diagnosed without ever building a
+    // "defined(...)" string and round-tripping it through eval_cond.
+    bool ifdef_form = false, ifndef_form = false;
+    if (kind & DirectiveToken::MASK_CTRLEX) {
+        ifdef_form = true;
+        ifndef_form = (kind == DirectiveToken::IFNDEF);
+        kind = DirectiveToken::IF;
+    }
 
     if (kind & DirectiveToken::MASK_CTRL) {
         switch (kind) {
@@ -65,7 +133,9 @@ void dispatch_directive(const Token& t,
                 ISSUE(MAX_IF_NESTING_EXCEEDED);
             }
             if (active) {
-                bool cond = eval_cond(raw_arg, env);
+                if (invalid_escape)
+                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                bool cond = ifdef_form ? eval_ifdef(raw_arg, ifndef_form, env) : eval_cond(raw_arg, env);
                 ctrl.push_back({false, cond ? std::optional<bool>(true) : std::nullopt});
             } else {
                 ctrl.push_back({false, false});
@@ -73,31 +143,79 @@ void dispatch_directive(const Token& t,
             break;
         case DirectiveToken::ELIF:
             if (ctrl.size() <= 1) {
+                // Edge case: an unmatched {#elif} already errors below, so
+                // an invalid escape in its operand is not itself reported
+                // -- the ctrl_parent_active() gate for that report is never
+                // reached, since ELIF_ERROR returns first.
                 ISSUE(ELIF_ERROR, "elif without matching if");
+                return;
             }
+            if (ctrl_parent_active(ctrl) && invalid_escape)
+                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
             {
                 auto& last = ctrl.back();
                 if (last.seen_else) {
                     ISSUE(ELIF_ERROR, "elif after else");
                 }
+                if (last.condition.has_value()) {
+                    // A true branch was already taken earlier in this
+                    // if/elif chain: this {#elif}'s condition is never
+                    // evaluated (eval_cond() below is skipped), but gcc/clang
+                    // still scan its operand for a warning, so PP29 is
+                    // reported here explicitly.
+                    if (ctrl_parent_active(ctrl))
+                        (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
+                }
+                // item: assign has_entered/condition individually here
+                // (instead of replacing the whole CtrlState) so seen_else --
+                // already checked above -- survives into any further
+                // {#elif}/{#else} in this same group; a later {#else} still
+                // needs it to report ELSE_ERROR ("else after else"), matching
+                // gcc/clang's "#elif after #else"/"#else after #else" for
+                // `#if 0 / #else / #elif 1 / #else / #endif` (only reachable
+                // when the first ELIF_ERROR above does not itself abort
+                // processing, e.g. under Issue::ContinueMode).
                 if (last.condition.has_value() && last.condition.value()) {
-                    last = {true, false};
+                    last.has_entered = true;
+                    last.condition = false;
                 } else if (!last.condition.has_value()) {
+                    last.has_entered = true;
                     if (ctrl_parent_active(ctrl)) {
                         bool cond = eval_cond(raw_arg, env);
-                        last = {true, cond ? std::optional<bool>(true) : std::nullopt};
+                        last.condition = cond ? std::optional<bool>(true) : std::nullopt;
                     } else {
-                        last = {true, false};
+                        last.condition = false;
                     }
                 }
             }
             break;
         case DirectiveToken::ELSE:
             if (ctrl.size() <= 1) {
+                // Unlike {#elif} above: clang scans an unmatched {#else}'s
+                // operand too (R3), the top level always counting as
+                // "active" for this purpose, so PP21/PP29/PP49 are reported
+                // here before the "else without matching if" error.
+                if (invalid_escape)
+                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                check_end_of_directive("else", raw_arg);
                 ISSUE(ELSE_ERROR, "else without matching if");
+                return;
             }
             {
                 auto& last = ctrl.back();
+                // R1 (clang): a {#else} is "reached" -- and so has its
+                // operand scanned for PP21/PP29/PP49 -- when the group right
+                // before it is active, or was itself taken; not when an
+                // earlier, non-adjacent branch of this same chain was
+                // already taken (gcc scans that case too; clang wins ties,
+                // see the design doc). This is narrower than the old
+                // ctrl_parent_active() gate this replaces.
+                const bool reached = ctrl_parent_active(ctrl) &&
+                                     (!last.condition.has_value() || *last.condition);
+                if (reached && invalid_escape)
+                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                if (reached)
+                    check_end_of_directive("else", raw_arg);
                 if (last.seen_else) {
                     ISSUE(ELSE_ERROR, "else after else");
                 }
@@ -112,8 +230,20 @@ void dispatch_directive(const Token& t,
             break;
         case DirectiveToken::ENDIF:
             if (ctrl.size() <= 1) {
+                // Unlike {#elif} above: clang scans an unmatched {#endif}'s
+                // operand too (R3), matching the {#else} case above.
+                if (invalid_escape)
+                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                check_end_of_directive("endif", raw_arg);
                 ISSUE(ENDIF_ERROR, "endif without matching if");
+                return;
             }
+            if (ctrl_parent_active(ctrl) && invalid_escape)
+                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+            // Like gcc/clang (R2), a reached {#endif}'s operand is still
+            // scanned for PP29/PP49, before the group it closes is popped.
+            if (ctrl_parent_active(ctrl))
+                check_end_of_directive("endif", raw_arg);
             ctrl.pop_back();
             break;
         default:
@@ -125,21 +255,40 @@ void dispatch_directive(const Token& t,
     if (!active)
         return;
 
+    if (invalid_escape)
+        ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+
     switch (kind) {
-    case DirectiveToken::DEFINE:
-        jiepp::preprocessor_detail::handle_define(raw_arg, env);
-        if (env.is_dd_mode()) {
-            // Emit the original token text (already correctly encoded).
-            // raw_arg is decoded; rebuilding from it would corrupt dollar-escape sequences.
-            ots.push_back(Token::create(Token::DIRECTIVE, t.text));
+    case DirectiveToken::DEFINE: {
+        // Echo under -dD only if a macro was actually defined: a {#define}
+        // rejected with an error (PP33/PP36/...) in continue mode or under
+        // {#ignore} defined nothing and must not appear in the -dD stream.
+        // Default: echo the original text (already correctly encoded). Under
+        // -nC the echo must not carry comments the definition dropped, so
+        // print the stored definition the way -dM does (gcc/clang -dD
+        // without -C print no comments either).
+        std::string name;
+        if (jiepp::preprocessor_detail::handle_define(raw_arg, env, &name) && env.is_dd_mode()) {
+            ots.push_back(Token::create(Token::DIRECTIVE, env.get_remove_comments()
+                ? jiepp::preprocessor_detail::define_directive_text(name, *env.lookup(name))
+                : t.text));
         }
         break;
-    case DirectiveToken::UNDEF:
-        jiepp::preprocessor_detail::handle_undef(raw_arg, env);
-        if (env.is_dd_mode()) {
-            ots.push_back(Token::create(Token::DIRECTIVE, t.text));
+    }
+    case DirectiveToken::UNDEF: {
+        // Echo under -dD only if a macro was actually undefined (C1): a
+        // rejected {#undef} (missing/non-identifier name) changed nothing
+        // and must not appear in the -dD stream, matching {#define} above.
+        // Under -nC, echo the decoded name re-encoded, not raw_arg's
+        // original text, so a comment around the name does not appear.
+        std::string name;
+        if (jiepp::preprocessor_detail::handle_undef(raw_arg, env, &name) && env.is_dd_mode()) {
+            ots.push_back(Token::create(Token::DIRECTIVE, env.get_remove_comments()
+                ? "{#undef " + encode_directive_text(name) + "}"
+                : t.text));
         }
         break;
+    }
     case DirectiveToken::TOKENIZE:
         jiepp::preprocessor_detail::handle_tokenize(raw_arg, env, ots);
         break;
@@ -150,7 +299,9 @@ void dispatch_directive(const Token& t,
         jiepp::preprocessor_detail::handle_stringize(raw_arg, env, ots, true);
         break;
     case DirectiveToken::SETLINE:
-        jiepp::preprocessor_detail::handle_setline(raw_arg, env, ots);
+        // U1(a)/C1/C2: key == "" is the nameless marker form ({#:N}); a
+        // named key ("line"/"set_line"/"set-line") is the gcc-style form.
+        jiepp::preprocessor_detail::handle_setline(raw_arg, key.empty(), env, ots);
         break;
     case DirectiveToken::SYSPATH:
 #ifdef JIEPP_SANDBOX
@@ -217,6 +368,13 @@ void dispatch_directive(const Token& t,
         jiepp::preprocessor_detail::handle_max_if_nesting(raw_arg, env);
 #endif
         break;
+    case DirectiveToken::MAX_BLANK_LINES:
+#ifdef JIEPP_SANDBOX
+        ISSUE(SANDBOX_RESTRICTED_DIRECTIVE, "max_blank_lines");
+#else
+        jiepp::preprocessor_detail::handle_max_blank_lines(raw_arg, env);
+#endif
+        break;
     case DirectiveToken::PP_OUTPUT_PRAGMA_STYLE:
         jiepp::preprocessor_detail::handle_pragma_style(raw_arg, env);
         break;
@@ -246,8 +404,24 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
         return;
     }
 
-    std::string expanded_body = preprocess_text(body, env);
+    if (has_whitespace_before_hash(body)) {
+        ISSUE(WHITESPACE_BEFORE_DIRECTIVE);
+    }
+
+    std::string expanded_body;
+    int body_lines = 0;
+    for (const auto& et : jiepp::preprocessor_detail::expand_operand_tokens(body, env)) {
+        expanded_body += et.text;
+        body_lines += et.num_of_lines;
+    }
     Token out = t;
+    // A newline printed inside the pragma text comes from a macro
+    // replacement (the lexer already folded the raw newlines of the body),
+    // so it is not a source line (see Token::output_only_lines).
+    if (body_lines > 0) {
+        out.num_of_lines = body_lines;
+        out.mark_output_only();
+    }
     if (env.is_standard_pragma_style()) {
         out.text = "{" + expanded_body + "}";
     } else {
@@ -265,9 +439,37 @@ namespace {
 struct ExpansionDepthGuard {
     Env& env;
     explicit ExpansionDepthGuard(Env& e) : env(e) {
+        // Checked first, before the depth counter moves and before PP60, so
+        // a throw here leaves expansion_depth() untouched, and {#ignore
+        // PP60} cannot turn deep nesting into a crash by letting expansion
+        // continue past the depth limit on a near-exhausted stack.
+        if (Util::stack_nearly_exhausted()) {
+            const std::size_t kib = Util::stack_budget() >> 10;
+            ISSUE(STACK_EXHAUSTED,
+                  "expansion depth " + std::to_string(env.expansion_depth()) +
+                  " with a " + std::to_string(kib) + " KiB stack; retry with --recursion-limit greater than " +
+                  std::to_string(kib / 8));
+            // STACK_EXHAUSTED is SEVERE: happen() always throws for it
+            // (ignore list, blockings and continue mode cannot stop it, see
+            // Issue::happen()). This explicit throw is defense-in-depth so a
+            // future change there cannot silently turn this back into a
+            // stack overflow.
+            throw Issue::Exception(Issue::Code::STACK_EXHAUSTED);
+        }
         env.inc_expansion_depth();
         if (env.expansion_depth() > env.get_max_expansion_depth()) {
-            ISSUE(MAX_EXPANSION_DEPTH_EXCEEDED);
+            // U6: ISSUE() throws before this constructor finishes, so this
+            // object never completes construction and its destructor never
+            // runs -- without this catch, the increment above would leak,
+            // permanently inflating expansion_depth() for the rest of the
+            // process (observable e.g. in a caller that catches the
+            // exception and keeps using the same Env).
+            try {
+                ISSUE(MAX_EXPANSION_DEPTH_EXCEEDED);
+            } catch (...) {
+                env.dec_expansion_depth();
+                throw;
+            }
         }
     }
     ~ExpansionDepthGuard() { env.dec_expansion_depth(); }
@@ -290,7 +492,21 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
         Token t = std::move(work.back());
         work.pop_back();
 
-        if (t.num_of_lines > 0) {
+        // Work budget (PP64): charged for every token taken off the work
+        // stack, before the active/inactive check below, so skipped
+        // {#if 0} groups, directive tokens and repeated {#include}s cost
+        // steps too. See Param::charge_expansion_steps().
+        env.charge_expansion_steps(1 + t.text.size() / 64);
+
+        // PP29 only where the literal is processed (not in a skipped group,
+        // like clang; gcc also warns there), before its own "$"+newline
+        // continuations advance the counter, so its first line is reported.
+        // Only source tokens still carry the mark: operands, macro bodies and
+        // arguments were reported and cleared already.
+        if (t.unterminated && ctrl_is_active(ctrl))
+            jiepp::preprocessor_detail::report_unterminated_literal(t);
+
+        if (t.num_of_lines > 0 && !t.lineno_counted) {
             advance_lineno(t.num_of_lines, env);
         }
 
@@ -316,12 +532,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
 
         // ── Prosser's algorithm (cpp.algo.md §expand) ──
 
-        if (t.type == Token::ANY && (!t.hs || !t.hs->count(t.text))) {
+        if (t.type == Token::ANY && !t.hs.contains(t.text)) {
             Macro* macro = env.lookup(t.text);
             if (macro) {
 
             // defined operator (jiepp extension)
-            if (dynamic_cast<DefinedOperator*>(macro)) {
+            if (auto* defop = dynamic_cast<DefinedOperator*>(macro)) {
                 while (!work.empty() && (work.back().type & Token::MASK_WS))
                     work.pop_back();
 
@@ -333,12 +549,24 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         work.pop_back();
                 }
 
+                // C3: the operand must be an identifier, like clang. Only
+                // the first such error within one #if/#elif condition is
+                // reported (defop->operand_error, reset per condition by
+                // eval_cond_str); every later 'defined' in the same
+                // condition just pushes "0" silently, since eval_cond()
+                // discards the whole (already-erroring) condition anyway.
                 std::string operand;
-                if (!work.empty() && work.back().type == Token::ANY) {
+                if (!work.empty() && work.back().type == Token::ANY && iec3_is_identifier(work.back().text)) {
                     operand = work.back().text;
                     work.pop_back();
                 } else {
-                    ISSUE(INVALID_DEFINED_OPERAND, t.text);
+                    if (!defop->operand_error) {
+                        defop->operand_error = true;
+                        ISSUE(INVALID_DEFINED_OPERAND,
+                              work.empty() ? "macro name missing"
+                                           : "macro name must be an identifier: " +
+                                                 Util::escape_line_breaks(work.back().text));
+                    }
                     ots.push_back(Token::create(Token::ANY, "0"));
                     continue;
                 }
@@ -349,13 +577,17 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     if (!work.empty() && work.back().type == Token::RP) {
                         work.pop_back();
                     } else {
-                        ISSUE(INVALID_EXPRESSION, "defined");
+                        if (!defop->operand_error) {
+                            defop->operand_error = true;
+                            ISSUE(INVALID_EXPRESSION, "missing ')' after 'defined'");
+                        }
+                        ots.push_back(Token::create(Token::ANY, "0"));
+                        continue;
                     }
                 }
 
-                Macro* m = env.lookup(operand);
-                bool is_def = m && !dynamic_cast<DefinedOperator*>(m);
-                ots.push_back(Token::create(Token::ANY, is_def ? "1" : "0"));
+                ots.push_back(Token::create(Token::ANY,
+                                            macro_name_is_defined(operand, env) ? "1" : "0"));
                 continue;
             }
 
@@ -366,9 +598,11 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 bool found_lp = false;
                 while (!work.empty()) {
                     if (work.back().type & Token::MASK_WS) {
+                        env.charge_expansion_steps(1 + work.back().text.size() / 64);
                         pre_lp.push_back(std::move(work.back()));
                         work.pop_back();
                     } else if (work.back().type == Token::LP) {
+                        env.charge_expansion_steps(1);
                         pre_lp.push_back(std::move(work.back()));
                         work.pop_back();
                         found_lp = true;
@@ -380,20 +614,146 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
 
                 if (found_lp) {
                     // Collect parameters until matching ')'
+                    // sum_num_of_lines: every newline consumed while scanning past the
+                    // macro name and its argument list, for output line-count fidelity.
+                    // sum_uncounted: the subset not already applied to env's line
+                    // counter by an earlier (outer) pass over these same tokens, used
+                    // to advance the counter exactly once per physical newline.
+                    // sum_output_only: the subset that came from an earlier macro
+                    // replacement (Token::output_only_lines), e.g. {#define H F(a$nb}
+                    // then H): re-emitted as output-only lines, not source lines.
                     int sum_num_of_lines = 0;
-                    for (auto& s : pre_lp)
+                    int sum_uncounted = 0;
+                    int sum_output_only = 0;
+                    for (auto& s : pre_lp) {
                         sum_num_of_lines += s.num_of_lines;
+                        if (!s.lineno_counted)
+                            sum_uncounted += s.num_of_lines;
+                        if (s.output_only_lines)
+                            sum_output_only += s.num_of_lines;
+                    }
 
                     std::vector<std::vector<Token>> params;
                     std::vector<Token> cur;
+                    // `//` comments whose line was already counted when they were
+                    // collected (see the edge-comment handling before ts_flatten below).
+                    struct CountedLineComment { std::size_t param; std::size_t pos; };
+                    std::vector<CountedLineComment> counted_line_comments;
                     int depth = 0;
                     bool found_rp = false;
                     Token rp_token;
 
+                    // C2: where a "too many arguments" PP34 should be reported if the
+                    // call turns out to have one, following clang -- the line of the
+                    // first non-whitespace, non-comment token after the comma that
+                    // ends the last allowed argument (param fm->num_of_params_max()),
+                    // or after '(' itself for a 0-parameter macro; if every token up to
+                    // the closing ')' is whitespace/comments, the line of that comma
+                    // (or '(') instead. Both line markers are sum_uncounted snapshots
+                    // (the same accounting advance_lineno() below uses), so they
+                    // already exclude output-only lines the same way sum_uncounted
+                    // does. Harmless to compute when the call does not turn out to
+                    // have too many arguments.
+                    const int excess_after_params = fm->num_of_params_max();
+                    bool excess_past_trigger = (excess_after_params == 0);
+                    int excess_trigger_uncounted = sum_uncounted; // pre_lp's value, i.e. right after '('
+                    int excess_token_uncounted = -1;
+
                     while (!work.empty()) {
                         Token pt = std::move(work.back());
                         work.pop_back();
+                        // Work budget (PP64): macro arguments are tokens
+                        // popped off the work stack too.
+                        env.charge_expansion_steps(1 + pt.text.size() / 64);
+
+                        // PP29 once, as the argument is read (the argument is
+                        // expanded at most once per invocation regardless of
+                        // how many times its parameter is used in the body --
+                        // see expand_subst.cpp's ArgExpansionMemo -- or never,
+                        // if the parameter is never substituted), at the
+                        // literal's own line: the counter has not yet been
+                        // advanced past the newlines collected so far.
+                        if (pt.unterminated) {
+                            Issue::with_lineno(wrap_lineno(env.get_lineno() + sum_uncounted), [&] {
+                                jiepp::preprocessor_detail::report_unterminated_literal(pt);
+                            });
+                        }
+
+                        const bool was_counted_comment =
+                            pt.lineno_counted && pt.type == Token::C && pt.text.starts_with("//");
                         sum_num_of_lines += pt.num_of_lines;
+                        if (pt.output_only_lines)
+                            sum_output_only += pt.num_of_lines;
+                        if (!pt.lineno_counted) {
+                            sum_uncounted += pt.num_of_lines;
+                            pt.lineno_counted = true;
+                        }
+
+                        // C2: comments carry MASK_WS (see N2), so "non-whitespace,
+                        // non-comment" is just "not MASK_WS". The top-level closing
+                        // ')' is excluded here (handled by the fallback to
+                        // excess_trigger_uncounted below); a nested ')'/']' (depth > 0)
+                        // is an ordinary token.
+                        if (!excess_past_trigger) {
+                            if (depth == 0 && pt.type == Token::SEP &&
+                                static_cast<int>(params.size()) + 1 == excess_after_params) {
+                                excess_past_trigger = true;
+                                excess_trigger_uncounted = sum_uncounted;
+                            }
+                        } else if (excess_token_uncounted < 0 && !(pt.type & Token::MASK_WS) &&
+                                   !(depth == 0 && pt.type == Token::RP)) {
+                            excess_token_uncounted = sum_uncounted;
+                        }
+
+                        // jiepp extension: a directive found while collecting a macro
+                        // call's argument list is executed exactly once here, and
+                        // dropped from the argument stream, instead of being captured
+                        // as a raw token and re-executed once per occurrence of the
+                        // parameter in the macro body (see subst()'s formal-parameter
+                        // substitution, which expands the actual at most once per
+                        // invocation -- see expand_subst.cpp's ArgExpansionMemo --
+                        // and shares that one expansion's output tokens, including
+                        // any this directive produced, across every occurrence).
+                        if (pt.type == Token::DIRECTIVE) {
+                            // UD2: decode without raising PP21 yet (the 2-arg
+                            // overload) -- dispatch_directive() below decodes
+                            // this same text again and does raise it, so
+                            // raising it here too would report it twice for
+                            // the else-branch case. The two OPERATION_NOT_ALLOWED
+                            // branches never reach dispatch_directive(), so
+                            // they raise it themselves first, right here.
+                            std::optional<std::string> dinvalid_escape;
+                            auto [dkey, draw_arg] = parse_directive(pt.text, dinvalid_escape);
+                            int dkind = DirectiveToken::name_to_kind(dkey);
+                            if (dkind != -1 &&
+                                (dkind & (DirectiveToken::MASK_CTRL | DirectiveToken::MASK_CTRLEX))) {
+                                if (dinvalid_escape)
+                                    ISSUE(INVALID_ESCAPE_SEQUENCE, *dinvalid_escape);
+                                ISSUE(OPERATION_NOT_ALLOWED,
+                                      "control directive inside macro argument");
+                            } else if (dkind != -1 &&
+                                       (dkind & DirectiveToken::MASK_OUTPUT)) {
+                                // F3: a directive whose handler pushes tokens directly to
+                                // `ots` cannot run here — its output would be emitted
+                                // before the enclosing macro call's own expansion. Note:
+                                // dkind == -1 (unrecognised directive name) must NOT take
+                                // this branch: in two's-complement, -1 has every bit set,
+                                // so it would spuriously match MASK_OUTPUT. It falls
+                                // through to the `else` branch instead, which calls
+                                // dispatch_directive() below — the sole place that now
+                                // reports UNKNOWN_DIRECTIVE/INVALID_DIRECTIVE_NAME (B1) —
+                                // so it is still diagnosed exactly once, correctly.
+                                if (dinvalid_escape)
+                                    ISSUE(INVALID_ESCAPE_SEQUENCE, *dinvalid_escape);
+                                ISSUE(OPERATION_NOT_ALLOWED,
+                                      "'" + dkey + "' inside macro argument: its output "
+                                      "would be emitted before the enclosing macro call's "
+                                      "expansion");
+                            } else {
+                                dispatch_directive(pt, ctrl, env, ots);
+                            }
+                            continue;
+                        }
 
                         if (depth == 0 && pt.type == Token::RP) {
                             rp_token = std::move(pt);
@@ -411,52 +771,191 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         if (pt.type == Token::LP || pt.type == Token::LB) ++depth;
                         else if ((pt.type == Token::RP || pt.type == Token::RB) && depth > 0) --depth;
 
+                        if (was_counted_comment)
+                            counted_line_comments.push_back({params.size(), cur.size()});
                         cur.push_back(std::move(pt));
                     }
 
+                    // task_slug argcount-error-output (D2): a call with the wrong
+                    // argument count is not expanded (G1/gcc/clang). An unterminated
+                    // call (no ')' before the end of the token stream) skips the
+                    // count check entirely -- it is always an error on its own, and
+                    // checking the count too would report PP34 twice for one call --
+                    // and, unlike a terminated wrong-count call, outputs nothing at
+                    // all, not even the macro name (clang; gcc differs and keeps the
+                    // name, but the project follows clang where they disagree).
+                    bool call_error = false;
+                    bool unterminated_call = false;
                     if (!found_rp) {
                         ISSUE(ARGUMENT_COUNT_MISMATCH, "missing closing parenthesis");
-                    }
-
-                    // Zero-args check: M() with min_params == 0
-                    if (params.size() == 1) {
-                        bool empty = true;
-                        for (auto& tok : params[0]) {
-                            if (!(tok.type & Token::MASK_WS)) {
-                                empty = false;
-                                break;
+                        call_error = true;
+                        unterminated_call = true;
+                    } else {
+                        // Zero-args check: M() with min_params == 0
+                        if (params.size() == 1) {
+                            bool empty = true;
+                            for (auto& tok : params[0]) {
+                                if (!(tok.type & Token::MASK_WS)) {
+                                    empty = false;
+                                    break;
+                                }
+                            }
+                            if (empty && fm->num_of_params_min() == 0) {
+                                params.clear();
                             }
                         }
-                        if (empty && fm->num_of_params_min() == 0) {
-                            params.clear();
+
+                        int n = static_cast<int>(params.size());
+                        if (n < fm->num_of_params_min() || n > fm->num_of_params_max()) {
+                            std::string msg =
+                                "expected " + std::to_string(fm->num_of_params_min())
+                                + (fm->num_of_params_min() == fm->num_of_params_max()
+                                   ? "" : "-" + std::to_string(fm->num_of_params_max()))
+                                + ", got " + std::to_string(n);
+                            // C2: too many arguments reports at the excess-argument
+                            // line derived above (clang); too few reports at the
+                            // closing ')' line (gcc and clang agree there), i.e. the
+                            // same line sum_uncounted resolves to once fully
+                            // accumulated below -- same as advance_lineno()'s target.
+                            if (n > fm->num_of_params_max()) {
+                                int excess_uncounted = (excess_token_uncounted >= 0)
+                                    ? excess_token_uncounted : excess_trigger_uncounted;
+                                Issue::with_lineno(wrap_lineno(env.get_lineno() + excess_uncounted), [&] {
+                                    ISSUE(ARGUMENT_COUNT_MISMATCH, msg);
+                                });
+                            } else {
+                                Issue::with_lineno(wrap_lineno(env.get_lineno() + sum_uncounted), [&] {
+                                    ISSUE(ARGUMENT_COUNT_MISMATCH, msg);
+                                });
+                            }
+                            call_error = true;
                         }
                     }
 
-                    int n = static_cast<int>(params.size());
-                    if (n < fm->num_of_params_min() || n > fm->num_of_params_max()) {
-                        ISSUE(ARGUMENT_COUNT_MISMATCH,
-                              "expected " + std::to_string(fm->num_of_params_min())
-                              + (fm->num_of_params_min() == fm->num_of_params_max()
-                                 ? "" : "-" + std::to_string(fm->num_of_params_max()))
-                              + ", got " + std::to_string(n));
+                    // Advance the line counter to the closing ')' (or, on an
+                    // unterminated call, to the end of the collected tokens) BEFORE
+                    // subst(), so a __LINE__ reference inside the macro body or an
+                    // argument reports the invocation's closing-paren line (gcc/clang
+                    // behaviour for a function-macro call spanning multiple lines),
+                    // not the line the macro name appeared on. Also shared by the
+                    // error path below, so line counting is identical whether or not
+                    // the call errors.
+                    advance_lineno(sum_uncounted, env);
+
+                    std::vector<Token> replaced;
+                    if (call_error) {
+                        // PP34 recovery (G1-G3, gcc/clang): the call is not expanded.
+                        // On a terminated call with the wrong argument count, the
+                        // macro name is output as is -- pushed directly to `ots`
+                        // (not rescanned via `work`, so it is NOT re-examined
+                        // against whatever follows in this same scan: P(1,2)(5) ->
+                        // P(5), not a second call attempt) with its own hide set,
+                        // unpainted. When this expand() call is itself pre-expanding
+                        // an argument, that argument's `ots` becomes the expanded
+                        // argument text, so the name IS re-examined once the outer
+                        // replacement using it is rescanned (K(P(1,2))(5) -> 5+1).
+                        // An unterminated call outputs nothing at all (gcc differs
+                        // and keeps the name; the project follows clang). Either way
+                        // the argument list is dropped unexpanded: no diagnostics or
+                        // __COUNTER__ increments come from inside it, and `replaced`
+                        // stays empty so only the newline tail below is emitted.
+                        if (!unterminated_call)
+                            ots.push_back(std::move(t));
+                    } else {
+                        // Per-actual-argument leading/trailing whitespace/comment
+                        // presence, from the raw (pre-flatten) argument tokens -- needed
+                        // only for a variadic macro, whose select_arg() reproduces the
+                        // call's spacing around the joining commas (C6, and R6 when the
+                        // variable arguments are stringized); every other
+                        // function-macro call pays nothing for it.
+                        std::vector<jiepp::expand_detail::ArgWs> arg_ws;
+                        if (fm->args().count(FunctionMacro::VA_SYM)) {
+                            auto is_ws = [](const Token& tk) { return (tk.type & Token::MASK_WS) != 0; };
+                            auto ends_nl = [](const Token& tk) {
+                                return !tk.text.empty() &&
+                                       (tk.text.back() == '\n' || tk.text.back() == '\r');
+                            };
+                            arg_ws.reserve(params.size());
+                            for (const auto& p : params) {
+                                std::size_t j = 0;
+                                while (j < p.size() && is_ws(p[j])) ++j;
+                                const bool lead = !p.empty() && is_ws(p.front());
+                                const bool trail = !p.empty() && is_ws(p.back());
+                                arg_ws.push_back({lead, trail,
+                                                  j > 0 && j < p.size() && !ends_nl(p[j - 1]),
+                                                  trail && !ends_nl(p.back())});
+                            }
+                        }
+
+                        // An edge `//` comment of an argument is dropped by the
+                        // flatten below, and with it the newline that ended it.
+                        // When the comment was already line-counted as it was
+                        // collected here, an enclosing call has kept it (see
+                        // Token::flatten) and re-emits that newline itself;
+                        // counting it again would print a stray line break after
+                        // this inner call. A comment that comes straight from the
+                        // source (not yet counted) still compensates the dropped
+                        // line as before.
+                        for (const auto& c : counted_line_comments) {
+                            const auto& p = params[c.param];
+                            std::size_t lead = 0;
+                            while (lead < p.size() && (p[lead].type & Token::MASK_WS)) ++lead;
+                            std::size_t last = p.size();
+                            while (last > lead && (p[last - 1].type & Token::MASK_WS)) --last;
+                            if (c.pos < lead || c.pos >= last) {
+                                sum_num_of_lines -= p[c.pos].num_of_lines;
+                                if (p[c.pos].output_only_lines)
+                                    sum_output_only -= p[c.pos].num_of_lines;
+                            }
+                        }
+
+                        for (auto& p : params)
+                            p = ts_flatten(std::move(p));
+
+                        Token::HideSet new_hs = Token::HideSet::intersect(t.hs, rp_token.hs).with(t.text);
+
+                        // task_slug arg-expand-once (D2): a memo is allocated only when
+                        // this macro has at least one parameter spelled >= 2 times in its
+                        // body (fm->num_arg_slots() > 0); otherwise nullptr is passed and
+                        // subst() takes its original per-occurrence expand() path for
+                        // every parameter, with no allocation. fm must stay valid across
+                        // this call (already required; see symtab.hpp F14).
+                        std::optional<ArgExpansionMemo> arg_memo;
+                        if (fm->num_arg_slots() > 0) {
+                            arg_memo.emplace(ArgExpansionMemo{
+                                &fm->arg_slots(), fm->arg_slot_uses(),
+                                std::vector<std::optional<std::vector<Token>>>(
+                                    static_cast<std::size_t>(fm->num_arg_slots()))});
+                        }
+                        replaced = subst(fm->body(), fm->args(), params,
+                                         arg_ws.empty() ? nullptr : &arg_ws, new_hs, env,
+                                         /*va_sep_ws=*/false,
+                                         arg_memo ? &*arg_memo : nullptr);
+                        // A macro replacement never contributes source lines: a newline
+                        // in it is either a decoded $n in the body or a copy of an
+                        // argument newline, whose source line the call newline token
+                        // below already re-emits.
+                        ts_mark_output_only(replaced);
                     }
 
-                    for (auto& p : params)
-                        p = ts_flatten(std::move(p));
-
-                    Token::HideSet new_hs;
-                    if (t.hs && rp_token.hs) {
-                        std::set_intersection(
-                            t.hs->begin(), t.hs->end(),
-                            rp_token.hs->begin(), rp_token.hs->end(),
-                            std::inserter(new_hs, new_hs.begin())
-                        );
+                    const int source_lines = sum_num_of_lines - sum_output_only;
+                    if (sum_output_only > 0) {
+                        Token nl = Token::newline(sum_output_only);
+                        nl.mark_output_only();
+                        // R2: this newline re-emits line count, not an actual
+                        // separator between two tokens of the replacement -- it
+                        // must not become a stringized space (group 11/C13).
+                        nl.line_filler = true;
+                        replaced.push_back(std::move(nl));
                     }
-                    new_hs.insert(t.text);
-                    auto replaced = subst(fm->body(), fm->args(), params, new_hs, env);
-
-                    if (sum_num_of_lines > 0) {
-                        replaced.push_back(Token::newline(sum_num_of_lines));
+                    if (source_lines > 0) {
+                        Token nl = Token::newline(source_lines);
+                        // Already reflected in env's line counter above; prevent the
+                        // main loop from advancing it a second time when this token is
+                        // later popped.
+                        nl.lineno_counted = true;
+                        nl.line_filler = true;
+                        replaced.push_back(std::move(nl));
                     }
 
                     // Push replacement in reverse for re-scanning
@@ -472,11 +971,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             // Case: T is a "()-less macro" → expand(subst(ts(T), {}, {}, HS∪{T}, {}) • TS')
             else if (auto* om = dynamic_cast<ObjectMacro*>(macro)) {
                 auto repl = om->replacement(env);
-                Token::HideSet new_hs = t.hs ? *t.hs : Token::HideSet{};
-                new_hs.insert(t.text);
+                Token::HideSet new_hs = t.hs.with(t.text);
                 static const std::unordered_map<std::string, std::pair<int, bool>> no_params;
                 static const std::vector<std::vector<Token>> no_actuals;
-                repl = subst(repl, no_params, no_actuals, new_hs, env);
+                repl = subst(repl, no_params, no_actuals, nullptr, new_hs, env);
+                // See the function-macro case above: never source lines.
+                ts_mark_output_only(repl);
 
                 // Push replacement in reverse for re-scanning
                 for (auto rit = repl.rbegin(); rit != repl.rend(); ++rit) {
@@ -488,7 +988,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
         }
 
         // Prosser's fallthrough: T_HS • expand(TS')
-        ots.push_back(t);
+        // O2: `t` is a local by-value copy already popped off `work` above
+        // (its home in `work`/`its` is dead), so moving it into `ots`
+        // avoids a redundant Token copy (string + shared_ptr) for every
+        // non-macro token passed through unchanged -- the majority of
+        // tokens in most inputs.
+        ots.push_back(std::move(t));
     }
 
     if (ctrl.size() != 1)
@@ -505,9 +1010,13 @@ std::vector<Token>& expand(const std::string& filepath,
                            Env& env,
                            const std::string& disppath)
 {
-    std::string fullpath = Loader::fullpath(filepath, load_type, env);
+    bool found_directory = false;
+    std::string fullpath = Loader::fullpath(filepath, load_type, env, &found_directory);
     if (fullpath.empty()) {
-        ISSUE(FILE_NOT_FOUND, filepath);
+        if (found_directory)
+            ISSUE(INCLUDE_TARGET_IS_DIRECTORY, filepath);
+        else
+            ISSUE(FILE_NOT_FOUND, filepath);
         return ots;
     }
 
@@ -522,15 +1031,17 @@ std::vector<Token>& expand(const std::string& filepath,
     // Record dependency for -M / -MM output
     env.add_dependency(fullpath, disppath, load_type == Loader::LoadType::SINCLUDE);
 
-    env.push_file(fullpath);
-    Issue::push({1, disppath});
+    // item f: RAII-guarded, so an exception raised while processing this
+    // file (or a file it includes) still pops both stacks correctly.
+    // Declaration order matters: file_guard is constructed (pushed) first
+    // and destructed (popped) last, matching the pre-RAII manual pairing.
+    FileContext::FileScope file_guard(env, fullpath);
+    Issue::LineGuard line_guard(1, disppath);
 
     ots.push_back(Token::line_pragma(0, disppath, env.is_standard_pragma_style()));
     ots.push_back(Token::newline());
     auto its = Loader::tokens(fullpath, env);
-    expand(its, ots, env);
+    expand(*its, ots, env);
 
-    Issue::pop();
-    env.pop_file();
     return ots;
 }

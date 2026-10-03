@@ -177,3 +177,64 @@ TEST_F(LexerTest, NestedBrackets) {
     EXPECT_EQ(make(Token::RB, "]"),  result[12]);
     EXPECT_TRUE(empty());
 }
+
+// ---- iec3_is_identifier ----
+
+// R3: iec3_is_identifier accepts exactly what tokenize() lexes as a single
+// identifier: [A-Za-z_][A-Za-z0-9_]*, ASCII only.
+TEST_F(LexerTest, IsIdentifier) {
+    EXPECT_TRUE(iec3_is_identifier("a"));
+    EXPECT_TRUE(iec3_is_identifier("_x1"));
+    EXPECT_TRUE(iec3_is_identifier("X_2"));
+    EXPECT_TRUE(iec3_is_identifier("__VA_ARGS__"));
+    EXPECT_TRUE(iec3_is_identifier("if"));
+    EXPECT_FALSE(iec3_is_identifier(""));
+    EXPECT_FALSE(iec3_is_identifier("1"));
+    EXPECT_FALSE(iec3_is_identifier("1a"));
+    EXPECT_FALSE(iec3_is_identifier("a+b"));
+    EXPECT_FALSE(iec3_is_identifier("."));
+    EXPECT_FALSE(iec3_is_identifier("%IX0"));
+    EXPECT_FALSE(iec3_is_identifier("$"));
+    EXPECT_FALSE(iec3_is_identifier("\xE5"));
+}
+
+TEST_F(LexerTest, BlankOutComments) {
+    // Each comment form becomes one space, like translation phase 3 in C.
+    EXPECT_EQ("1  ", iec3_blank_out_comments("1 // c"));
+    EXPECT_EQ("1 2", iec3_blank_out_comments("1(*c*)2"));
+    // Unclosed block comment: runs to the end of the string.
+    EXPECT_EQ("1  ", iec3_blank_out_comments("1 (* c"));
+    // A document comment is a token, kept verbatim.
+    EXPECT_EQ("1 (*! d *)", iec3_blank_out_comments("1 (*! d *)"));
+    // A comment opener inside a string literal is not a comment.
+    EXPECT_EQ("'a(*b*)c'  ", iec3_blank_out_comments("'a(*b*)c' (* x *)"));
+    // A $-escaped quote inside the literal does not end it early.
+    EXPECT_EQ("'it$'s'  ", iec3_blank_out_comments("'it$'s' // c"));
+    // A '//' comment runs only to the end of the line, not past it.
+    EXPECT_EQ("1  \n+1", iec3_blank_out_comments("1 // c\n+1"));
+    EXPECT_EQ(" ", iec3_blank_out_comments("(*)"));
+    // A pragma opener ("(*{ ... }") is kept, not blanked out.
+    EXPECT_EQ("1 (*{p}*)", iec3_blank_out_comments("1 (*{p}*)"));
+    // No comment opener at all: unchanged.
+    EXPECT_EQ("a */ b", iec3_blank_out_comments("a */ b"));
+}
+
+// ---- ellipsis tokenization ----
+
+// R3: '...' is three adjacent one-character Token::ANY "." tokens, not a
+// single "..." token; whitespace between dots breaks the run.
+TEST_F(LexerTest, EllipsisIsThreeDotTokens) {
+    auto result = ts("...");
+    ASSERT_EQ(3u, result.size());
+    EXPECT_EQ(make(Token::ANY, "."), result[0]);
+    EXPECT_EQ(make(Token::ANY, "."), result[1]);
+    EXPECT_EQ(make(Token::ANY, "."), result[2]);
+
+    auto result2 = ts(". .");
+    ASSERT_EQ(3u, result2.size());
+    EXPECT_EQ(Token::ANY, result2[0].type);
+    EXPECT_EQ(".", result2[0].text);
+    EXPECT_TRUE(result2[1].type & Token::MASK_WS);
+    EXPECT_EQ(Token::ANY, result2[2].type);
+    EXPECT_EQ(".", result2[2].text);
+}

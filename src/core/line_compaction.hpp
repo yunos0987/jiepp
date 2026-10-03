@@ -1,0 +1,70 @@
+#pragma once
+// line_compaction — post-pass that collapses long runs of blank lines in a
+// fully materialised token stream, gcc/clang-compatible. There are two modes:
+//   - Markers mode: runs of `max_blank_lines` (default 7) or fewer blank
+//     lines are emitted byte-identical to today; runs of more than
+//     `max_blank_lines` blank lines are replaced by a single line-marker
+//     line so downstream line numbering stays correct.
+//   - CollapseAll mode (used under -P, where line markers are already
+//     suppressed): every run of blank lines is removed entirely with no
+//     marker, regardless of its length — the `max_blank_lines` threshold
+//     does not gate removal in this mode.
+//   - `max_blank_lines == 0` disables compaction entirely in both modes
+//     (verbatim passthrough, i.e. pre-compaction behavior).
+//
+// A "blank line" is a physical line all of whose characters are whitespace
+// (Token::WS tokens only — NOT Token::C, which also carries MASK_WS but is a
+// comment, not blank content).
+//
+// Separately, in Markers mode, a newline a macro expansion prints
+// (Token::output_only_lines — not a source line, see token.hpp) can leave
+// the printed output ahead of the source. Once a following source line break
+// is seen, a resync line marker is inserted so later lines still map back to
+// the right source line — independent of blank-line compaction, and not
+// disabled by `max_blank_lines == 0` (which only disables blank-line
+// removal). Not done under CollapseAll (-P already omits every line marker).
+#include "../env/lineno.hpp"
+#include "../loader/token.hpp"
+
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace jiepp {
+
+enum class BlankLineMode { Markers, CollapseAll };
+
+// Collapses runs of blank lines in `ots` in place. `default_standard_style`
+// is the pragma style to use for the very first synthetic marker, before any
+// real marker in the stream has been observed (subsequent synthetic markers
+// use the style of the most recently observed real marker, per D2 in the
+// design plan). Returns true if the stream was modified.
+// `first_lineno` is the line number of the first line of `ots`, used only
+// until the first line marker in the stream (a jiepp command-line stream
+// always starts with one; the preprocess() string API does not).
+bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
+                          BlankLineMode mode, bool default_standard_style,
+                          LineNo first_lineno = 0);
+
+// True for a preprocessor-injected line marker token: (*{#:N 'file'}*)
+// (annotated) or {#:N 'file'} (standard). User IEC pragmas with '#' are
+// lexed as DIRECTIVE tokens, so PRAGMA tokens whose body begins with "#:"
+// are exclusively factory-created line markers.
+bool is_line_marker(const Token& t);
+
+struct LineMarker {
+    LineNo           lineno; // item a: 64-bit storage, 32-bit unsigned wrap (see lineno.hpp)
+    std::string_view enc_file; // already IEC-encoded (quotes included), or empty when the marker carries no path — a view into the source token's text; copy it out before that token is modified or moved
+    bool             standard;
+};
+
+// Parses a line-marker token. Returns std::nullopt if `t` is not a line
+// marker.
+std::optional<LineMarker> parse_line_marker(const Token& t);
+
+// Builds a line-marker token. `enc_file` is spliced back verbatim (never
+// decode/re-encode the path).
+Token make_line_marker(LineNo lineno, std::string_view enc_file, bool standard);
+
+} // namespace jiepp

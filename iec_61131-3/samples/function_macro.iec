@@ -1,14 +1,14 @@
 (* function_macro.iec - Function macros *)
 
-{#define MAX(a, b) if (a) > (b) then (a) else (b) end_if}
-{#define CLAMP(v, lo, hi) MAX(lo, if (v) > (hi) then (hi) else (v) end_if)}
+{#define MAX2(a, b) SEL((a) > (b), (b), (a))}
+{#define CLAMP(v, lo, hi) MAX2(lo, SEL((v) > (hi), (v), (hi)))}
 
 program Main
 var
     x, y, result: int;
 end_var
 {st}
-result := MAX(x, y);
+result := MAX2(x, y);
 result := CLAMP(x, 0, 100);
 {end}
 end_program

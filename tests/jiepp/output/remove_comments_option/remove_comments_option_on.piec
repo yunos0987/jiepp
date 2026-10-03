@@ -2,28 +2,7 @@
 /*!
  * document comment
  */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+(*{#:25 'tests/jiepp/input/remove_comments_option/remove_comments_option_on.iec'}*)
 function f
 (*{st}*)
 

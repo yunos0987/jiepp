@@ -1,0 +1,3 @@
+{#pragma once x}
+{#include 'pragma_once_extra.iec'}
+Y;

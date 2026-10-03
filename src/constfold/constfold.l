@@ -6,15 +6,17 @@
 #include "env/issue.hpp"
 extern CfValue cflval;  // defined in constfold_parser.cpp (bison %code section)
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <stdexcept>
 %}
 
-%option noyywrap nodefault 8bit nounistd never-interactive
+%option noyywrap nodefault 8bit nounistd never-interactive nounput noinput
 %option prefix="cf"
 
 DIGIT   [0-9]
+DIGITS  [0-9](_?[0-9])*
 ALNUM   [0-9A-Za-z_]
 ALPHA   [A-Za-z_]
 
@@ -27,7 +29,13 @@ ALPHA   [A-Za-z_]
 "\\or\\"    { return cf::CfParser::token::CF_LOR; }
 "\\xor\\"   { return cf::CfParser::token::CF_LXOR; }
 
-[0-9]+#[+-]?[0-9A-Za-z][0-9A-Za-z_]* {
+[0-9]+#[+-]?(_?[0-9A-Za-z])+ {
+    // A1: '_' may directly precede any digit, including the first (Ed.3,
+    // e.g. "16#_ff"), but must always be followed by another alnum: a
+    // trailing '_' (e.g. "16#ff_"), a leading '_' with nothing after it
+    // (e.g. "16#_"), or a doubled '_' (e.g. "2#1__0") is not part of this
+    // match; the leftover characters are re-lexed (typically as CF_IDENT),
+    // which the parser then reports as a syntax error (PP52).
     const char* p = yytext;
     int base = 0;
     while (*p != '#') { base = base * 10 + (*p - '0'); ++p; }
@@ -40,7 +48,16 @@ ALPHA   [A-Za-z_]
     bool neg = false;
     if (*p == '-') { neg = true; ++p; }
     else if (*p == '+') { ++p; }
-    int64_t ival = 0;
+    // A2: accumulate in uint64_t and report overflow past 2^64-1 instead of
+    // silently wrapping the digits via undefined-behavior signed overflow.
+    std::uint64_t uval = 0;
+    const std::uint64_t ubase = static_cast<std::uint64_t>(base);
+    // C3: report the overflow once, then keep accumulating (wrapping mod
+    // 2^64, same formula as the non-overflowing case -- unsigned wraparound
+    // is well-defined) instead of stopping at 0, so the literal's value
+    // ends up as its low 64 bits, like gcc (warning) and clang (error) both
+    // do for an over-wide {#if} literal.
+    bool overflowed = false;
     for (; *p; ++p) {
         char ch = *p;
         if (ch == '_') continue;
@@ -51,17 +68,30 @@ ALPHA   [A-Za-z_]
             cflval = CfValue::int_value(0);
             return cf::CfParser::token::CF_INT;
         }
-        ival = ival * base + d;
+        const std::uint64_t ud = static_cast<std::uint64_t>(d);
+        if (!overflowed && uval > (UINT64_MAX - ud) / ubase) {
+            ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
+            overflowed = true;
+        }
+        uval = uval * ubase + ud;
     }
-    if (neg) ival = -ival;
+    int64_t ival = neg ? static_cast<int64_t>(static_cast<std::uint64_t>(0) - uval)
+                        : static_cast<int64_t>(uval);
     cflval = CfValue::int_value(ival);
     return cf::CfParser::token::CF_INT;
 }
 
-[0-9]+"."[0-9]+([eE][+-]?[0-9]+)?  {
+{DIGITS}"."{DIGITS}([eE][+-]?{DIGITS})?  {
+    // I2: IEC 61131-3 digit separators are allowed in plain decimal/float
+    // literals too, not only based ones (mirrors the based-literal rule
+    // above); strip them before handing the text to stod.
+    std::string clean;
+    clean.reserve(yyleng);
+    for (const char* p = yytext; *p; ++p)
+        if (*p != '_') clean.push_back(*p);
     double fval = 0.0;
     try {
-        fval = std::stod(yytext);
+        fval = std::stod(clean);
     } catch (const std::out_of_range&) {
         ISSUE(INVALID_EXPRESSION, std::string("float literal overflow: ") + yytext);
     }
@@ -69,12 +99,48 @@ ALPHA   [A-Za-z_]
     return cf::CfParser::token::CF_FLOAT;
 }
 
-[0-9]+  {
-    int64_t ival = 0;
-    try {
-        ival = std::stoll(yytext);
-    } catch (const std::out_of_range&) {
+{DIGITS}  {
+    // I2: strip digit separators before stoll, mirroring the based-literal rule.
+    std::string clean;
+    clean.reserve(yyleng);
+    for (const char* p = yytext; *p; ++p)
+        if (*p != '_') clean.push_back(*p);
+    // H: also compare the separator-stripped spelling with any leading
+    // zeros removed against 2^63's magnitude, so "09223372036854775808"
+    // and "9_223_372_036_854_775_808" match it exactly like the canonical
+    // spelling does.
+    std::size_t first_nonzero = clean.find_first_not_of('0');
+    const std::string digits = (first_nonzero == std::string::npos)
+        ? "0" : clean.substr(first_nonzero);
+    if (digits == "9223372036854775808") {
+        // H: no diagnostic here. Whether this magnitude is valid depends on
+        // what follows it, which only the grammar knows: a unary minus
+        // directly before it (CF_MINUS CF_INT_MIN_MAG) accepts it as
+        // INT64_MIN with no diagnostic; every other occurrence reports the
+        // same PP52 "integer literal overflow" as today, via unary_expr's/
+        // cast_value's CF_INT_MIN_MAG rule. cflval.text keeps the original
+        // spelling (separators and leading zeros included) for that
+        // diagnostic.
+        cflval = CfValue::int_value(0);
+        cflval.text = yytext;
+        return cf::CfParser::token::CF_INT_MIN_MAG;
+    }
+    // C3: decide overflow by comparing the decimal magnitude directly
+    // against INT64_MAX (19 digits), instead of relying on stoll's
+    // out_of_range -- stoll can only ever leave ival at 0 on overflow, but
+    // gcc (warning) and clang (error) both keep going with the low 64 bits
+    // of the value (as 64-bit two's complement) afterward, so jiepp must too.
+    static const std::string kInt64MaxDigits = "9223372036854775807";
+    const bool overflow = digits.size() > kInt64MaxDigits.size()
+        || (digits.size() == kInt64MaxDigits.size() && digits > kInt64MaxDigits);
+    int64_t ival;
+    if (overflow) {
         ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
+        std::uint64_t uval = 0;
+        for (char c : clean) uval = uval * 10 + static_cast<std::uint64_t>(c - '0');
+        ival = static_cast<int64_t>(uval);
+    } else {
+        ival = std::stoll(clean);
     }
     cflval = CfValue::int_value(ival);
     return cf::CfParser::token::CF_INT;

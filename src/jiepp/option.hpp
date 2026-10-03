@@ -14,7 +14,9 @@ struct JieppOptions {
     std::vector<std::string> syspaths;
     std::optional<int> max_include_depth;
     std::optional<int> max_expansion_depth;
+    std::optional<int> max_expansion_steps;   // --max-expansion-steps: 0 = no limit
     std::optional<int> max_if_nesting;
+    std::optional<int> max_blank_lines;   // --max-blank-lines: 0 disables compaction
     std::optional<std::string> pp_output_pragma_style;
     std::optional<int> recursion_limit;
     bool remove_comments = false;

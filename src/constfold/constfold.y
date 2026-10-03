@@ -20,6 +20,14 @@
 %code {
 CfValue cflval;  // global semantic value shared with flex scanner
 bool cf_expr_complete = false;  // set true when a complete expr is reduced
+// C1: the code eval_const_expr() should raise for a parse failure, chosen by
+// error() below from cf_expr_complete at the moment bison detects the
+// error -- INVALID_EXPRESSION if a complete expr had already been reduced
+// (a complete expression was followed by more), MISSING_EXPRESSION
+// otherwise. error() itself no longer raises a diagnostic (see below), so
+// eval_const_expr() is the single place a parse failure is reported, using
+// this code instead of unconditionally reporting MISSING_EXPRESSION.
+Issue::Code cf_error_code = Issue::Code::MISSING_EXPRESSION;
 
 extern int cflex(void);
 
@@ -30,6 +38,12 @@ static int yylex(cf::CfParser::semantic_type* yylval) {
     case cf::CfParser::token::CF_FLOAT:
     case cf::CfParser::token::CF_TYPE_KW:
     case cf::CfParser::token::CF_IDENT:
+    // H: CF_INT_MIN_MAG carries cflval.text (the original spelling) for the
+    // "integer literal overflow" diagnostic in unary_expr; without this
+    // case the variant's CfValue slot is never constructed and every rule
+    // that reads $1/$2 for this token (including $1.text) is undefined
+    // behavior.
+    case cf::CfParser::token::CF_INT_MIN_MAG:
         yylval->emplace<CfValue>(cflval);
         break;
     default:
@@ -50,7 +64,61 @@ static CfValue cast_int_literal_to_dword(const CfValue& v) {
 
 [[noreturn]] static void type_error() {
     ISSUE(EXPR_TYPE_ERROR);
-    throw std::logic_error("unreachable");
+    // Reached when EXPR_TYPE_ERROR (PP50) is suppressed via {#ignore}, in
+    // which case Issue::happen() above returns instead of throwing.
+    // CfTypeError (not Issue::Exception) lets eval_const_expr() recognize
+    // this specific case and recover instead of an unrelated exception type
+    // escaping uncaught.
+    throw CfTypeError();
+}
+
+// A3: perform +, -, *, and unary negation via uint64_t so that wraparound on
+// signed overflow (e.g. INT64_MIN - 1) is well-defined two's-complement
+// arithmetic instead of undefined behavior.
+static int64_t wrap_add(int64_t a, int64_t b) {
+    return static_cast<int64_t>(static_cast<std::uint64_t>(a) + static_cast<std::uint64_t>(b));
+}
+
+static int64_t wrap_sub(int64_t a, int64_t b) {
+    return static_cast<int64_t>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(b));
+}
+
+static int64_t wrap_mul(int64_t a, int64_t b) {
+    return static_cast<int64_t>(static_cast<std::uint64_t>(a) * static_cast<std::uint64_t>(b));
+}
+
+static int64_t wrap_neg(int64_t a) {
+    return static_cast<int64_t>(static_cast<std::uint64_t>(0) - static_cast<std::uint64_t>(a));
+}
+
+// D: shift count n and left operand v/L for '<<'/'>>' in {#if}. "Out of
+// range" means n < 0 or n >= 64 (checked without shifting by an
+// out-of-range or negative amount, which is undefined behavior). Neither
+// helper below can trigger undefined behavior for any int64_t input: every
+// left shift is an unsigned shift by a count in [0,63], and the only right
+// shift is of a plain (possibly negative) int64_t by a count in [0,63],
+// which C++20 defines as arithmetic (floor division by 2^n).
+//
+// Int follows clang's PPExpressionEvaluator (SPEC §6.3, rev2/rev3
+// decision): out of range, '<<' gives 0 and '>>' behaves like a shift by
+// 63 (-1 for a negative value, 0 otherwise). In range, both are the
+// ordinary C shift.
+static int64_t shift_int(int64_t v, int64_t n, bool left) {
+    if (n < 0 || n >= 64)
+        return left ? 0 : (v < 0 ? -1 : 0);
+    if (left)
+        return static_cast<int64_t>(static_cast<std::uint64_t>(v) << n);
+    return v >> n;
+}
+
+// Bitstring is not a C type: out of range gives 0 for every width and both
+// directions (coordinator decision, rev3) -- unlike Int's '>>', which does
+// not clamp. In range, both directions are the ordinary logical shift
+// (masked to width by the caller via make_bitstring()).
+static std::uint64_t shift_bits(std::uint64_t v, int64_t n, bool left) {
+    if (n < 0 || n >= 64)
+        return 0;
+    return left ? (v << n) : (v >> n);
 }
 
 static CfValue cast_to_bool(const CfValue& v) {
@@ -120,10 +188,15 @@ static CfValue compare_ord(const CfValue& lhs, const CfValue& rhs, CompareOp op)
 }
 
 void cf::CfParser::error(const std::string& msg) {
-    if (cf_expr_complete)
-        ISSUE(INVALID_EXPRESSION, msg);
-    else
-        ISSUE(MISSING_EXPRESSION, msg);
+    // C1: record the code only; do not raise here. Raising both here (with
+    // bison's own "syntax error" text, which never carries the offending
+    // expression) and again in eval_const_expr() after parse() returns
+    // non-zero (with the expression text) reported every malformed {#if}/
+    // {#elif} condition twice. eval_const_expr() is now the single place
+    // that raises, using the code chosen here.
+    (void)msg;
+    cf_error_code = cf_expr_complete ? Issue::Code::INVALID_EXPRESSION
+                                      : Issue::Code::MISSING_EXPRESSION;
 }
 }
 
@@ -131,7 +204,7 @@ void cf::CfParser::error(const std::string& msg) {
 %token CF_TRUE CF_FALSE
 %token CF_NOT CF_AND CF_OR CF_XOR CF_MOD
 %token <CfValue> CF_TYPE_KW
-%token <CfValue> CF_INT CF_FLOAT
+%token <CfValue> CF_INT CF_FLOAT CF_INT_MIN_MAG
 %token <CfValue> CF_IDENT
 %token CF_LPAREN CF_RPAREN
 %token CF_PLUS CF_MINUS CF_STAR CF_SLASH
@@ -140,9 +213,15 @@ void cf::CfParser::error(const std::string& msg) {
 %token CF_HASH
 %token CF_UNKNOWN
 %token CF_END 0
+// H: fails the build on any shift/reduce or reduce/reduce conflict,
+// including in unary_expr/unary_core below (prototyped against bison 3.8.2
+// in scratchpad/followups/judge/cf_proto.y: 0 conflicts for this split
+// form; the naive "CF_MINUS unary_expr" + "CF_MINUS CF_INT_MIN_MAG" form
+// gives 22 reduce/reduce conflicts).
+%expect 0
 
 %type <CfValue> expr or_expr and_expr xor_expr not_expr cmp_expr
-%type <CfValue> shift_expr add_expr bor_expr bxor_expr band_expr mul_expr unary_expr primary
+%type <CfValue> shift_expr add_expr bor_expr bxor_expr band_expr mul_expr unary_expr unary_core primary
 %type <CfValue> cast_value
 
 %%
@@ -201,13 +280,13 @@ shift_expr:
         CfValue l = $1;
         int64_t n = cast_scalar_to_int($3);
         if (l.kind == ValueKind::Int) {
-            $$ = CfValue::int_value(n < 0 || n >= 64 ? 0 : l.ival << n);
+            $$ = CfValue::int_value(shift_int(l.ival, n, true));
         } else if (l.kind == ValueKind::Bitstring) {
-            $$ = make_bitstring(n < 0 || n >= 64 ? 0 : l.bits << n, l.bit_kind);
+            $$ = make_bitstring(shift_bits(l.bits, n, true), l.bit_kind);
         } else {
             CfValue bit = cast_int_literal_to_dword(l);
             if (bit.kind == ValueKind::Bitstring)
-                $$ = make_bitstring(n < 0 || n >= 64 ? 0 : bit.bits << n, bit.bit_kind);
+                $$ = make_bitstring(shift_bits(bit.bits, n, true), bit.bit_kind);
             else type_error();
         }
     }
@@ -215,13 +294,13 @@ shift_expr:
         CfValue l = $1;
         int64_t n = cast_scalar_to_int($3);
         if (l.kind == ValueKind::Int) {
-            $$ = CfValue::int_value(n < 0 || n >= 64 ? 0 : l.ival >> n);
+            $$ = CfValue::int_value(shift_int(l.ival, n, false));
         } else if (l.kind == ValueKind::Bitstring) {
-            $$ = make_bitstring(n < 0 || n >= 64 ? 0 : l.bits >> n, l.bit_kind);
+            $$ = make_bitstring(shift_bits(l.bits, n, false), l.bit_kind);
         } else {
             CfValue bit = cast_int_literal_to_dword(l);
             if (bit.kind == ValueKind::Bitstring)
-                $$ = make_bitstring(n < 0 || n >= 64 ? 0 : bit.bits >> n, bit.bit_kind);
+                $$ = make_bitstring(shift_bits(bit.bits, n, false), bit.bit_kind);
             else type_error();
         }
     }
@@ -231,12 +310,12 @@ add_expr:
     bor_expr                          { $$ = $1; }
   | add_expr CF_PLUS  bor_expr        {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int)
-            $$ = CfValue::int_value($1.ival + $3.ival);
+            $$ = CfValue::int_value(wrap_add($1.ival, $3.ival));
         else type_error();
     }
   | add_expr CF_MINUS bor_expr        {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int)
-            $$ = CfValue::int_value($1.ival - $3.ival);
+            $$ = CfValue::int_value(wrap_sub($1.ival, $3.ival));
         else type_error();
     }
   ;
@@ -301,31 +380,60 @@ mul_expr:
     unary_expr                        { $$ = $1; }
   | mul_expr CF_STAR  unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int)
-            $$ = CfValue::int_value($1.ival * $3.ival);
+            $$ = CfValue::int_value(wrap_mul($1.ival, $3.ival));
         else type_error();
     }
   | mul_expr CF_SLASH unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
             if ($3.ival == 0) { ISSUE(INVALID_EXPRESSION, "division by zero"); $$ = CfValue::int_value(0); }
+            // A3: INT64_MIN / -1 overflows the quotient, which traps in
+            // hardware (SIGFPE-style crash) even though two's-complement
+            // wraparound defines the result as INT64_MIN itself.
+            else if ($3.ival == -1) $$ = CfValue::int_value(wrap_neg($1.ival));
             else $$ = CfValue::int_value($1.ival / $3.ival);
         } else type_error();
     }
   | mul_expr CF_MOD   unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
             if ($3.ival == 0) { ISSUE(INVALID_EXPRESSION, "modulo by zero"); $$ = CfValue::int_value(0); }
+            // A3: same overflow trap as division by -1; the remainder is
+            // mathematically 0 but the hardware idiv instruction used for
+            // '%' still traps before producing it.
+            else if ($3.ival == -1) $$ = CfValue::int_value(0);
             else $$ = CfValue::int_value($1.ival % $3.ival);
         } else type_error();
     }
   ;
 
+// H: split so the grammar (not the lexer) decides which occurrences of '-'
+// are unary and adjacent to CF_INT_MIN_MAG (the 2^63 magnitude,
+// "9223372036854775808"). unary_core's closure after CF_MINUS does not
+// contain "unary_expr -> . CF_INT_MIN_MAG", so "CF_MINUS CF_INT_MIN_MAG" is
+// the only place that magnitude becomes INT64_MIN with no diagnostic;
+// everywhere else (bare, after '(', after another '+'/'not', as a binary
+// operand) reduces through unary_expr's own CF_INT_MIN_MAG rule below,
+// which reports the same PP52 "integer literal overflow" as today.
 unary_expr:
+    unary_core                        { $$ = $1; }
+  | CF_INT_MIN_MAG                    {
+        // C3: 2^63 bare (no preceding unary minus) still reports the
+        // overflow, but the value is INT64_MIN (its low 64 bits, same as
+        // "CF_MINUS CF_INT_MIN_MAG" below), not 0 -- gcc/clang both keep
+        // going with the value after warning/erroring.
+        ISSUE(INVALID_EXPRESSION, "integer literal overflow: " + $1.text);
+        $$ = CfValue::int_value(INT64_MIN);
+    }
+  ;
+
+unary_core:
     primary                           { $$ = $1; }
+  | CF_MINUS CF_INT_MIN_MAG           { $$ = CfValue::int_value(INT64_MIN); }
   | CF_PLUS  unary_expr               {
         if ($2.kind == ValueKind::Int || $2.kind == ValueKind::Float) $$ = $2;
         else type_error();
     }
-  | CF_MINUS unary_expr               {
-        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(-$2.ival);
+  | CF_MINUS unary_core               {
+        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(wrap_neg($2.ival));
         else if ($2.kind == ValueKind::Float) $$ = CfValue::float_value(-$2.fval);
         else type_error();
     }
@@ -366,11 +474,17 @@ cast_value:
     CF_TRUE                           { $$ = CfValue::bool_value(true); }
   | CF_FALSE                          { $$ = CfValue::bool_value(false); }
   | CF_INT                            { $$ = $1; }
+  // H: a typed literal accepts the 2^63 magnitude directly (no diagnostic):
+  // LWORD#9223372036854775808 = LWORD#16#8000000000000000, since the bit
+  // pattern fits; narrower widths mask it like any other large value
+  // (BYTE#9223372036854775808 = BYTE#16#00). LWORD#-9223372036854775808
+  // goes through CF_MINUS cast_value below (wrap_neg of INT64_MIN).
+  | CF_INT_MIN_MAG                    { $$ = CfValue::int_value(INT64_MIN); }
   | CF_FLOAT                          { $$ = $1; }
   | CF_MINUS cast_value               {
-        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(-$2.ival);
+        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(wrap_neg($2.ival));
         else if ($2.kind == ValueKind::Float) $$ = CfValue::float_value(-$2.fval);
-        else $$ = CfValue::int_value(-cast_scalar_to_int($2));
+        else $$ = CfValue::int_value(wrap_neg(cast_scalar_to_int($2)));
     }
   | CF_PLUS  cast_value               { $$ = $2; }
   ;

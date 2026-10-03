@@ -1,0 +1,3 @@
+{#line 999 'spoofed.iec'}
+{#syspath 'lib'}
+{#sinclude 'sb_target.iec'}

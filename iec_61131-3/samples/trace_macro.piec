@@ -1,0 +1,22 @@
+(*{#:0 'iec_61131-3/samples/trace_macro.iec'}*)
+(* trace_macro.iec - Optional arguments with __VA_OPT__ and named variadic parameters *)
+
+
+
+
+function_block Station
+var_input
+    start: bool;
+end_var
+var
+    pressure: real;
+end_var
+(*{st}*)
+trace('trace_macro.iec', 14, 'cycle start' );
+trace('trace_macro.iec', 15, 'pressure' , pressure);
+if not start then
+    raise_alarm(16#0101 );
+    raise_alarm(16#0102 , 'door open', pressure);
+end_if;
+(*{end}*)
+end_function_block

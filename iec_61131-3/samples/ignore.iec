@@ -1,9 +1,12 @@
 (* ignore.iec - Suppress error codes with #ignore *)
 
-(* Suppress warnings for undefined directives *)
-{#ignore PP45}
+(* Suppress the PP49 warning (extra tokens after {#endif}) for the *)
+(* legacy-style labelled {#endif TARGET_X} below *)
+{#ignore PP49}
 
-{#line 999}
+{#ifdef TARGET_X}
+{#define LEGACY_FLAG 1}
+{#endif TARGET_X}
 
 program Main
 {st}

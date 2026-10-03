@@ -3,6 +3,7 @@
 #include "../env/issue.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,35 @@ std::vector<Token> normalize_glue(std::vector<Token> ts) {
     return result;
 }
 
+// Compare two replacement-list token sequences the way C17 6.10.3p2 requires
+// for macro redefinition: "identical" ignores the AMOUNT of white-space
+// between tokens, only whether a separation is present or absent. Each
+// maximal run of whitespace-type tokens on either side collapses to a single
+// "whitespace present" marker before comparison; everything else (including
+// hide-sets via Token::operator==) is compared exactly as before.
+// Token::operator== itself is left untouched (tests/loader/test_token.cpp
+// depends on its current exact-text semantics).
+bool token_lists_equal_ignoring_ws_amount(const std::vector<Token>& a,
+                                          const std::vector<Token>& b) {
+    std::size_t ia = 0, ib = 0;
+    while (ia < a.size() && ib < b.size()) {
+        bool a_ws = (a[ia].type & Token::MASK_WS) != 0;
+        bool b_ws = (b[ib].type & Token::MASK_WS) != 0;
+        if (a_ws || b_ws) {
+            if (!a_ws || !b_ws)
+                return false; // whitespace present on only one side
+            while (ia < a.size() && (a[ia].type & Token::MASK_WS)) ++ia;
+            while (ib < b.size() && (b[ib].type & Token::MASK_WS)) ++ib;
+            continue;
+        }
+        if (!(a[ia] == b[ib]))
+            return false;
+        ++ia;
+        ++ib;
+    }
+    return ia == a.size() && ib == b.size();
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -59,13 +89,7 @@ bool UserDefinedObjectMacro::equal(const Macro& other) const {
     auto* p = dynamic_cast<const UserDefinedObjectMacro*>(&other);
     if (!p)
         return false;
-    if (ts_.size() != p->ts_.size())
-        return false;
-    for (std::size_t i = 0; i < ts_.size(); ++i) {
-        if (!(ts_[i] == p->ts_[i]))
-            return false;
-    }
-    return true;
+    return token_lists_equal_ignoring_ws_amount(ts_, p->ts_);
 }
 
 std::string UserDefinedObjectMacro::str() const {
@@ -79,9 +103,12 @@ std::string UserDefinedObjectMacro::str() const {
 // FunctionMacro
 // ---------------------------------------------------------------------------
 
-FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Token> body)
-    : args_list_(args_list) {
-    bool has_va = !args_list.empty() && args_list.back() == VA_SYM;
+FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Token> body,
+                             bool named_variadic)
+    : args_list_(args_list), named_variadic_(named_variadic) {
+    if (named_variadic && args_list.empty())
+        throw std::logic_error("FunctionMacro: named variadic without a parameter name");
+    bool has_va = named_variadic || (!args_list.empty() && args_list.back() == VA_SYM);
 
     int regular_count = static_cast<int>(args_list.size()) - (has_va ? 1 : 0);
 
@@ -91,7 +118,11 @@ FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Tok
 
     if (has_va) {
         int va_idx = regular_count;
-        args_[VA_ARGS] = {va_idx, true};
+        args_[VA_SYM] = {va_idx, true};
+        // '...' names the variable arguments __VA_ARGS__; `args...` names
+        // them `args` instead (gcc/clang).
+        args_[named_variadic ? args_list.back() : std::string(VA_ARGS)] = {va_idx, true};
+        // __VA_ARGC__ (jiepp extension) counts them in both forms.
         args_[VA_ARGC] = {va_idx, true};
         num_params_min_ = va_idx;
         num_params_max_ = NUM_OF_MAX_ARGS;
@@ -101,6 +132,38 @@ FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Tok
     }
 
     body_ = normalize(std::move(body), args_);
+    const int num_formals = regular_count + (has_va ? 1 : 0);
+    compute_arg_slots(body_, args_, num_formals, arg_slots_, arg_slot_uses_);
+}
+
+void FunctionMacro::compute_arg_slots(
+    const std::vector<Token>& body,
+    const std::unordered_map<std::string, std::pair<int, bool>>& args,
+    int num_formals,
+    std::vector<int>& out_slots,
+    std::vector<int>& out_slot_uses) {
+    std::vector<int> use_count(static_cast<std::size_t>(num_formals), 0);
+    for (const auto& t : body) {
+        if (t.type != Token::ANY)
+            continue;
+        if (t.text == VA_ARGC)
+            continue; // __VA_ARGC__ is substituted as a count, never expanded
+        auto it = args.find(t.text);
+        if (it == args.end())
+            continue;
+        int pidx = it->second.first;
+        if (pidx >= 0 && pidx < num_formals)
+            ++use_count[static_cast<std::size_t>(pidx)];
+    }
+    out_slots.assign(static_cast<std::size_t>(num_formals), -1);
+    out_slot_uses.clear();
+    for (int pidx = 0; pidx < num_formals; ++pidx) {
+        int count = use_count[static_cast<std::size_t>(pidx)];
+        if (count >= 2) {
+            out_slots[static_cast<std::size_t>(pidx)] = static_cast<int>(out_slot_uses.size());
+            out_slot_uses.push_back(count);
+        }
+    }
 }
 
 std::vector<Token> FunctionMacro::normalize(
@@ -145,14 +208,13 @@ bool FunctionMacro::equal(const Macro& other) const {
         return false;
     if (num_params_max_ != p->num_params_max_)
         return false;
+    // A GNU named variadic and a C99 '...' are different definitions even when
+    // args_ coincides (F(__VA_ARGS__...) vs F(...)), as in clang.
+    if (named_variadic_ != p->named_variadic_)
+        return false;
     if (args_ != p->args_)
         return false;
-    if (body_.size() != p->body_.size())
-        return false;
-    for (std::size_t i = 0; i < body_.size(); ++i)
-        if (!(body_[i] == p->body_[i]))
-            return false;
-    return true;
+    return token_lists_equal_ignoring_ws_amount(body_, p->body_);
 }
 
 std::string FunctionMacro::str() const {
@@ -162,6 +224,8 @@ std::string FunctionMacro::str() const {
             s += ",";
         s += args_list_[i];
     }
+    if (named_variadic_)
+        s += VA_SYM; // "args..." -- gcc/clang -dM print F(a,args...)
     s += ") ";
     for (const auto& t : body_)
         s += t.text;

@@ -1,10 +1,13 @@
 (*{#:0 'iec_61131-3/samples/ignore.iec'}*)
 (* ignore.iec - Suppress error codes with #ignore *)
 
-(* Suppress warnings for undefined directives *)
+(* Suppress the PP49 warning (extra tokens after {#endif}) for the *)
+(* legacy-style labelled {#endif TARGET_X} below *)
 
 
-(*{#:999}*)
+
+
+
 
 program Main
 (*{st}*)

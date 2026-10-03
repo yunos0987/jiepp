@@ -9,8 +9,8 @@ TEST_F(StringizeTest, Basic) {
     EXPECT_EQ(" ;'[0, 1]';",      pp("{#define F(a) @a} ;F([0, 1]);"));
     EXPECT_EQ(" ;'[[0, 1], 2]';", pp("{#define F(a) @a} ;F([[0, 1], 2]);"));
     EXPECT_EQ(" ;'';",            pp("{#define F(a) @a} ;F();"));
-    EXPECT_EQ(" ;'$27$27  $$';",  pp("{#define F(a) @a} ;F(  ''  $  );"));
-    EXPECT_EQ(" ;'x  y''2';",     pp("{#define F(a, b) @a@b} ;F(  x  y  ,  2  );"));
+    EXPECT_EQ(" ;'$27$27 $$';",   pp("{#define F(a) @a} ;F(  ''  $  );"));
+    EXPECT_EQ(" ;'x y''2';",      pp("{#define F(a, b) @a@b} ;F(  x  y  ,  2  );"));
     EXPECT_EQ(";'x';",            pp("{#define S(a) @a}{#define F(a) S(a)};F(x);"));
     EXPECT_TRUE(empty());
 }

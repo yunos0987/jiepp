@@ -36,9 +36,10 @@ TEST_F(GlueTest, Whitespace) {
 }
 
 TEST_F(GlueTest, WhitespaceOnly) {
-    // Whitespace-only args are treated as empty; empty left operand yields right param name.
-    EXPECT_EQ(";b;", pp("{#define F(a,b) a@@b};F(  ,   );"));
-    EXPECT_EQ(";b;", pp("{#define F(a,b) a@@b};F(,);"));
+    // Whitespace-only args are treated as empty. Both operands are then
+    // placemarkers (C17 6.10.3.3p2), so pasting them yields nothing.
+    EXPECT_EQ(";;", pp("{#define F(a,b) a@@b};F(  ,   );"));
+    EXPECT_EQ(";;", pp("{#define F(a,b) a@@b};F(,);"));
     EXPECT_TRUE(empty());
 }
 
@@ -95,13 +96,72 @@ TEST_F(GlueTest, PasteInFuncMacroNoArgs) {
     EXPECT_TRUE(empty());
 }
 
-// NOTE: C++ implementation: when left operand of @@ is empty, the result uses
-// the right parameter identifier, not its expanded value.
+// NOTE: C17 6.10.3.3p2 placemarker rule: an empty macro argument adjacent to
+// @@ is a placemarker, an invisible token that participates in pasting
+// without contributing any text. Pasting two placemarkers together yields
+// another placemarker (i.e. nothing), not the parameter's own name.
 TEST_F(GlueTest, PasteEmptyArgs) {
-    EXPECT_EQ(";b;", pp("{#define F(a,b) a@@b};F(,);"));
-    EXPECT_EQ(";b;", pp("{#define F(a,b) a@@b};F(  ,);"));
-    EXPECT_EQ(";b;", pp("{#define F(a,b) a@@b};F(,  );"));
-    EXPECT_EQ(";b;", pp("{#define F(a,b) a@@b};F(  ,  );"));
+    EXPECT_EQ(";;", pp("{#define F(a,b) a@@b};F(,);"));
+    EXPECT_EQ(";;", pp("{#define F(a,b) a@@b};F(  ,);"));
+    EXPECT_EQ(";;", pp("{#define F(a,b) a@@b};F(,  );"));
+    EXPECT_EQ(";;", pp("{#define F(a,b) a@@b};F(  ,  );"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(GlueTest, PlacemarkerRightOperand) {
+    // Non-empty left operand pasted with a placemarker right operand: the
+    // left operand's own text is preserved unchanged (not "xb").
+    EXPECT_EQ(";x;", pp("{#define F(a,b) a@@b};F(x,);"));
+    EXPECT_EQ(";x z;", pp("{#define F(a,b) a@@b z};F(x,);"));
+}
+
+TEST_F(GlueTest, PlacemarkerLeftOperand) {
+    // Placemarker left operand pasted with a non-empty right operand: the
+    // right operand's own text is preserved unchanged, and surrounding
+    // whitespace belonging to the macro body (not the paste itself) survives.
+    EXPECT_EQ(";z y;", pp("{#define F(a,b) z a@@b};F(,y);"));
+}
+
+TEST_F(GlueTest, PlacemarkerChain) {
+    // A chain of pastes where the middle operand is a placemarker: b's
+    // placemarker leaves a's value untouched, which is then pasted with c.
+    EXPECT_EQ(";xy;", pp("{#define F(a,b,c) a@@b@@c};F(x,,y);"));
+}
+
+TEST_F(GlueTest, PlacemarkerCStandardExample3) {
+    // C17 6.10.3.5 EXAMPLE 3 style check: #define r(x,y) x @@ y
+    EXPECT_EQ(";4;", pp("{#define r(x,y) x @@ y};r(4,);"));
+    EXPECT_EQ(";5;", pp("{#define r(x,y) x @@ y};r(,5);"));
+    EXPECT_EQ(";;",  pp("{#define r(x,y) x @@ y};r(,);"));
+}
+
+TEST_F(GlueTest, CommaPasteEmptyVaArgs) {
+    // The classic pre-__VA_OPT__ GNU idiom `, @@ __VA_ARGS__` with an empty
+    // __VA_ARGS__ must degrade gracefully to the C placemarker rule (the
+    // comma is retained) instead of aborting with INVALID_TOKEN_PASTING.
+    // This diverges from the GNU extension, which deletes the comma; use
+    // __VA_OPT__ for that behaviour (see D1 in the audit plan).
+    EXPECT_NO_THROW(
+        EXPECT_EQ(";g(x,);", pp("{#define LOG(fmt, ...) g(fmt, @@ __VA_ARGS__)};LOG(x);")));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(GlueTest, PasteVaArgc) {
+    // F16: __VA_ARGC__ as a @@ (paste) raw operand must substitute the
+    // variadic-argument *count*, not the raw __VA_ARGS__ text -- the paste
+    // right-hand-operand resolution used to fall through to selecting the
+    // raw actual-argument tokens (the same bypass as the pre-fix VA_ARGC
+    // path used by the stringize test below).
+    EXPECT_EQ(";X2;", pp("{#define T(...) X @@ __VA_ARGC__};T(a,b);"));
+    EXPECT_EQ(";X0;", pp("{#define T(...) X @@ __VA_ARGC__};T();"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(GlueTest, StringizeVaArgc) {
+    // F16: __VA_ARGC__ as a @ (stringize) raw operand must also substitute
+    // the count, not the stringized raw __VA_ARGS__ text.
+    EXPECT_EQ(";'2';", pp("{#define T(...) @__VA_ARGC__};T(a,b);"));
+    EXPECT_EQ(";'0';", pp("{#define T(...) @__VA_ARGC__};T();"));
     EXPECT_TRUE(empty());
 }
 
@@ -125,3 +185,100 @@ TEST_F(GlueTest, PasteLines) {
 }
 
 
+
+// ---- bounded PP32 diagnostics ----
+
+// Repeated invalid pastes keep concatenating, so echoing the accumulated left
+// operand made the diagnostics quadratic in the input. Each message now echoes
+// at most a fixed-size piece of each operand.
+TEST_F(GlueTest, InvalidPasteDiagnosticsAreLinear) {
+    constexpr int n = 2000;
+    std::string body = "@x";
+    for (int i = 0; i < n; ++i)
+        body += "@@y";
+    const std::string def = "{#define A(x,y) " + body + "}\n";
+    {
+        Issue::ContinueMode guard({});
+        auto env = setup();
+        pp(def + "A(a,bcdefghij)\n", env);
+    }
+    auto msgs = messages();
+    EXPECT_GE(msgs.size(), static_cast<std::size_t>(n) / 2);
+    std::size_t total = 0;
+    for (const auto& m : msgs) {
+        EXPECT_EQ(Issue::Code::INVALID_TOKEN_PASTING, PlainTextMessage::parse_code(m));
+        total += m.size();
+        EXPECT_LT(m.size(), 400u);
+    }
+    // A quadratic echo would be on the order of n*n*9/2 = 18 MB here.
+    EXPECT_LT(total, static_cast<std::size_t>(n) * 400u);
+}
+
+TEST_F(GlueTest, InvalidPasteDiagnosticsBoundLargeOperands) {
+    // A single huge operand pasted repeatedly must not be echoed whole.
+    const std::string big(100000, 'z');
+    std::string body = "@x";
+    for (int i = 0; i < 50; ++i)
+        body += "@@y";
+    {
+        Issue::ContinueMode guard({});
+        auto env = setup();
+        pp("{#define A(x,y) " + body + "}\nA(a," + big + ")\n", env);
+    }
+    auto msgs = messages();
+    ASSERT_FALSE(msgs.empty());
+    for (const auto& m : msgs)
+        EXPECT_LT(m.size(), 400u);
+    EXPECT_NE(std::string::npos, msgs.front().find("..."));
+}
+
+namespace {
+
+// True iff s is well-formed UTF-8 (no stray continuation byte, no truncated
+// sequence); enough for the 2-3 byte characters used below.
+bool is_valid_utf8(const std::string& s) {
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        std::size_t n = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3
+                      : (c >> 3) == 0x1E ? 4 : 0;
+        if (n == 0 || i + n > s.size())
+            return false;
+        for (std::size_t k = 1; k < n; ++k)
+            if ((static_cast<unsigned char>(s[i + k]) & 0xC0) != 0x80)
+                return false;
+        i += n;
+    }
+    return true;
+}
+
+} // namespace
+
+// The echo cut must land on a UTF-8 character boundary on both sides: the kept
+// tail of the left operand and the kept head of the right operand.
+TEST_F(GlueTest, InvalidPasteDiagnosticsKeepUtf8Valid) {
+    std::string l = "'a", r = "\"a";
+    for (int i = 0; i < 40; ++i) {
+        l += "あ"; // U+3042
+        r += "あ";
+    }
+    // Two ASCII bytes after the multibyte run put the 64-byte tail cut inside a
+    // character; the right operand's head cut (64 = 2 + 20*3 + 2) does too.
+    l += "a'";
+    r += "\"";
+    {
+        Issue::ContinueMode guard({});
+        auto env = setup();
+        pp("{#define A(x,y) @x@@y}\nA(" + l + "," + r + ")\n", env);
+    }
+    auto msgs = messages();
+    ASSERT_FALSE(msgs.empty());
+    bool saw_cut = false;
+    for (const auto& m : msgs) {
+        EXPECT_EQ(Issue::Code::INVALID_TOKEN_PASTING, PlainTextMessage::parse_code(m));
+        EXPECT_TRUE(is_valid_utf8(m)) << m;
+        EXPECT_LT(m.size(), 400u);
+        saw_cut = saw_cut || m.find("...") != std::string::npos;
+    }
+    EXPECT_TRUE(saw_cut);
+}

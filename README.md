@@ -94,7 +94,19 @@ cmake --build --preset windows-clang-ninja-debug    # build
 ctest --preset windows-clang-ninja-debug            # test
 ```
 
-Release プリセットでは clang の ThinLTO (`-O3 -flto=thin`) が有効になります。
+`tests/` ディレクトリには loader・macro・core・constfold・env・jiepp・util 系のテストが含まれます。
+
+Release プリセットでは clang の ThinLTO (`-O3 -flto=thin`) が有効になります（Windows は常時有効、Linux では `ld.lld` が見つかった場合のみ有効で、見つからない場合は configure 時に警告が出て ThinLTO なしでビルドされます）。
+
+どのプリセットでも、攻撃への耐性を高める防御的ビルドオプションが付きます。Linux はスタックプロテクタとフル RELRO（Release 系ではさらに `_FORTIFY_SOURCE=2`）、Windows は Control Flow Guard です。詳細は [ARCHITECTURE.md](ARCHITECTURE.md#依存管理言語標準コンパイラ要件) を参照してください。
+
+### 性能測定 / Benchmark
+
+Release ビルドに `bench` ターゲットを用意しています。詳細は [CONTRIBUTING.md の性能測定](CONTRIBUTING.md#性能測定--benchmark) を参照してください。
+
+```powershell
+cmake --build --preset windows-clang-ninja-release --target bench
+```
 
 ### VSCode での開発 / Development in VSCode
 
@@ -102,14 +114,14 @@ VSCode CMake Tools 拡張を使用している場合、`CMakePresets.json` で�
 
 ## Windows バイナリの実行環境 / Windows Runtime Requirements
 
-Windows で配布バイナリ (`jiepp.exe`) を実行する場合、以下が必要になる場合があります：
+Windows でビルドした `jiepp.exe` を実行する場合、以下が必要になる場合があります：
 
 - **Microsoft Visual C++ Redistributable 2015-2022 (x64)**  
   Windows 10 以降では UCRT（Universal C Runtime）がOS に統合済みのため、個別インストール不要な場合がほとんどです。ただし、古い環境や一部カスタム設定では Redistributable が必要になることがあります。  
   不足している場合は、[Microsoft の公式ページ](https://support.microsoft.com/en-us/help/2977003/) から 2015-2022 版をダウンロード・インストールしてください。
 
-- **開発・テスト環境（Debug ビルド）**  
-  `jiepp_test.exe` を実行する場合は、上記に加えて Visual C++ の Debug ランタイムと Google Test ライブラリ が必要になります。通常、開発環境では自動的にインストール済みです。
+- **テスト実行 (`jiepp_test.exe`)**  
+  Debug・Release いずれのビルドでも `gtest.dll` / `gtest_main.dll`（ビルド時に実行ファイルと同じディレクトリに配置されます）が必要です。Debug ビルドではさらに Visual C++ の Debug ランタイムが必要になります。通常、開発環境では自動的にインストール済みです。
 
 ## 使い方 / Usage
 
@@ -137,37 +149,18 @@ cat input.iec | jiepp -
 | `-include FILE` | 入力前に強制インクルード | — |
 | `-w` | 警告抑制 | off |
 | `-Werror` | 警告→エラー昇格 | off |
-| `-M` / `-MM` | Makefile 依存関係出力 | off |
+| `-M` / `-MM` | Makefile 依存関係出力（プリプロセス結果は出力しない。`-MD`/`-MMD` は出力も残す） | off |
 | `-nC` | コメント除去 | off |
 | `-dM` | マクロ一覧出力 | off |
+| `--max-expansion-steps N` | マクロ展開の仕事量の上限（`0` で無制限。超えると `PP64` で中断） | 16777216 |
 | `--` | オプション終端 | — |
 | `--help` / `-h` | ヘルプ表示 | — |
 
-全オプションの詳細は [`SPECIFICATION.md` §13](SPECIFICATION.md#13-jiepp-リファレンス--jiepp-reference) を参照してください。
+全オプションの詳細は [`SPECIFICATION.md` §13](SPECIFICATION.md#13-cli-リファレンス--cli-reference) を参照してください。
 
 ## サンプル再生成 / Sample Regeneration
 
-`iec_61131-3/samples/` ディレクトリのサンプル `.piec` ファイルは、対応する `.iec` ファイルを jiepp で前処理した結果です。ソースを編集した場合は、以下の手順で再生成します:
-
-**リポジトリルートから実行:**
-
-```powershell
-.\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/example.iec -o iec_61131-3/samples/example.piec
-```
-
-`{#syspath 'lib'}` または `{#sinclude}` を使用するサンプルは、インクルードパスを明示的に追加します:
-
-```powershell
-.\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/include.iec -o iec_61131-3/samples/include.piec -I iec_61131-3/samples/lib
-```
-
-サンプルにおいて拡張子 `.piec` は「前処理済み IEC」を示し、`lib/` パスと `-I` フラグはマクロ・システムパスの検索に必要です。
-
-```powershell
-ctest --preset windows-clang-ninja-debug
-```
-
-`tests/` ディレクトリには loader・macro・core・constfold・env・cli・support 系のテストが含まれます。
+`iec_61131-3/samples/` ディレクトリのサンプル `.piec` ファイルは、対応する `.iec` ファイルを jiepp で前処理した結果です。ソースを編集した場合は再生成が必要です。手順は [CONTRIBUTING.md のサンプルの更新](CONTRIBUTING.md#サンプルの更新--updating-samples) を参照してください。
 
 ## Linux / WSL でのビルド
 
@@ -209,21 +202,24 @@ cmake --workflow --preset linux-makefiles-debug
 
 ### サンドボックスモード / Sandbox Mode
 
-Web サーバー上で信頼できない入力を処理する場合は、サンドボックスビルドを使用します。ファイルシステムアクセスを行うディレクティブが無効化され、サーバーパスの漏洩が防止されます。
+Web サーバー上で信頼できない入力を処理する場合は、サンドボックスビルドを使用します。ファイルシステムアクセスを行うディレクティブが無効化され、`__TIMESTAMP__` は空になります。ただし、渡したファイルパスを隠す機能はありません。`__FILE__` や診断メッセージにはパスがそのまま表示されるため、秘密にしたいパスは jiepp に渡さないでください。
 
 **Linux / WSL:**
 
 ```bash
-cmake --preset linux-makefiles-release -DJIEPP_SANDBOX=ON
-cmake --build --preset linux-makefiles-release
+cmake --preset linux-makefiles-sandbox-release
+cmake --build --preset linux-makefiles-sandbox-release
 ```
 
 **Windows (開発・テスト用):**
 
 ```powershell
-cmake --preset windows-clang-ninja-debug -DJIEPP_SANDBOX=ON
-cmake --build --preset windows-clang-ninja-debug
+cmake --preset windows-clang-ninja-sandbox-debug
+cmake --build --preset windows-clang-ninja-sandbox-debug
+ctest --preset windows-clang-ninja-sandbox-debug
 ```
+
+サンドボックス専用プリセット（`*-sandbox-debug` / `*-sandbox-release`）は独自のビルドディレクトリを持ち、`JIEPP_SANDBOX=ON` を設定します。通常のプリセットは `JIEPP_SANDBOX=OFF` を明示します。通常プリセットに `-DJIEPP_SANDBOX=ON` を付けるとキャッシュに値が残るため、使用しないでください。サンドボックス用 `ctest` は `Sandbox` / `RobustnessTest` のみを実行します（通常テストはサンドボックスビルドでは失敗が想定されます）。
 
 詳細は [`SPECIFICATION.md` §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode) を参照してください。
 
@@ -233,12 +229,12 @@ cmake --build --preset windows-clang-ninja-debug
 
 ```bash
 # サンドボックス + 完全静的リンク
-cmake --preset linux-portable-release -DJIEPP_SANDBOX=ON
-cmake --build --preset linux-portable-release
-# 成果物: build/linux-portable-release/jiepp
+cmake --preset linux-portable-sandbox-release
+cmake --build --preset linux-portable-sandbox-release
+# 成果物: build/linux-portable-sandbox-release/jiepp
 ```
 
-サーバー側では追加インストール不要です。生成されたバイナリをそのまま配置して使用できます。
+サーバー側では追加インストール不要です。生成されたバイナリをそのまま配置して使用できます。ただし、このバイナリを第三者へ配布する場合は、[静的リンクについて](#静的リンクについて--static-linking-notice)の手順が必要です。
 
 ## 参考 / References
 
@@ -252,23 +248,30 @@ cmake --build --preset linux-portable-release
 
 バグ報告・機能要望は [GitHub Issues](https://github.com/yunos0987/jiepp/issues) で受け付けています。
 
+脆弱性は公開の Issue に書かず、[SECURITY.md](SECURITY.md) の手順で非公開に報告してください。
+
 ## ライセンス / License
 
 MIT ライセンス — 詳細は [LICENSE](LICENSE) を参照してください。
 
 ### 静的リンクについて / Static Linking Notice
 
-`linux-portable-release` プリセットは `libstdc++`・`libgcc`・`glibc` を静的リンクします。各ライブラリのライセンスは次のとおりです。
+`linux-portable-*` プリセットは `libstdc++`・`libgcc`・`glibc` を静的リンクします。
 
-| ライブラリ | ライセンス | 備考 |
+- **自分のサーバーでビルドして自分で使うだけの場合**、ライセンス上の追加義務は生じません。
+- **ビルドしたバイナリを第三者へ配布する場合**、glibc (LGPL v2.1) の条件を満たす必要があります。バイナリに次を添えてください（手順は [`CONTRIBUTING.md`](CONTRIBUTING.md#静的バイナリの配布) を参照）。
+  - glibc を LGPL の下で使用している旨の目立つ表示
+  - LGPL v2.1 の全文と、glibc の著作権・ライセンス表示
+  - 再リンクに必要な資料（対応する glibc のソースと、jiepp のソース・ビルド手順）の入手方法
+
+| ライブラリ | ライセンス | 配布時の扱い |
 |-----------|-----------|------|
-| libstdc++, libgcc | GPL v3 + GCC Runtime Library Exception | 例外条項によりバイナリ配布は任意ライセンスで可 |
-| glibc (GNU C Library) | LGPL v2.1 | 本プロジェクトはオープンソース (MIT) のため再リンク要件を満たす |
-| flex スケルトン | BSD 系 (生成コード向け例外あり) | — |
-| bison スケルトン | GPL v3 (生成パーサー向け例外あり) | — |
+| glibc (GNU C Library) | LGPL v2.1 | 上記の表示・全文・再リンク資料が必要。MIT であること自体は再リンク要件を満たしません |
+| libstdc++, libgcc | GPL v3 + GCC Runtime Library Exception | 例外条項により追加義務なし |
+| flex / bison が生成したコード | スケルトンに生成コード向け例外あり | 追加義務なし |
 
-追加のライセンス表示をバイナリに同梱する必要はありません。
+これは法的助言ではありません。配布の形態によっては、各ライセンスの原文を確認してください。
 
 ### テストデータ / Test Data
 
-`tests/jiepp/input/boost/` 以下の Boost.Preprocessor ヘッダファイルは [Boost Software License 1.0 (BSL-1.0)](https://www.boost.org/LICENSE_1_0.txt) の下でライセンスされています。テストデータとしてのみ使用しています。
+`tests/jiepp/input/boost/` 以下の Boost.Preprocessor ヘッダファイルは [Boost Software License 1.0 (BSL-1.0)](https://www.boost.org/LICENSE_1_0.txt) の下でライセンスされています。テストデータとしてのみ使用しています。ライセンス全文は [`tests/jiepp/input/boost/LICENSE_1_0.txt`](tests/jiepp/input/boost/LICENSE_1_0.txt) に同梱しています。また、これらから生成した `tests/jiepp/output/boost.piec` も同じライセンス (BSL-1.0) の下にあります。

@@ -1,4 +1,4 @@
 
-{#syspath   "tests/jiepp/input/sinclude_with_syspath_directive"  }
-{#syspath "tests/jiepp/input/sinclude_with_syspath_directive/a"}
+{#syspath   "."  }
+{#syspath "a"}
 {#sinclude 'module.iec'}

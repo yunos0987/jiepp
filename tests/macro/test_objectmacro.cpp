@@ -11,16 +11,23 @@ TEST_F(ObjectMacroTest, Simple) {
     EXPECT_EQ(";;2;2", pp("{#define N 2};{#define M N};N;M"));
     // string literal not expanded
     EXPECT_EQ(";2;'N'", pp("{#define N 2};N;'N'"));
-    // line directive
-    EXPECT_EQ(";(*{#:5}*)", pp("{#define N 5};{#line N}"));
-    EXPECT_EQ(";(*{#:5}*)", pp("{#define F(a) a};{#line F(5)}"));
+    // line directive (C1: named form -> marker N-1)
+    EXPECT_EQ(";(*{#:4}*)", pp("{#define N 5};{#line N}"));
+    EXPECT_EQ(";(*{#:4}*)", pp("{#define F(a) a};{#line F(5)}"));
     // dollar-sign line continuation
     EXPECT_EQ("\n;2", pp("{#define N $\n2};N"));
     EXPECT_EQ("\n;N", pp("{#define N$\n2};N"));
     EXPECT_EQ("\n;2", pp("{#define N \n2};N"));
-    EXPECT_EQ("\n;N", pp("{#define N\n2};N"));
+    EXPECT_EQ("\n;2", pp("{#define N\n2};N"));
     EXPECT_EQ(";2;;3", pp("{#define N 2};N;{#define N 3};N"));
     EXPECT_EQ(Issue::Code::MACRO_REDEFINED, code());
+}
+
+TEST_F(ObjectMacroTest, BasedLiteralLeadingUnderscoreNotExpanded) {
+    // B: Ed.3's "16#_ff" is one literal token (the '_' directly after '#'),
+    // not "16#" followed by a macro-expandable identifier "_ff".
+    EXPECT_EQ("x := 16#_ff;", pp("{#define _ff 0}x := 16#_ff;"));
+    EXPECT_TRUE(empty());
 }
 
 TEST_F(ObjectMacroTest, RedefineWarning) {
@@ -71,6 +78,34 @@ TEST_F(ObjectMacroTest, Pragma) {
     EXPECT_EQ(";(*{line 1}*)", pp("{#define P line}{#define L __LINE__};{P L}"));
     EXPECT_EQ("(*{0 1}*);", pp("{__COUNTER__ __COUNTER__};"));
     EXPECT_TRUE(empty());
+}
+
+// E1-3: __COUNTER__ saturates at INT32_MAX like clang (err_counter_overflow),
+// instead of silently wrapping/signed-overflowing. The CounterMacro(start)
+// constructor is a test-only seam so this does not need ~2^31 real calls.
+TEST_F(ObjectMacroTest, CounterOverflowSaturatesAndDiagnoses) {
+    Env env = setup();
+    // COUNTER_OVERFLOW is ERROR, which the library blocks (throws) by
+    // default; unblock it here to observe the "reports and continues"
+    // behavior itself, like the CLI's continue mode does for this code
+    // (it is not one of the abort codes listed in SPECIFICATION.md §16).
+    Issue::remove_blocking(Issue::Code::COUNTER_OVERFLOW);
+    CounterMacro counter(2147483646u);
+
+    auto next = [&](CounterMacro& c) {
+        auto toks = c.replacement(env);
+        return toks.size() == 1 ? toks[0].text : std::string("**FAIL**");
+    };
+
+    EXPECT_EQ("2147483646", next(counter));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("2147483647", next(counter));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("2147483647", next(counter));
+    EXPECT_EQ(Issue::Code::COUNTER_OVERFLOW, code());
+    // Saturated: further calls keep reporting the same overflow and value.
+    EXPECT_EQ("2147483647", next(counter));
+    EXPECT_EQ(Issue::Code::COUNTER_OVERFLOW, code());
 }
 
 TEST_F(ObjectMacroTest, Redefine) {

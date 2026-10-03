@@ -69,6 +69,31 @@ TEST_F(ParamTest, SetMaxExpansionDepthValidation) {
                  Issue::Exception);
 }
 
+TEST_F(ParamTest, MaxExpansionStepsDefaultAndZero) {
+    Env env;
+    EXPECT_EQ(DEFAULT_MAX_EXPANSION_STEPS, env.get_max_expansion_steps());
+    EXPECT_EQ(16777216u, env.get_max_expansion_steps());
+    env.set_max_expansion_steps(5);
+    EXPECT_EQ(5u, env.get_max_expansion_steps());
+    env.set_max_expansion_steps(0); // 0 = no limit
+    EXPECT_EQ(0u, env.get_max_expansion_steps());
+    EXPECT_NO_THROW(env.charge_expansion_steps(1ull << 40));
+}
+
+TEST_F(ParamTest, ChargeExpansionStepsBoundaryAndReset) {
+    Env env;
+    env.set_max_expansion_steps(10);
+    EXPECT_NO_THROW(env.charge_expansion_steps(10)); // exactly the limit
+    EXPECT_EQ(10u, env.expansion_steps());
+    EXPECT_THROW(env.charge_expansion_steps(1), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MAX_EXPANSION_STEPS_EXCEEDED, code());
+    // Stays over the limit: a swallowed exception cannot buy free work.
+    EXPECT_THROW(env.charge_expansion_steps(0), Issue::Exception);
+    env.reset_expansion_steps();
+    EXPECT_EQ(0u, env.expansion_steps());
+    EXPECT_NO_THROW(env.charge_expansion_steps(10));
+}
+
 TEST_F(ParamTest, SetMaxIfNestingValidation) {
     Env env;
     EXPECT_TRUE(env.set_max_if_nesting(128));
@@ -126,7 +151,7 @@ TEST_F(ParamTest, Cache) {
     EXPECT_EQ(nullptr, env.get_cache("key"));
     std::vector<Token> tokens;
     env.set_cache("key", tokens);
-    const auto* cached = env.get_cache("key");
+    auto cached = env.get_cache("key");
     ASSERT_NE(nullptr, cached);
     EXPECT_TRUE(cached->empty());
 }

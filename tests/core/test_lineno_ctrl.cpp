@@ -1,22 +1,15 @@
 #include "lineno_test_helper.hpp"
 
 // ---- Conditional directives (#if/#else/#endif): line number tracking ----
-namespace {
-void normalize_diags(std::vector<std::string>& diags) {
-    for (auto& diag : diags) {
-        while (!diag.empty() && diag.back() == ' ') {
-            diag.pop_back();
-        }
-    }
-}
-} // namespace
 
 TEST_F(LinenoTest, IfDirective) {
     const std::vector<TestCase> cases = {
         {
             "if-true-branch",
             "{#if $\n$\n0$\n$\n+$\n$\n1$\n$\n}\n\n{#info}__LINE__\n\n+\n\n{#info}__LINE__;{#endif}",
-            "\n\n\n\n\n\n\n\n\n\n11\n\n+\n\n15;",
+            // 10 leading blank lines exceed the default 7-line compaction
+            // threshold; N = cur_before_run(1) + nl(10) - 1 = 10.
+            "(*{#:10}*)\n11\n\n+\n\n15;",
             {
                 "<unknown location>:11.0: info: PP93: ''",
                 "<unknown location>:15.0: info: PP93: ''",
@@ -26,7 +19,9 @@ TEST_F(LinenoTest, IfDirective) {
         {
             "if-else-branch",
             "{#if $\n$\n0$\n$\n+$\n$\n0$\n$\n}\n\n{#else}\n\n{#info}__LINE__\n\n+\n\n{#info}__LINE__;{#endif}",
-            "\n\n\n\n\n\n\n\n\n\n\n\n13\n\n+\n\n17;",
+            // 12 leading blank lines exceed the default 7-line compaction
+            // threshold; N = cur_before_run(1) + nl(12) - 1 = 12.
+            "(*{#:12}*)\n13\n\n+\n\n17;",
             {
                 "<unknown location>:13.0: info: PP93: ''",
                 "<unknown location>:17.0: info: PP93: ''",

@@ -9,11 +9,13 @@
 #include "../core/preprocessor_internal.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #if defined(__cpp_lib_format)
 #include <format>
 #endif
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -22,6 +24,14 @@
 // ---------------------------------------------------------------------------
 
 std::vector<Token> CounterMacro::replacement(Env& /*env*/) const {
+    // Match clang's err_counter_overflow: once the value to be emitted would
+    // exceed INT32_MAX, report an error and saturate at INT32_MAX instead of
+    // wrapping/overflowing signed int. Every further call keeps reporting
+    // the same error and the same saturated value (it never recovers).
+    if (counter_ > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
+        ISSUE(COUNTER_OVERFLOW);
+        counter_ = static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max());
+    }
     return {Token::create(Token::ANY, std::to_string(counter_++))};
 }
 
@@ -33,7 +43,7 @@ bool CounterMacro::equal(const Macro& other) const {
 // LineMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> LineMacro::replacement(Env& env) const {
+std::vector<Token> LineMacro::replacement(Env& /*env*/) const {
     return {Token::create(Token::ANY, std::to_string(Issue::lineno()))};
 }
 
@@ -45,7 +55,7 @@ bool LineMacro::equal(const Macro& other) const {
 // FileMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> FileMacro::replacement(Env& env) const {
+std::vector<Token> FileMacro::replacement(Env& /*env*/) const {
     std::string fp = Issue::filepath();
     return {Token::create(Token::STRING, Util::encode_iec_string(fp))};
 }
@@ -110,7 +120,7 @@ bool TimeMacro::equal(const Macro& other) const {
 // TimeStampMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> TimeStampMacro::replacement(Env& env) const {
+std::vector<Token> TimeStampMacro::replacement([[maybe_unused]] Env& env) const {
 #ifdef JIEPP_SANDBOX
     // Sandbox: no filesystem access
     return {Token::create(Token::STRING, "''")};
@@ -167,13 +177,11 @@ bool IncludeLevelMacro::equal(const Macro& other) const {
 // BaseFileMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> BaseFileMacro::replacement(Env& env) const {
-#ifdef JIEPP_SANDBOX
-    return {Token::create(Token::STRING, "''")};
-#else
+std::vector<Token> BaseFileMacro::replacement(Env& /*env*/) const {
+    // Not blanked in JIEPP_SANDBOX builds: it only reflects the path that
+    // __FILE__ and diagnostics already expose, and does no filesystem access.
     std::string fp = Issue::base_filepath();
     return {Token::create(Token::STRING, Util::encode_iec_string(fp))};
-#endif
 }
 
 bool BaseFileMacro::equal(const Macro& other) const {
@@ -184,15 +192,13 @@ bool BaseFileMacro::equal(const Macro& other) const {
 // FileNameMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> FileNameMacro::replacement(Env& env) const {
-#ifdef JIEPP_SANDBOX
-    return {Token::create(Token::STRING, "''")};
-#else
+std::vector<Token> FileNameMacro::replacement(Env& /*env*/) const {
+    // Not blanked in JIEPP_SANDBOX builds (see BaseFileMacro). The filename
+    // is derived from the string path only; no filesystem access.
     namespace fs = std::filesystem;
     std::string fp = Issue::filepath();
     std::string name = fs::path(fp).filename().generic_string();
     return {Token::create(Token::STRING, Util::encode_iec_string(name))};
-#endif
 }
 
 bool FileNameMacro::equal(const Macro& other) const {

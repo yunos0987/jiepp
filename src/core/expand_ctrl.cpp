@@ -3,13 +3,18 @@
 
 #include "expand_helpers.hpp"
 #include "preprocessor.hpp"
+#include "preprocessor_internal.hpp"
 
 #include "../constfold/constfold.hpp"
 #include "../loader/loader.hpp"
+#include "../loader/directive_parser.hpp"
+#include "../loader/lexer.hpp"
 #include "../macro/macro.hpp"
+#include "../util/text.hpp"
 
 #include <cctype>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace jiepp::expand_detail {
@@ -30,6 +35,11 @@ bool ctrl_parent_active(const std::vector<CtrlState>& stack) {
 
 namespace {
 
+// Only called from the non-sandbox branch of eval_cond_str() below; in a
+// sandbox build it would otherwise be an unused function (__has_include is
+// rejected outright there, see find_has_include_call()).
+#ifndef JIEPP_SANDBOX
+
 // Replace all __has_include("path") and __has_include(<path>) in raw_cond
 // with "1" or "0" based on whether the file is found.
 // This runs before macro expansion so arguments are NOT expanded.
@@ -45,6 +55,18 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
             break;
         }
         result.append(raw_cond, pos, found - pos);
+
+        if (found > 0) {
+            unsigned char prev = static_cast<unsigned char>(raw_cond[found - 1]);
+            if (std::isalnum(prev) || prev == '_') {
+                // KW is the tail of a longer identifier (e.g. a user macro
+                // name ending in __has_include), not the operator itself.
+                // Treat it as ordinary text and keep scanning after it.
+                result.append(KW);
+                pos = found + KW.size();
+                continue;
+            }
+        }
 
         std::size_t i = found + KW.size();
         // skip whitespace
@@ -64,14 +86,16 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
         Loader::LoadType load_type;
         bool valid = false;
 
-        if (i < raw_cond.size() && raw_cond[i] == '"') {
-            // "path" form
-            ++i;
-            std::size_t end = raw_cond.find('"', i);
-            if (end != std::string::npos) {
-                path = raw_cond.substr(i, end - i);
+        if (i < raw_cond.size() && (raw_cond[i] == '"' || raw_cond[i] == '\'')) {
+            // "path" / 'path' form: a string literal, which the directive
+            // decoding left with its IEC escapes as written (SPEC §2), so
+            // find its end past "$'"-style escapes and decode it the way
+            // {#include} decodes its path (strip_path()).
+            std::size_t end = string_literal_end(raw_cond, i);
+            if (end != std::string_view::npos) {
+                path = decode_path_literal(std::string_view(raw_cond).substr(i, end - i));
                 load_type = Loader::LoadType::INCLUDE;
-                i = end + 1;
+                i = end;
                 valid = true;
             }
         } else if (i < raw_cond.size() && raw_cond[i] == '<') {
@@ -81,16 +105,6 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
             if (end != std::string::npos) {
                 path = raw_cond.substr(i, end - i);
                 load_type = Loader::LoadType::SINCLUDE;
-                i = end + 1;
-                valid = true;
-            }
-        } else if (i < raw_cond.size() && raw_cond[i] == '\'') {
-            // 'path' form (IEC string style)
-            ++i;
-            std::size_t end = raw_cond.find('\'', i);
-            if (end != std::string::npos) {
-                path = raw_cond.substr(i, end - i);
-                load_type = Loader::LoadType::INCLUDE;
                 i = end + 1;
                 valid = true;
             }
@@ -116,31 +130,135 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
     return result;
 }
 
+#endif  // !JIEPP_SANDBOX
+
+#ifdef JIEPP_SANDBOX
+// Index of the first actual __has_include operator use in s -- the keyword
+// not preceded by an identifier character (so a longer name such as
+// weird__has_include does not match) and followed, after optional
+// whitespace, by '(' -- or npos. `defined(__has_include)` and
+// `defined __has_include` are feature tests, not uses.
+std::size_t find_has_include_call(const std::string& s) {
+    static constexpr std::string_view KW = "__has_include";
+    std::size_t pos = 0;
+    while ((pos = s.find(KW, pos)) != std::string::npos) {
+        std::size_t kw = pos;
+        pos += KW.size();
+        if (kw > 0) {
+            unsigned char prev = static_cast<unsigned char>(s[kw - 1]);
+            if (std::isalnum(prev) || prev == '_')
+                continue;
+        }
+        std::size_t i = pos;
+        while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
+        if (i < s.size() && s[i] == '(')
+            return kw;
+    }
+    return std::string::npos;
+}
+#endif
+
 } // namespace
 
-std::string eval_cond_str(const std::string& raw_cond, Env& env) {
+std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_error) {
 #ifdef JIEPP_SANDBOX
-    // In sandbox mode, __has_include is not allowed (filesystem probe)
-    static constexpr std::string_view KW_HI = "__has_include";
-    if (raw_cond.find(KW_HI) != std::string::npos)
+    // In sandbox mode the __has_include operator is not allowed (filesystem
+    // probe); only an actual use is PP62, see find_has_include_call().
+    if (find_has_include_call(raw_cond) != std::string::npos)
         ISSUE(SANDBOX_RESTRICTED_DIRECTIVE, "__has_include");
     std::string cond = raw_cond;
 #else
     std::string cond = resolve_has_include(raw_cond, env);
 #endif
     bool had_defined = env.exist("defined");
-    if (!had_defined)
-        env.define("defined", std::make_unique<DefinedOperator>());
-    std::string result = preprocess_text(cond, env);
-    if (!had_defined)
-        env.undef("defined");
+    // C3/U5: install the temporary 'defined' operator via an RAII guard so
+    // it is removed on scope exit even when expand_operand_text() below
+    // throws (previously the matching env.undef("defined") was skipped on
+    // that path, leaking the operator into `env` for the rest of the run).
+    struct DefinedGuard {
+        Env& env;
+        bool owns;
+        ~DefinedGuard() { if (owns) env.undef("defined"); }
+    } guard{env, !had_defined};
+    DefinedOperator* defop;
+    if (!had_defined) {
+        auto d = std::make_unique<DefinedOperator>();
+        defop = d.get();
+        env.define("defined", std::move(d));
+    } else {
+        // Defensive only: 'defined' is installed transiently and
+        // non-reentrantly by this function, so a nested eval_cond_str call
+        // observing an already-installed 'defined' is not expected to
+        // happen in practice. Reset it anyway so a hypothetical nested call
+        // does not inherit a stale operand_error from an unrelated caller.
+        defop = dynamic_cast<DefinedOperator*>(env.lookup("defined"));
+        if (defop)
+            defop->operand_error = false;
+    }
+    std::string result = jiepp::preprocessor_detail::expand_operand_text(cond, env);
+    if (operand_error)
+        *operand_error = defop && defop->operand_error;
     return result;
 }
 
 bool eval_cond(const std::string& raw_cond, Env& env) {
-    std::string expanded = eval_cond_str(raw_cond, env);
-    int64_t val = eval_const_expr(expanded);
+    bool operand_error = false;
+    std::string expanded = eval_cond_str(raw_cond, env, &operand_error);
+    // C3: a 'defined' operand/paren error already reported the diagnostic;
+    // the whole condition is false and the rest of it is not evaluated,
+    // like clang.
+    if (operand_error)
+        return false;
+    // Comments are whitespace in the expression, as in C: those written in
+    // the operand and those a macro body brought in (bodies keep comments
+    // unless -nC) both survive expand_operand_text() as text, and constfold's
+    // scanner knows no comment syntax. Blanked only after
+    // resolve_has_include() ran on the raw text, so a
+    // __has_include(<a//b>) path is not mistaken for a comment.
+    int64_t val = eval_const_expr(iec3_blank_out_comments(expanded));
     return val != 0;
+}
+
+// C2: {#ifdef NAME}/{#ifndef NAME}. See expand_helpers.hpp for the contract.
+bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env) {
+    auto ts = ts_trim(jiepp::preprocessor_detail::lex_operand(raw_arg, /*remove_comments=*/true));
+    if (ts.empty()) {
+        ISSUE(INVALID_DEFINED_OPERAND, "macro name missing");
+        return false;
+    }
+    if (ts[0].type != Token::ANY || !iec3_is_identifier(ts[0].text)) {
+        ISSUE(INVALID_DEFINED_OPERAND,
+              "macro name must be an identifier: " + Util::escape_line_breaks(raw_arg));
+        return false;
+    }
+    if (ts.size() > 1) {
+        // Like gcc/clang ("extra tokens at end of #ifdef directive"), a
+        // warning; only NAME is tested. The extra tokens are never evaluated
+        // as an expression (formerly "{#ifdef X) \or\ (1}" was spliced into a
+        // defined(...) string and evaluated). Not reached in an inactive
+        // group (the caller only evaluates active {#ifdef}s).
+        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
+              std::string(is_ifndef ? "{#ifndef " : "{#ifdef ") +
+                  Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
+    }
+    bool is_def = macro_name_is_defined(ts[0].text, env);
+    return is_ifndef ? !is_def : is_def;
+}
+
+// Whether NAME counts as defined for {#ifdef}/{#ifndef}/`defined`.
+// A macro in env counts (the transient 'defined' operator itself does not).
+// Like gcc/clang, `__has_include` also counts in a normal build so code can
+// feature-test it; jiepp's __has_include(...) operator cannot be disabled
+// by {#undef}/{#define}, so it stays defined even after
+// {#undef __has_include}. Not in a JIEPP_SANDBOX build, where the operator
+// itself is restricted (PP62): there it reads as undefined.
+bool macro_name_is_defined(std::string_view name, Env& env) {
+#ifndef JIEPP_SANDBOX
+    if (name == "__has_include")
+        return true;
+#endif
+    Macro* m = env.lookup(name);
+    return m && !dynamic_cast<DefinedOperator*>(m);
 }
 
 } // namespace jiepp::expand_detail

@@ -1,4 +1,4 @@
-(* pragma.iec - Preprocessor control directives *)
+(* pragma.iec - Runtime limit directives ({#max_*}) *)
 
 {#max_expansion_depth 128}
 {#max_if_nesting 64}

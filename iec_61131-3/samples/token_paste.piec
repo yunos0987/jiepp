@@ -4,11 +4,18 @@
 
 
 
+(* Unique instance names: the extra level expands __COUNTER__ before pasting *)
+
+
+
+
 program Main
 var
     sensor_1: int;
     sensor_2: int;
     v: dint;
+    ton_0: TON;
+    ton_1: TON;
 end_var
 (*{st}*)
 sensor_1 := 100;

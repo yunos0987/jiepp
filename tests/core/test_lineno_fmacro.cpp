@@ -1,15 +1,6 @@
 #include "lineno_test_helper.hpp"
 
 // ---- Function macro: line number tracking ----
-namespace {
-void normalize_diags(std::vector<std::string>& diags) {
-    for (auto& diag : diags) {
-        while (!diag.empty() && diag.back() == ' ') {
-            diag.pop_back();
-        }
-    }
-}
-} // namespace
 
 TEST_F(LinenoTest, Fmacro) {
     const std::vector<TestCase> cases = {
@@ -168,18 +159,22 @@ TEST_F(LinenoTest, Fmacro) {
             true,
         },
         {
+            // U4: a raw newline is now whitespace, so replacing '$\n' with
+            // a plain newline here would produce "* c" instead of the
+            // no-space "*c" that '$' still produces; plain-newline
+            // equivalence no longer holds.
             "dollar-newline-in-body-middle",
             "{#define F(x, y) x *$\ny};F(a + b, c + d);{#info}__LINE__",
             "\n;a + b *c + d;2",
             {"<unknown location>:2.0: info: PP93: ''"},
-            true,
+            false,
         },
         {
             "double-dollar-newline-in-body-middle",
             "{#define F(x, y) x *$\n$\ny};F(a + b, c + d);{#info}__LINE__",
             "\n\n;a + b *c + d;3",
             {"<unknown location>:3.0: info: PP93: ''"},
-            true,
+            false,
         },
         {
             "dollar-newline-at-body-start-duplicate",
@@ -214,9 +209,14 @@ c
 d
 )
 ;{#info}__LINE__)",
-            "\n\n\n\n\n;\na + b*c + d\n\n\n\n\n\n\n\n\n\n;17",
+            // trailing run: 10 blank lines exceed the default 7-line
+            // compaction threshold; N = cur_before_run(7) + nl(10) - 1 = 16.
+            // U4: the embedded '*$\ny$' segment above would gain a space
+            // ("* c") under plain-newline substitution; equivalence no
+            // longer holds (see dollar-newline-in-body-middle above).
+            "\n\n\n\n\n;\na + b*c + d\n(*{#:16}*)\n;17",
             {"<unknown location>:17.0: info: PP93: ''"},
-            true,
+            false,
         },
         {
             "mixed-doubles-dollars-and-real-newlines",
@@ -251,9 +251,13 @@ d
 )
 
 ;{#info}__LINE__)",
-            "\n\n\n\n\n\n\n\n;\n\na  +  b*c  +  d\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n;31",
+            // leading run: 8 blank lines -> N = 1 + 8 - 1 = 8.
+            // trailing run: 20 blank lines -> N = cur_before_run(11) + nl(20) - 1 = 30.
+            // U4: same '*$\n$\ny$$' middle segment as above; equivalence no
+            // longer holds.
+            "(*{#:8}*)\n;\n\na  +  b*c  +  d\n(*{#:30}*)\n;31",
             {"<unknown location>:31.0: info: PP93: ''"},
-            true,
+            false,
         },
     };
 
@@ -272,6 +276,27 @@ d
             EXPECT_EQ(expected_diags, actual_diags);
         }
     }
+}
+
+TEST_F(LinenoTest, FmacroLineInBody) {
+    // (a) __LINE__ textually inside a function-macro's own replacement list:
+    // for a multi-line invocation it must report the line of the closing ')',
+    // matching gcc/clang, not the line the macro name appeared on.
+    EXPECT_EQ(";1 3\n\n;\n4;",
+              pp("{#define F(x) x __LINE__};F(\n  1\n);\n__LINE__;"));
+    EXPECT_TRUE(empty());
+
+    // (b) __LINE__ passed as an argument: same closing-paren line applies to
+    // the recursive expansion of the actual parameter.
+    EXPECT_EQ(";3\n\n;\n4;",
+              pp("{#define F(x) x};F(\n__LINE__\n);\n__LINE__;"));
+    EXPECT_TRUE(empty());
+
+    // (c) __LINE__ after the call is unaffected (already covered by
+    // LinenoTest.Fmacro, spot-checked again here alongside (a)/(b)).
+    EXPECT_EQ(";a\n\n;3;",
+              pp("{#define F(x) x};F(\n  a\n);__LINE__;"));
+    EXPECT_TRUE(empty());
 }
 
 TEST_F(LinenoTest, FmacroInvalidPragma) {

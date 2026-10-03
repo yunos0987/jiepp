@@ -74,6 +74,57 @@ TEST_F(ShiftTest, Precedence) {
     EXPECT_TRUE(empty());
 }
 
+// ---- D: Int out-of-range shifts follow clang's PPExpressionEvaluator
+// (rev2/rev3 decision, SPEC §6.3): '<<' out of range -> 0; '>>' out of
+// range behaves like a shift by 63 (-1 for a negative left operand, 0
+// otherwise). In-range results are unchanged from ShlInt/ShrInt above.
+// INT64_MIN is written as (-9223372036854775807-1): __LINT_MIN__ (item h)
+// is not usable in {#if} yet.
+
+TEST_F(ShiftTest, ClangOutOfRangeInt) {
+    EXPECT_NE(0LL, eval_const_expr("-8 >> 1 = -4"));
+    EXPECT_NE(0LL, eval_const_expr("-1 >> 63 = -1"));
+    EXPECT_NE(0LL, eval_const_expr("-1 >> 64 = -1"));
+    EXPECT_NE(0LL, eval_const_expr("-1 >> 100 = -1"));
+    EXPECT_NE(0LL, eval_const_expr("8 >> 64 = 0"));
+    EXPECT_NE(0LL, eval_const_expr("1 << 63 = (-9223372036854775807-1)"));
+    EXPECT_NE(0LL, eval_const_expr("1 << 64 = 0"));
+    EXPECT_NE(0LL, eval_const_expr("-1 << 64 = 0"));
+    EXPECT_NE(0LL, eval_const_expr("-1 << 1 = -2"));
+    EXPECT_NE(0LL, eval_const_expr("16 >> -2 = 0"));
+    EXPECT_NE(0LL, eval_const_expr("1 << -1 = 0"));
+    EXPECT_NE(0LL, eval_const_expr("-16 << -2 = 0"));
+    EXPECT_NE(0LL, eval_const_expr("-1 >> -1 = -1"));
+    EXPECT_NE(0LL, eval_const_expr("-1 << -1 = 0"));
+    EXPECT_NE(0LL, eval_const_expr("(-9223372036854775807-1) >> 70 = -1"));
+    EXPECT_NE(0LL, eval_const_expr("3 << 62 < 0"));
+    EXPECT_NE(0LL, eval_const_expr("-1 << (-9223372036854775807-1) = 0"));
+    EXPECT_NE(0LL, eval_const_expr(
+        "(-9223372036854775807-1) >> (-9223372036854775807-1) = -1"));
+    EXPECT_TRUE(empty());
+}
+
+// ---- D: Bitstring out-of-range shifts pin the unchanged, width-consistent
+// rule (rev3 decision): both '<<' and '>>' give 0 for every width, whatever
+// the original bit pattern -- deliberately different from clang's unsigned
+// clamp-to-63 for '>>' (e.g. 0x8000000000000000u >> 64 = 1 in C), because
+// bitstrings are not a C type.
+
+TEST_F(ShiftTest, BitstringOutOfRangeGivesZero) {
+    EXPECT_NE(0LL, eval_const_expr(
+        "LWORD#16#8000000000000000 >> 64 = LWORD#16#0"));
+    EXPECT_NE(0LL, eval_const_expr(
+        "LWORD#16#8000000000000000 >> -1 = LWORD#16#0"));
+    EXPECT_NE(0LL, eval_const_expr(
+        "LWORD#16#8000000000000000 << -1 = LWORD#16#0"));
+    EXPECT_NE(0LL, eval_const_expr(
+        "LWORD#16#8000000000000000 >> 63 = LWORD#16#1"));
+    EXPECT_NE(0LL, eval_const_expr("BYTE#16#80 >> 64 = BYTE#16#00"));
+    EXPECT_NE(0LL, eval_const_expr("BYTE#16#02 << -1 = BYTE#16#00"));
+    EXPECT_NE(0LL, eval_const_expr("BYTE#16#ff >> -1 = BYTE#16#00"));
+    EXPECT_TRUE(empty());
+}
+
 // type error: float shift
 TEST_F(ShiftTest, TypeError) {
     EXPECT_THROW(eval_const_expr("1.0 << 2"), Issue::Exception);
