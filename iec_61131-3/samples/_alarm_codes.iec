@@ -1,0 +1,9 @@
+(* _alarm_codes.iec - Alarm code fragment guarded by a classic macro guard *)
+{#ifndef ALARM_CODES_INCLUDED}
+{#define ALARM_CODES_INCLUDED 1}
+
+var_global constant
+    ALARM_DOOR_OPEN: int := 16#0101;
+    ALARM_OVER_PRESSURE: int := 16#0102;
+end_var
+{#endif}

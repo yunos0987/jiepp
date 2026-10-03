@@ -1,0 +1,16 @@
+(* include_guard.iec - Include guards: {#pragma once} and macro guard *)
+
+(* Each fragment is included twice; the second include is skipped *)
+{#include '_io_map.iec'}
+{#include '_io_map.iec'}
+{#include '_alarm_codes.iec'}
+{#include '_alarm_codes.iec'}
+
+program Main
+var
+    alarm: int;
+end_var
+{st}
+alarm := ALARM_DOOR_OPEN;
+{end}
+end_program

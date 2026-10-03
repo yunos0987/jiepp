@@ -1,0 +1,8 @@
+(* _io_map.iec - I/O map fragment guarded by {#pragma once} *)
+{#pragma once}
+
+var_global constant
+    IO_MAP_FILE: string := __FILE_NAME__;
+    IO_MAP_LEVEL: int := __INCLUDE_LEVEL__;
+    IO_INPUT_COUNT: int := 16;
+end_var

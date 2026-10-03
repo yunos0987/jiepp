@@ -1,0 +1,38 @@
+(*{#:0 'iec_61131-3/samples/include_guard.iec'}*)
+(* include_guard.iec - Include guards: {#pragma once} and macro guard *)
+
+(* Each fragment is included twice; the second include is skipped *)
+(*{#:0 '_io_map.iec'}*)
+(* _io_map.iec - I/O map fragment guarded by {#pragma once} *)
+
+
+var_global constant
+    IO_MAP_FILE: string := '_io_map.iec';
+    IO_MAP_LEVEL: int := 1;
+    IO_INPUT_COUNT: int := 16;
+end_var
+(*{#:4 'iec_61131-3/samples/include_guard.iec'}*)
+(*{#:5 'iec_61131-3/samples/include_guard.iec'}*)
+(*{#:0 '_alarm_codes.iec'}*)
+(* _alarm_codes.iec - Alarm code fragment guarded by a classic macro guard *)
+
+
+
+var_global constant
+    ALARM_DOOR_OPEN: int := 16#0101;
+    ALARM_OVER_PRESSURE: int := 16#0102;
+end_var
+
+(*{#:6 'iec_61131-3/samples/include_guard.iec'}*)
+(*{#:0 '_alarm_codes.iec'}*)
+(* _alarm_codes.iec - Alarm code fragment guarded by a classic macro guard *)
+(*{#:7 'iec_61131-3/samples/include_guard.iec'}*)
+
+program Main
+var
+    alarm: int;
+end_var
+(*{st}*)
+alarm := ALARM_DOOR_OPEN;
+(*{end}*)
+end_program
