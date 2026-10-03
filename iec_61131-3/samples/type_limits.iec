@@ -1,0 +1,24 @@
+(* type_limits.iec - Portable types and limits with built-in type macros *)
+
+{#define COUNT_T __INT32_TYPE}
+{#define FLAGS_T __BITS16_TYPE}
+{#if __DINT_MAX__ > 16#7fff \and\ defined(_JIEPP)}
+{#define WIDE_COUNTER 1}
+{#endif}
+
+function_block Totalizer
+var
+    count: COUNT_T;
+    flags: FLAGS_T;
+{#ifdef WIDE_COUNTER}
+    wide_total: lint;
+{#endif}
+end_var
+{st}
+if count < __DINT_MAX__ then count := count + 1; end_if;
+flags := flags and __WORD_MASK__;
+{#ifdef WIDE_COUNTER}
+wide_total := wide_total + 1;
+{#endif}
+{end}
+end_function_block

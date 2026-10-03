@@ -1,0 +1,25 @@
+(*{#:0 'iec_61131-3/samples/type_limits.iec'}*)
+(* type_limits.iec - Portable types and limits with built-in type macros *)
+
+
+
+
+
+
+
+function_block Totalizer
+var
+    count: dint;
+    flags: word;
+
+    wide_total: lint;
+
+end_var
+(*{st}*)
+if count < 2147483647 then count := count + 1; end_if;
+flags := flags and word#16#ffff;
+
+wide_total := wide_total + 1;
+
+(*{end}*)
+end_function_block
