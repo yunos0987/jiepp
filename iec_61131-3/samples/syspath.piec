@@ -15,6 +15,6 @@ var
     v: int;
 end_var
 (*{st}*)
-v := if (-10) >= 0 then (-10) else -(-10) end_if;
+v := SEL((-10) >= 0, -(-10), (-10));
 (*{end}*)
 end_program
