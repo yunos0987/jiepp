@@ -66,7 +66,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `{` と `#` の間に空白・改行・コメントがあると通常のプラグマとして扱われる。空白/改行なら `PP28`（`WHITESPACE_BEFORE_DIRECTIVE`）警告（`lexer_pragma.cpp`）
 - 閉じていない文字列リテラルは `tokenize()` が `Token::unterminated` を立て（後続リテラルと結合しない）、`PP29`（`UNTERMINATED_STRING_LITERAL`）警告は core がトークンを処理するとき（`expand()` 主ループ・関数マクロ引数収集・`preprocessor_detail::lex_operand()`）に 1 回だけ出してフラグを下ろす。無効なグループとメッセージディレクティブでは出さない
 - `Token`（`token.hpp`）はトークン 1 個を表す構造体（`text`, `kind` 等のフィールド）
-- Prosser の hide set（`Token::hs`）は `hideset.hpp/cpp` の `HideSet` が実装する。中身はインターン済みマクロ名 id 上の永続的（immutable、構造共有）ビットマップ基数トライで、値はポインタ 1 個のハンドル（コピーは参照カウントの atomic increment のみ）。名前→id のテーブルはプロセス全体で 1 つ・一度登録した名前は解放されず・`Issue` 同様スレッドセーフではない
+- Prosser の hide set（`Token::hs`）は `hideset.hpp/cpp` の `HideSet` が実装する。中身はインターン済みマクロ名 id 上の永続的（immutable、構造共有）ビットマップ基数トライで、値はポインタ 1 個のハンドル（コピーは参照カウントの加算のみ。カウントは atomic ではないため、HideSet の値をスレッド間で共有しない）。名前→id のテーブルはプロセス全体で 1 つ・一度登録した名前は解放されず・`Issue` 同様スレッドセーフではない
 
 ### core/ の内部構成
 
