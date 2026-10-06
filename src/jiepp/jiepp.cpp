@@ -178,6 +178,10 @@ int jiepp_command(const JieppOptions& opts)
     // immediately-following WS token (GCC-compatible -P blank-line removal).
     auto emit_tokens = [&](const std::vector<Token>& tokens) {
         std::ostream* actual_output = not_out ? &virtual_output : output_stream;
+        // Accumulate into one buffer and write once: each operator<< on
+        // cout/ofstream takes the C runtime's per-call FILE lock (and stdio
+        // sync), so a write per token is measurably slower on large outputs.
+        std::string buf;
         if (no_line_markers) {
             bool skip_next_ws = false;
             for (const auto& t : tokens) {
@@ -189,12 +193,13 @@ int jiepp_command(const JieppOptions& opts)
                     skip_next_ws = false;
                     if (t.type == Token::WS) continue;  // drop blank line only, not comments
                 }
-                *actual_output << t.text;
+                buf += t.text;
             }
         } else {
             for (const auto& t : tokens)
-                *actual_output << t.text;
+                buf += t.text;
         }
+        actual_output->write(buf.data(), static_cast<std::streamsize>(buf.size()));
     };
 
     std::vector<Token> ots;
