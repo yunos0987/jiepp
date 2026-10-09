@@ -89,7 +89,7 @@ static std::string paste_echo_tail(const std::string& s) {
 void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
     if (src.empty()) {
         for (auto& t : item)
-            src.push_back(t);
+            src.push_back(std::move(t));
         return;
     }
     if (item.empty())
@@ -107,7 +107,7 @@ void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
     prev.text += next.text;
 
     for (std::size_t k = 1; k < item.size(); ++k)
-        src.push_back(item[k]);
+        src.push_back(std::move(item[k]));
 }
 
 // ── §Support functions: select, stringize ─────────────────────────
@@ -501,7 +501,7 @@ std::vector<Token> subst(
                 if (va_args_non_empty(formal_params, actual_params)) {
                     auto inner = subst(content, formal_params, actual_params,
                                        actual_ws, {}, env, va_sep_ws, memo);
-                    for (auto& et : inner) result.push_back(et);
+                    for (auto& et : inner) result.push_back(std::move(et));
                 }
                 i = j; // advance past closing ')'
                 continue;
@@ -571,7 +571,7 @@ std::vector<Token> subst(
                         pending_placemarker = true;
                     } else {
                         for (auto& ft : flat)
-                            result.push_back(ft);
+                            result.push_back(std::move(ft));
                         pending_placemarker = false;
                     }
                 } else if (slot < 0) {
