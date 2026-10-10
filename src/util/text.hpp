@@ -41,7 +41,15 @@ std::string_view utf8_tail(std::string_view s, std::size_t max_bytes);
 // character (or part of an invalid sequence). Invalid UTF-8 is not
 // validated or repaired; it is passed through unchanged except for the
 // removals above. Defined in every build; only sandbox builds call it.
-std::string strip_control_chars(std::string_view s);
+//
+// c1_pairs == C1Pairs::Keep skips the C2 80 - C2 9F rule and removes only
+// the C0 controls and DEL above. The C1 rule assumes UTF-8 text; a file path
+// on Windows is in the ANSI code page (argv), where C2 followed by 0x80-0x9F
+// is ordinary text (CP932: U+FF82 then the lead byte of a double-byte
+// character, e.g. C2 82 A0 = U+FF82 U+3042), so Issue::happen() passes Keep
+// for paths there. The "no forbidden byte" result for C0/DEL still holds.
+enum class C1Pairs { Remove, Keep };
+std::string strip_control_chars(std::string_view s, C1Pairs c1_pairs = C1Pairs::Remove);
 
 // Replaces each '\n' and each '\r' in s with one space, byte for byte, so a
 // CR LF pair becomes two spaces; every other byte is unchanged. Used after

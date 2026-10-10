@@ -555,9 +555,50 @@ TEST_F(SandboxDiagnosticStripTest, LibraryCallerReceivesStrippedText) {
     for (std::string line; std::getline(i, line);)
         ms.push_back(PlainTextMessage::strip_source_location(line));
     ASSERT_EQ(2u, ms.size());
-    EXPECT_EQ("dir[31m/a.iec:7.0: error: PP52: Invalid expression; 'xyz'", ms[0]);
-    EXPECT_EQ(0u, ms[1].find("dir[31m/a.iec:")) << ms[1];
+    // On Windows the path is in the ANSI code page, so its C2 9B is not
+    // treated as a UTF-8 C1 control (see FilePathC1PairRule below); the
+    // context is input text and loses it on every platform.
+#ifdef _WIN32
+    const std::string path = "dir[31m/a\xC2\x9B.iec";
+#else
+    const std::string path = "dir[31m/a.iec";
+#endif
+    EXPECT_EQ(path + ":7.0: error: PP52: Invalid expression; 'xyz'", ms[0]);
+    EXPECT_EQ(0u, ms[1].find(path + ":")) << ms[1];
     EXPECT_NE(std::string::npos, ms[1].find("PP91: 'mn'")) << ms[1];
+}
+
+// A-1: the UTF-8 C1 rule (C2 80 - C2 9F) is not applied to a file path on
+// Windows, where the path is in the ANSI code page: CP932 C2 82 A0 is
+// U+FF82 U+3042 and must stay intact. C0 controls and DEL are still removed
+// from it. Elsewhere the pair is removed as in any other text. The context of
+// a file code (PP11 here) is the path itself and follows the same rule; the
+// context of any other code keeps the full rule.
+TEST_F(SandboxDiagnosticStripTest, FilePathC1PairRule) {
+    std::ostringstream own;
+    Issue::set_output(own);
+    Issue::ContinueMode guard({});
+    {
+        Issue::LineGuard g(3, std::string("d\x01" "ir/\xC2\x82\xA0\x7F.iec"));
+        Issue::happen(Issue::Code::INVALID_EXPRESSION, "\xC2\x82\xA0" "e");
+        Issue::happen(Issue::Code::FILE_NOT_FOUND, "\xC2\x82\xA0\x1B.iec");
+    }
+    Issue::set_output(output());
+    std::istringstream i(own.str());
+    std::vector<std::string> ms;
+    for (std::string line; std::getline(i, line);)
+        ms.push_back(PlainTextMessage::strip_source_location(line));
+    ASSERT_EQ(2u, ms.size()) << own.str();
+#ifdef _WIN32
+    const std::string path = "dir/\xC2\x82\xA0.iec";
+    const std::string file_ctx = "\xC2\x82\xA0.iec";
+#else
+    const std::string path = "dir/\xA0.iec";
+    const std::string file_ctx = "\xA0.iec";
+#endif
+    EXPECT_EQ(path + ":3.0: error: PP52: Invalid expression; '\xA0" "e'", ms[0]);
+    EXPECT_EQ(0u, ms[1].find(path + ":3.0: error: PP11: ")) << ms[1];
+    EXPECT_NE(std::string::npos, ms[1].find("; '" + file_ctx + "'")) << ms[1];
 }
 
 // ---- LF/CR become spaces outside the message text (SPEC 14) ----

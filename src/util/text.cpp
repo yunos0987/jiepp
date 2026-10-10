@@ -33,7 +33,8 @@ bool _is_utf8_continuation(char c) {
 
 }
 
-std::string Util::strip_control_chars(std::string_view s) {
+std::string Util::strip_control_chars(std::string_view s, C1Pairs c1_pairs) {
+    const bool remove_c1 = c1_pairs == C1Pairs::Remove;
     std::string out;
     out.reserve(s.size());
     for (const char ch : s) {
@@ -42,7 +43,7 @@ std::string Util::strip_control_chars(std::string_view s) {
             continue;
         if (c == 0x7F)
             continue;
-        if (c >= 0x80 && c <= 0x9F && !out.empty() &&
+        if (remove_c1 && c >= 0x80 && c <= 0x9F && !out.empty() &&
             static_cast<unsigned char>(out.back()) == 0xC2) {
             out.pop_back();
             continue;

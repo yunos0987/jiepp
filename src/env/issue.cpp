@@ -240,14 +240,33 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // extra diagnostic line. Replacing a byte with a space in place
         // removes nothing and a space is neither C2 nor 0x80-0x9F, so the
         // strip's "no forbidden byte or pair" result still holds.
+        // The UTF-8 C1 rule (C2 80 - C2 9F) assumes UTF-8 text. On Windows a
+        // file path arrives in the ANSI code page (argv; CP932 C2 82 A0 is
+        // U+FF82 U+3042), so the path keeps those pairs there and only loses
+        // C0 controls and DEL. That covers the location path and the context
+        // of the file codes PP10/PP11/PP12/PP14, which is the path itself:
+        // in sandbox builds {#include}/{#sinclude}/__has_include are PP62 and
+        // {#line}'s file name is ignored, so both come only from the command
+        // line (input file, --disppath, -include, -o, -MF) or from a library
+        // caller. Other contexts are input text (UTF-8, SPEC 1) and keep the
+        // full rule on every platform.
+#ifdef _WIN32
+        constexpr Util::C1Pairs path_c1 = Util::C1Pairs::Keep;
+#else
+        constexpr Util::C1Pairs path_c1 = Util::C1Pairs::Remove;
+#endif
         const bool message_code = code == Code::SEVERE_MESSAGE
             || code == Code::ERROR_MESSAGE
             || code == Code::WARNING_MESSAGE
             || code == Code::INFO_MESSAGE;
-        context = Util::strip_control_chars(context);
+        const bool path_code = code == Code::FILE_ERROR
+            || code == Code::FILE_NOT_FOUND
+            || code == Code::MAX_INCLUDE_DEPTH_EXCEEDED
+            || code == Code::INCLUDE_TARGET_IS_DIRECTORY;
+        context = Util::strip_control_chars(context, path_code ? path_c1 : Util::C1Pairs::Remove);
         if (!message_code)
             context = Util::line_breaks_to_spaces(context);
-        loc_file = Util::line_breaks_to_spaces(Util::strip_control_chars(loc_file));
+        loc_file = Util::line_breaks_to_spaces(Util::strip_control_chars(loc_file, path_c1));
 #endif
         message_.message(*stream_, severity, code, context, loc_file, loc_line, 0, loc);
         *stream_ << '\n';
