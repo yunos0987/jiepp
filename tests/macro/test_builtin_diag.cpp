@@ -276,13 +276,6 @@ TEST_F(BuiltinDiagTest, IfdefSeesBuiltinsAndUndefRemovesThem) {
     EXPECT_EQ(Strings({"PP35: Macro redefined; '__error: undefining built-in macro'"}), diags());
 }
 
-// E19
-TEST_F(BuiltinDiagTest, RedefineBuiltinWarnsPP35) {
-    Issue::ContinueMode guard({});
-    EXPECT_EQ("[1]", pp("{#define __error(x) [x]}__error(1)"));
-    EXPECT_EQ(Strings({"PP35: Macro redefined; '__error: redefining built-in macro'"}), diags());
-}
-
 #ifndef JIEPP_SANDBOX
 // E22: {#ignore PP91} covers {#error}, __error and __assert; the message is
 // still expanded (its side effects do not depend on the ignore state).
@@ -444,6 +437,9 @@ TEST_F(BuiltinDiagTest, UndefOrRedefineBuiltinWarns) {
     EXPECT_EQ("__assert(0, m)", pp("{#undef __assert}__assert(0, m)"));
     EXPECT_EQ(Strings({"PP35: Macro redefined; '__assert: undefining built-in macro'"}), diags());
     EXPECT_EQ("1", pp("{#define __error 1}__error"));
+    EXPECT_EQ(Strings({"PP35: Macro redefined; '__error: redefining built-in macro'"}), diags());
+    // E19: a function-like redefinition is used instead of the built-in.
+    EXPECT_EQ("[1]", pp("{#define __error(x) [x]}__error(1)"));
     EXPECT_EQ(Strings({"PP35: Macro redefined; '__error: redefining built-in macro'"}), diags());
     pp("{#undef __COUNTER__}{#undef __LINE__}{#define __FILE__ 1}");
     EXPECT_EQ(Strings({"PP35: Macro redefined; '__COUNTER__: undefining built-in macro'",

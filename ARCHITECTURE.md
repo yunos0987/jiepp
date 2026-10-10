@@ -39,7 +39,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 | `jiepp/` | `main.cpp`, `jiepp.hpp/cpp`, `option.hpp/cpp` | CLI: 引数解析・前処理実行・入出力制御 |
 | `env/` | `env.hpp/cpp`, `issue.hpp/cpp`, `issue_message.hpp/cpp`, `issue_codes.def` | `Env` 状態管理と診断出力 |
 | `loader/` | `lexer.hpp/cpp`, `token.hpp/cpp`, `hideset.hpp/cpp`, `directive_parser.hpp/cpp`, `directive_token.cpp`, `loader.hpp/cpp` | トークン化・ディレクティブ解析 |
-| `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp`, `line_compaction.hpp/cpp` | ディレクティブ処理・マクロ展開本体（`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む） |
+| `core/` | `preprocessor.hpp/cpp`, `directive_handlers.cpp`, `expand.cpp`, `expand_ctrl.cpp`, `expand_subst.cpp`, `builtin_function_macros.cpp`, `line_compaction.hpp/cpp` | ディレクティブ処理・マクロ展開本体（`expand_helpers.hpp`, `preprocessor_internal.hpp`, `builtin_macros.def` も含む） |
 | `macro/` | `macro.hpp/cpp`, `macro_builtin.cpp` | `Macro` クラスと組み込みオブジェクトマクロ |
 | `constfold/` | `constfold.hpp/cpp`, `constfold_internal.hpp`, `constfold.l`, `constfold.y` | `#if` / `#elif` 式の定数畳み込み |
 | `util/` | `path.hpp/cpp`, `text.hpp/cpp`, `iec_61131-3.hpp/cpp`, `stack_guard.hpp/cpp` | `Util` 名前空間の低レベルヘルパー: パス正規化 (`absolute_path()`, `canonical_path()`)、トリム (`ltrim_view()`/`rtrim_view()`/`trim_view()`)、IEC 文字列エンコード (`encode_iec_string()`)、スタック枯渇ガード（`note_stack_base()`/`stack_nearly_exhausted()`。スレッド入口で基点を記録し、`expand()` 入口と `subst_va_opt_content()`（`subst()` の自己再帰の直前）で残量を検査する） |
@@ -123,7 +123,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 対応する演算子・優先順位は [`SPECIFICATION.md` §6.2](SPECIFICATION.md#62-演算子の優先順位--operator-precedence)、型規則は [§6.3](SPECIFICATION.md#63-型の規則--type-rules) を参照。生成された `constfold_scanner.cpp`/`constfold_parser.cpp` はリポジトリに存在せず、CMakeLists.txt の `FLEX_TARGET`/`BISON_TARGET` がビルド時に生成し `JIEPP_SOURCES` に別の翻訳単位として追加する。
 
-`__has_include` は `expand_ctrl.cpp` の `resolve_has_include()` でマクロ展開前に raw 文字列レベルで 1/0 に解決される。`"path"` 形式は INCLUDE 検索、`<path>` 形式は SINCLUDE 検索を使用。
+`__has_include` は `expand_ctrl.cpp` の `resolve_has_include()` で 1/0 に解決される。`{#if}` / `{#elif}` の条件式ではマクロ展開前に raw 文字列レベルで解決する。ビルトイン関数マクロの `__assert` の条件式と `__counter_set` の値（`eval_cond_value_tokens()`）でも、マクロ展開前のオペランドのトークン列を連結したテキストに対して同じ `resolve_has_include()` を呼んで解決する（`{#if}` と同じで、引数はマクロ展開しない）。`"path"` 形式は INCLUDE 検索、`<path>` 形式は SINCLUDE 検索を使用。
 
 ## エラー処理 (Issue)
 

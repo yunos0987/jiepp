@@ -641,8 +641,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             }
 
             // Case: T is a "()'d macro" → expand(subst(ts(T), fp(T), actuals, (HS∩HS')∪{T}, {}) • TS'')
-            // A built-in function macro (__error/__assert) shares the call
-            // handling below (opening parenthesis, argument collection,
+            // Built-in function macros (__error, __assert, __counter*) share
+            // the call handling below (opening parenthesis, argument collection,
             // PP34 recovery, line accounting); only the final step differs:
             // invoke() on the unexpanded arguments instead of subst().
             auto* fm = dynamic_cast<FunctionMacro*>(macro);
