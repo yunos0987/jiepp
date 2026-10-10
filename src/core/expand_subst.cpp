@@ -7,6 +7,7 @@
 
 #include "../macro/macro.hpp"
 #include "../util/iec_61131-3.hpp"
+#include "../util/stack_guard.hpp"
 #include "../util/text.hpp"
 
 #include <algorithm>
@@ -327,6 +328,9 @@ static std::vector<Token> subst_va_opt_content(
     Env& env,
     bool va_sep_ws,
     ArgExpansionMemo* memo) {
+    // F2: the only subst() -> subst() recursion; expand()'s guard never sees it.
+    if (Util::stack_nearly_exhausted())
+        raise_stack_exhausted(env);
     const std::size_t lp = next_non_ws(va_opt, i, body.size());
     const std::size_t n = close - lp - 1;
     return subst(body.subspan(lp + 1, n), va_opt.subspan(lp + 1, n), formal_params,

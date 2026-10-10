@@ -750,3 +750,68 @@ TEST_F(SmokeTest, UnclosedDirectiveInDeepRelexKeepsPP23) {
     EXPECT_EQ(count_lines_with(r.err, ": PP22:"), 2u) << "stderr: " << r.err;
 }
 #endif
+
+// ---- F2: deeply nested __VA_OPT__ reports PP63 instead of crashing ----
+//
+// Nested __VA_OPT__ is PP37, but with PP37 ignored or in continue mode its
+// content is still substituted, recursing subst() -> subst() once per level
+// without passing through expand()'s stack check. 5000 levels exhaust a
+// 1 MiB stack (--recursion-limit 128) in both Debug and Release on every OS
+// (768 KiB / 5000 is about 157 bytes per level); before the fix the process
+// crashed. --max-expansion-steps 0 keeps PP64 (the k(k-1)/2 PP37 step
+// charges) from stopping the run first.
+
+namespace {
+
+std::string nested_va_opt_source(const std::string& prefix, int k) {
+    std::string src = prefix + "{#define M(...) ";
+    for (int i = 0; i < k; ++i)
+        src += "__VA_OPT__(";
+    src += "x";
+    src += std::string(static_cast<std::size_t>(k), ')');
+    src += "}M(1) after_m\n";
+    return src;
+}
+
+} // namespace
+
+#ifndef JIEPP_SANDBOX
+TEST_F(SmokeTest, NestedVaOptIgnoredPP37ReportsPP63NotCrash) {
+    fs::path input = tmp_dir_ / "nested_va_opt_ignored.iec";
+    write_file(input, nested_va_opt_source("{#ignore PP37}", 5000));
+
+    auto r = run("--recursion-limit 128 --max-expansion-steps 0 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    // The depth figure counts expand() nesting only, so it is not pinned.
+    EXPECT_NE(r.err.find("PP63: Stack nearly exhausted; 'expansion depth "), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.err.find("retry with --recursion-limit greater than 128'"), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.err.find("PP37"), std::string::npos) << "stderr: " << r.err.substr(0, 2000);
+    // The run stopped inside M(1): nothing after it was output.
+    EXPECT_EQ(r.out.find("after_m"), std::string::npos);
+}
+#endif
+
+// Same input without {#ignore} (restricted in sandbox builds): the CLI's
+// continue mode counts each PP37 and keeps substituting, so a sandboxed web
+// deployment crashed too. --silent keeps the PP37 lines (millions of them
+// before the stack runs low) off stderr. The RobustnessTest* fixture name
+// matches the sandbox test presets' filter ^(Sandbox|RobustnessTest), so
+// this runs in both normal and sandbox builds.
+// If an error limit is added, raise it here well above the PP37 count so
+// the PP63 path is still exercised (stopping at the limit would also give
+// rc=1, indistinguishable under --silent).
+class RobustnessTestSmoke : public SmokeTest {};
+
+TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsPP63NotCrash) {
+    fs::path input = tmp_dir_ / "nested_va_opt_continue.iec";
+    write_file(input, nested_va_opt_source("", 5000));
+
+    auto r = run("--silent --recursion-limit 128 --max-expansion-steps 0 \"" +
+                 input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.out.find("after_m"), std::string::npos);
+}

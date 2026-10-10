@@ -398,7 +398,7 @@ LOG('code=%d', 42);    (* → write_log('code=%d' , 42); — 本体の `fmt` の
 - `@@`（トークン連結）・`@`（文字列化）の引数としても使用可能:
   - `prefix @@ __VA_OPT__(suffix)` — 空のとき `prefix`、非空のとき `prefixsuffix`
   - `@__VA_OPT__(__VA_ARGS__)` — 空のとき `''`、非空のとき文字列化した値（§4.1 の空白圧縮規則が適用される。例: `@__VA_OPT__(x   y   __VA_ARGS__)` で `VO(1)` → `'x y 1'`）
-- ネストはエラー（PP37）
+- ネストはエラー（PP37）。`PP37` を無視または続行した場合は内側の中身もそのまま置換する。入れ子が深いと、jiepp コマンドではスタックの残りが尽きる前に `PP63` で止まる。スタックの基点を記録しないライブラリ利用（`preprocess()` 等）にはこの保護がない（§11「スタック残量の検査」）
 
 ### 3.5 マクロ定義解除 / Undefine
 
@@ -913,7 +913,7 @@ CLI オプションで設定した値はソースコード内のディレクテ�
 
 上限は既定で 16777216（2^24）ステップ、`0` で無制限。通常ビルドでもサンドボックスビルドでも同じ既定値である。超えると `MAX_EXPANSION_STEPS_EXCEEDED`（`PP64`、SEVERE）を出して処理を中断する（`{#ignore}`・`-w`・`--silent` でも止まり、終了コードは `1`）。出力は `PP60`・`PP63` と同じ規則に従う（§16「重大度」）。数える範囲は 1 回の `preprocess()` / `preprocess_text()` 呼び出し、または jiepp コマンド 1 回（`-include` ファイルと主入力で共通）で、呼び出しごとに 0 から数え直す。
 
-**スタック残量の検査**: マクロ展開は入れ子 1 段ごとにスタックを使う（関数マクロで Release ビルド約 2 KiB）。jiepp コマンドは展開に入るたびにスタックの残りを調べ、256 KiB を下回ると `STACK_EXHAUSTED`（`PP63`、SEVERE）を出して処理を中断する。この検査は `PP60` の判定より先に行う。既定（深度上限 256、スタック 8 MiB）では先に `PP60` が出るので、`PP63` が出るのは `--max-expansion-depth`/`{#max_expansion_depth}` を大きくしたとき、`{#ignore PP60}` を使ったとき、または `--recursion-limit` でスタックを小さくしたときに限られる。`--recursion-limit` でスタックを大きくすれば、より深い入れ子を処理できる。ライブラリとして使う場合（`preprocess()` 等）はこの検査を行わない。
+**スタック残量の検査**: マクロ展開は入れ子 1 段ごとにスタックを使う（関数マクロで Release ビルド約 2 KiB）。jiepp コマンドは展開に入るたびに、および `__VA_OPT__` の中身を置換するたびに（入れ子の `__VA_OPT__` を `PP37` を無視または続行して置換する場合を含む）スタックの残りを調べ、256 KiB を下回ると `STACK_EXHAUSTED`（`PP63`、SEVERE）を出して処理を中断する。この検査は `PP60` の判定より先に行う。メッセージの「expansion depth」はマクロ展開の入れ子の数で、`__VA_OPT__` の入れ子は含まない（`__VA_OPT__` の入れ子で止まったときは小さな値になる。`--recursion-limit` を大きくすれば先へ進める点は同じ）。既定（深度上限 256、スタック 8 MiB）では先に `PP60` が出るので、`PP63` が出るのは `--max-expansion-depth`/`{#max_expansion_depth}` を大きくしたとき、`{#ignore PP60}` を使ったとき、`--recursion-limit` でスタックを小さくしたとき、または `PP37` を無視または続行して入れ子の `__VA_OPT__` を深くしたとき（既定の設定では Debug ビルドで起こりうる。Release では通常 `PP64` が先に出る）に限られる。`--recursion-limit` でスタックを大きくすれば、より深い入れ子を処理できる。ライブラリとして使う場合（`preprocess()` 等）はこの検査を行わない。
 
 `{#max_blank_lines}` は他の制限ディレクティブと異なる非自明な意味論を持つ: 空行圧縮は展開完了**後**に一度だけ行われ、その時点の値（＝ファイル内で最後に実行された `{#max_blank_lines}` の値）が出力全体に適用される。ファイル先頭付近の空行区間でも、ファイル後方の `{#max_blank_lines}` によって圧縮挙動が決まる（`{#max_if_nesting}` のように展開中に逐次適用される制限とは異なる）。
 
@@ -1366,7 +1366,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP60 | `MAX_EXPANSION_DEPTH_EXCEEDED` | ERROR | Maximum expansion depth exceeded | マクロ展開深度上限超過 |
 | PP61 | `MAX_IF_NESTING_EXCEEDED` | ERROR | Maximum conditional nesting depth exceeded | 条件分岐ネスト深度上限超過 |
 | PP62 | `SANDBOX_RESTRICTED_DIRECTIVE` | ERROR | Directive is restricted in sandbox mode | サンドボックスモードで禁止されたディレクティブ |
-| PP63 | `STACK_EXHAUSTED` | SEVERE | Stack nearly exhausted | マクロ展開の入れ子が深く、スタックの残りが 256 KiB を下回った。処理を中断する（クラッシュはしない）。`--recursion-limit` でスタックを大きくできる（§11・§13）。jiepp コマンドだけが発行する |
+| PP63 | `STACK_EXHAUSTED` | SEVERE | Stack nearly exhausted | マクロ展開の入れ子、または入れ子の `__VA_OPT__` が深く、スタックの残りが 256 KiB を下回った。処理を中断する（クラッシュはしない）。`--recursion-limit` でスタックを大きくできる（§11・§13）。jiepp コマンドだけが発行する |
 | PP64 | `MAX_EXPANSION_STEPS_EXCEEDED` | SEVERE | Maximum expansion steps exceeded | マクロ展開の仕事量（ステップ数）が上限を超えた。処理を中断する。`--max-expansion-steps N` で上限を変えられる（`0` で無制限、§11・§13） |
 | PP70 | `UNKNOWN_OPTION` | ERROR | Unknown command-line option | 未知のコマンドラインオプション |
 | PP71 | `INVALID_OPTION_VALUE` | ERROR | Invalid option value | オプション値が不正（正の整数でない等） |

@@ -440,6 +440,24 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
 
 // ── §expand — main expansion loop (cpp.algo.md) ──────────────────
 
+namespace jiepp::expand_detail {
+
+void raise_stack_exhausted(const Env& env) {
+    const std::size_t kib = Util::stack_budget() >> 10;
+    ISSUE(STACK_EXHAUSTED,
+          "expansion depth " + std::to_string(env.expansion_depth()) +
+          " with a " + std::to_string(kib) + " KiB stack; retry with --recursion-limit greater than " +
+          std::to_string(kib / 8));
+    // STACK_EXHAUSTED is SEVERE: happen() always throws for it
+    // (ignore list, blockings and continue mode cannot stop it, see
+    // Issue::happen()). This explicit throw is defense-in-depth so a
+    // future change there cannot silently turn this back into a
+    // stack overflow.
+    throw Issue::Exception(Issue::Code::STACK_EXHAUSTED);
+}
+
+} // namespace jiepp::expand_detail
+
 namespace {
 
 struct ExpansionDepthGuard {
@@ -449,19 +467,8 @@ struct ExpansionDepthGuard {
         // a throw here leaves expansion_depth() untouched, and {#ignore
         // PP60} cannot turn deep nesting into a crash by letting expansion
         // continue past the depth limit on a near-exhausted stack.
-        if (Util::stack_nearly_exhausted()) {
-            const std::size_t kib = Util::stack_budget() >> 10;
-            ISSUE(STACK_EXHAUSTED,
-                  "expansion depth " + std::to_string(env.expansion_depth()) +
-                  " with a " + std::to_string(kib) + " KiB stack; retry with --recursion-limit greater than " +
-                  std::to_string(kib / 8));
-            // STACK_EXHAUSTED is SEVERE: happen() always throws for it
-            // (ignore list, blockings and continue mode cannot stop it, see
-            // Issue::happen()). This explicit throw is defense-in-depth so a
-            // future change there cannot silently turn this back into a
-            // stack overflow.
-            throw Issue::Exception(Issue::Code::STACK_EXHAUSTED);
-        }
+        if (Util::stack_nearly_exhausted())
+            raise_stack_exhausted(env);
         env.inc_expansion_depth();
         if (env.expansion_depth() > env.get_max_expansion_depth()) {
             // U6: ISSUE() throws before this constructor finishes, so this

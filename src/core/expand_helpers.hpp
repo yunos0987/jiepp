@@ -167,4 +167,11 @@ std::vector<Token> subst(
     bool va_sep_ws = false,
     ArgExpansionMemo* memo = nullptr);
 
+// ── Stack-exhaustion report (expand.cpp) ──────────────────────────
+
+// PP63 (SEVERE). Shared by ExpansionDepthGuard and subst_va_opt_content()
+// so the message cannot drift. Out of line: its std::string temporaries
+// must not enlarge the frames of the recursive functions.
+[[noreturn, gnu::noinline, gnu::cold]] void raise_stack_exhausted(const Env& env);
+
 } // namespace jiepp::expand_detail
