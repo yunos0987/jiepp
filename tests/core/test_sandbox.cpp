@@ -432,4 +432,132 @@ TEST_F(SandboxInfoLeakTest, DateTimeWork) {
     EXPECT_FALSE(result_t.empty());
 }
 
+// ---- Control characters are stripped from every diagnostic (SPEC 14) ----
+
+// The strip that message diagnostics (PP90-PP93) get is applied centrally in
+// Issue::happen(), to the context text and to the file path of every
+// diagnostic, so operand diagnostics that quote user text cannot carry ESC,
+// DEL or a UTF-8 C1 control to the log either.
+class SandboxDiagnosticStripTest : public JieppTest {};
+
+namespace {
+
+// The single diagnostic in ms, or a "**FAIL**" marker.
+std::string only_message(const std::vector<std::string>& ms) {
+    if (ms.size() != 1)
+        return "**FAIL** num of messages: " + std::to_string(ms.size());
+    return ms[0];
+}
+
+}  // namespace
+
+// PP41: {#line} decodes $hh in its operand and quotes it in the diagnostic.
+TEST_F(SandboxDiagnosticStripTest, SetLineOperandStripped) {
+    Issue::ContinueMode guard({});
+    pp("{#line abc$1B[31mX$7FY}");
+    const std::string m = only_message(messages());
+    EXPECT_NE(std::string::npos,
+              m.find("PP41: Invalid operand for 'set_line'; 'abc[31mXY'")) << m;
+    EXPECT_EQ(std::string::npos, m.find('\x1B')) << m;
+    EXPECT_EQ(std::string::npos, m.find('\x7F')) << m;
+}
+
+// PP38: the macro name is followed by a DEL (raw and as $7F), and the
+// warning quotes the definition text.
+TEST_F(SandboxDiagnosticStripTest, DefineMissingWhitespaceStripped) {
+    {
+        SCOPED_TRACE("$7F");
+        pp("{#define A$7Fb 1}");
+        const std::string m = only_message(messages());
+        EXPECT_NE(std::string::npos, m.find("PP38: ")) << m;
+        EXPECT_NE(std::string::npos, m.find("; 'Ab 1'")) << m;
+        EXPECT_EQ(std::string::npos, m.find('\x7F')) << m;
+    }
+    {
+        SCOPED_TRACE("raw DEL");
+        pp("{#define A\x7F" "b 1}");
+        const std::string m = only_message(messages());
+        EXPECT_NE(std::string::npos, m.find("PP38: ")) << m;
+        EXPECT_NE(std::string::npos, m.find("; 'Ab 1'")) << m;
+        EXPECT_EQ(std::string::npos, m.find('\x7F')) << m;
+    }
+}
+
+// Other diagnostics quoting user text: the directive name (PP46), the
+// expression (PP52) and the directive text (PP49).
+TEST_F(SandboxDiagnosticStripTest, OtherOperandDiagnosticsStripped) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("PP46");
+        pp("{#foo\x1B[31m}");
+        const std::string m = only_message(messages());
+        EXPECT_NE(std::string::npos, m.find("PP46: Invalid directive name; 'foo[31m'")) << m;
+    }
+    {
+        SCOPED_TRACE("PP52");
+        pp("{#if 1 \x1B}{#endif}");
+        const std::string m = only_message(messages());
+        EXPECT_NE(std::string::npos, m.find("PP52: Invalid expression; '1 '")) << m;
+    }
+    {
+        SCOPED_TRACE("PP49");
+        pp("{#ifdef A \x1B\xC2\x9B}{#endif}");
+        const std::string m = only_message(messages());
+        EXPECT_NE(std::string::npos, m.find("PP49: ")) << m;
+        EXPECT_NE(std::string::npos, m.find("'{#ifdef A }'")) << m;
+    }
+}
+
+// The C1 pair test is made on the resulting text in operand diagnostics
+// too (same rule as MessageStripLeavesNoReassembledC1Pair), and U+00A0 and
+// Japanese text are kept.
+TEST_F(SandboxDiagnosticStripTest, OperandStripLeavesNoReassembledC1Pair) {
+    Issue::ContinueMode guard({});
+    struct Case { const char* name; std::string in; std::string out; };
+    const std::vector<Case> cases = {
+        {"C2 01 9B", "a$C2$01$9Bb", "ab"},
+        {"C2 7F 9B", "a$C2$7F$9Bb", "ab"},
+        {"C2 C2 80 9B", "a$C2$C2$80$9Bb", "ab"},
+        {"C2 C2 9B", "a$C2$C2$9Bb", "a\xC2" "b"},
+        {"C2 A0, Japanese", "a$C2$A0b\xE6\x97\xA5", "a\xC2\xA0" "b\xE6\x97\xA5"},
+    };
+    for (const auto& k : cases) {
+        SCOPED_TRACE(k.name);
+        pp("{#line " + k.in + "}");
+        const std::string m = only_message(messages());
+        EXPECT_NE(std::string::npos,
+                  m.find("PP41: Invalid operand for 'set_line'; '" + k.out + "'")) << m;
+    }
+}
+
+// What a library caller receives: the diagnostic text written to the stream
+// it installed with Issue::set_output(), both the context and the file path
+// on the location stack stripped, and an Issue::Exception that carries only
+// the code (what() is the code name, never user text).
+TEST_F(SandboxDiagnosticStripTest, LibraryCallerReceivesStrippedText) {
+    std::ostringstream own;
+    Issue::set_output(own);
+    {
+        Issue::LineGuard g(7, std::string("dir\x1B[31m/a\x7F\xC2\x9B.iec"));
+        try {
+            Issue::happen(Issue::Code::INVALID_EXPRESSION, "x\x1By\xC2\x01\x9Bz\x7F");
+            ADD_FAILURE() << "expected Issue::Exception";
+        } catch (const Issue::Exception& e) {
+            EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, e.code);
+            EXPECT_STREQ("INVALID_EXPRESSION", e.what());
+        }
+        // A message diagnostic through preprocess() under the same path.
+        EXPECT_THROW(pp("{#error m$1Bn}"), Issue::Exception);
+    }
+    Issue::set_output(output());
+    std::istringstream i(own.str());
+    std::vector<std::string> ms;
+    for (std::string line; std::getline(i, line);)
+        ms.push_back(PlainTextMessage::strip_source_location(line));
+    ASSERT_EQ(2u, ms.size());
+    EXPECT_EQ("dir[31m/a.iec:7.0: error: PP52: Invalid expression; 'xyz'", ms[0]);
+    EXPECT_EQ(0u, ms[1].find("dir[31m/a.iec:")) << ms[1];
+    EXPECT_NE(std::string::npos, ms[1].find("PP91: 'mn'")) << ms[1];
+}
+
 #endif  // JIEPP_SANDBOX

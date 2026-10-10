@@ -12,6 +12,9 @@
 
 #include "issue_message.hpp"
 #include "env.hpp"
+#ifdef JIEPP_SANDBOX
+#include "../util/text.hpp"
+#endif
 
 // ---------------------------------------------------------------------------
 // Static state
@@ -215,6 +218,21 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
                         filepath() == loc_stack_.front().second)) ? CLI_LOCATION : filepath();
             loc_line = lineno();
         }
+#ifdef JIEPP_SANDBOX
+        // Sandbox: strip control characters to prevent log injection (SPEC
+        // 14) from both user-derived fields of every diagnostic -- the
+        // context text and the file path -- right before they are handed
+        // to the formatter. In src/, this call is where message_ and
+        // stream_ are used to print a diagnostic (main.cpp's last-resort
+        // PP01 lines write to std::cerr directly but print no user text in
+        // sandbox builds); the code, severity and the C++ source location
+        // are not user text, and Issue::Exception carries only the code. So
+        // the printed line and the IssueMessage formatter both receive the
+        // stripped text. The fixed placeholders ("jiepp", "<unknown location>",
+        // "<no location>") contain no control characters and are unchanged.
+        context = Util::strip_control_chars(context);
+        loc_file = Util::strip_control_chars(loc_file);
+#endif
         message_.message(*stream_, severity, code, context, loc_file, loc_line, 0, loc);
         *stream_ << '\n';
     }

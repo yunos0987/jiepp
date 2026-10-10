@@ -569,39 +569,10 @@ void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
 // The single place a message-passthrough diagnostic (PP90-PP93) is raised:
 // {#error}/{#warning}/{#info}/{#severe} (handle_message() above) and the
 // built-ins __error/__assert (builtin_function_macros.cpp) all report here.
+// The message is passed on verbatim: in sandbox builds Issue::happen()
+// strips control characters from the context and file path of every
+// diagnostic, these included (Util::strip_control_chars(), SPEC 14).
 void report_message(std::string msg, Issue::Code code) {
-#ifdef JIEPP_SANDBOX
-    // Sandbox: strip control characters to prevent log injection (SPEC 14):
-    // C0 controls (bytes 0x00-0x1F) except '\n', '\r' and '\t', DEL (0x7F),
-    // and C1 controls U+0080-U+009F in their UTF-8 form (the byte pair
-    // C2 80 - C2 9F, e.g. C2 9B = U+009B CSI). The pair test is made on the
-    // resulting text, not on the input: a byte 0x80-0x9F whose last *kept*
-    // byte is C2 removes that C2 and is dropped itself, so removing a byte
-    // in between (C2 01 9B, C2 7F 9B, C2 C2 80 9B) cannot re-form a pair.
-    // Keeping a byte never creates a pair except in that case, and dropping
-    // the C2 restores an earlier, already pair-free state, so the result
-    // never contains a forbidden byte or pair. A byte 0x80-0x9F not preceded
-    // by a kept C2 is kept: it is a continuation byte of another UTF-8
-    // character (or part of an invalid sequence). Invalid UTF-8 is not
-    // validated or repaired; it is passed through unchanged except for the
-    // removals above.
-    std::string out;
-    out.reserve(msg.size());
-    for (const char ch : msg) {
-        const auto c = static_cast<unsigned char>(ch);
-        if (c < 0x20 && c != '\n' && c != '\r' && c != '\t')
-            continue;
-        if (c == 0x7F)
-            continue;
-        if (c >= 0x80 && c <= 0x9F && !out.empty() &&
-            static_cast<unsigned char>(out.back()) == 0xC2) {
-            out.pop_back();
-            continue;
-        }
-        out.push_back(ch);
-    }
-    msg = std::move(out);
-#endif
     Issue::happen(code, std::move(msg));
 }
 

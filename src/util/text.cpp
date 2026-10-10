@@ -33,6 +33,25 @@ bool _is_utf8_continuation(char c) {
 
 }
 
+std::string Util::strip_control_chars(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (const char ch : s) {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c < 0x20 && c != '\n' && c != '\r' && c != '\t')
+            continue;
+        if (c == 0x7F)
+            continue;
+        if (c >= 0x80 && c <= 0x9F && !out.empty() &&
+            static_cast<unsigned char>(out.back()) == 0xC2) {
+            out.pop_back();
+            continue;
+        }
+        out.push_back(ch);
+    }
+    return out;
+}
+
 std::string_view Util::utf8_head(std::string_view s, std::size_t max_bytes) {
     if (s.size() <= max_bytes)
         return s;

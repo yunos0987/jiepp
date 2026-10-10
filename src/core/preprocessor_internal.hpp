@@ -49,8 +49,9 @@ void handle_include(const std::string& raw_arg,
                     bool syspath_only);
 void handle_message(const std::string& raw_arg, Env& env, Issue::Code code);
 // Raises a message-passthrough diagnostic (PP90-PP93) with msg as its
-// context, after the sandbox control-character handling. Shared by
-// handle_message() and the built-ins __error/__assert.
+// context. Shared by handle_message() and the built-ins __error/__assert.
+// The sandbox control-character strip is applied by Issue::happen(), as for
+// every other diagnostic.
 void report_message(std::string msg, Issue::Code code);
 void handle_ignore(const std::string& raw_arg, Env& env);
 void handle_max_include_depth(const std::string& raw_arg, Env& env);
