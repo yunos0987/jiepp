@@ -148,6 +148,195 @@ TEST_F(SandboxDirectiveTest, BuiltinErrorAllowedAndStripsControlChars) {
     EXPECT_NE(std::string::npos, ms[1].find("PP91: 'pq'")) << ms[1];
 }
 
+// B3 (SPEC 14): besides C0 controls, the strip removes DEL (0x7F) and the
+// UTF-8 form of the C1 controls U+0080-U+009F (C2 80 - C2 9F, e.g. U+009B
+// CSI), for {#error} and __error alike. U+007E, U+00A0 and other multibyte
+// text (whose continuation bytes include 0x80-0x9F) are kept; '\t' is kept
+// and an LF from $n still splits the message onto two lines.
+TEST_F(SandboxDirectiveTest, MessageStripsDelAndC1Controls) {
+    Issue::ContinueMode guard({});
+    // DEL, U+0080, U+009B, U+009F removed; U+007E '~', U+00A0 and
+    // "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E" (Japanese text, whose bytes
+    // include 0x97, 0x9C and 0x9E as continuation bytes) kept.
+    const std::string body =
+        "a\x7F" "b\xC2\x80" "c\xC2\x9B" "31m" "d\xC2\x9F" "e~f\xC2\xA0" "g"
+        "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E";
+    const std::string kept =
+        "ab" "c31m" "de~f\xC2\xA0" "g" "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E";
+    {
+        SCOPED_TRACE("{#error}");
+        pp("{#error " + body + "}");
+        auto ms = messages();
+        ASSERT_EQ(1u, ms.size());
+        EXPECT_NE(std::string::npos, ms[0].find("PP91: '" + kept + "'")) << ms[0];
+    }
+    {
+        SCOPED_TRACE("__error");
+        EXPECT_EQ("x  y", pp("x __error(" + body + ") y"));
+        auto ms = messages();
+        ASSERT_EQ(1u, ms.size());
+        EXPECT_NE(std::string::npos, ms[0].find("PP91: '" + kept + "'")) << ms[0];
+    }
+    {
+        // $hh escapes decode to the same bytes, so they are stripped too.
+        SCOPED_TRACE("{#error} $7F $C2$9B $C2$A0");
+        pp("{#error a$7Fb$C2$9Bc$C2$A0d}");
+        auto ms = messages();
+        ASSERT_EQ(1u, ms.size());
+        EXPECT_NE(std::string::npos, ms[0].find("PP91: 'abc\xC2\xA0" "d'")) << ms[0];
+    }
+    {
+        // A raw tab is kept; $t decodes to a real tab (kept) and $n to a
+        // real LF (kept, so the message spans two lines).
+        SCOPED_TRACE("{#error} tab, $t, $n");
+        pp("{#error p\tq$tr$nu}");
+        auto ms = messages();
+        ASSERT_EQ(2u, ms.size());
+        EXPECT_NE(std::string::npos, ms[0].find("PP91: 'p\tq\tr")) << ms[0];
+        EXPECT_EQ(0u, ms[1].find("u'")) << ms[1];
+    }
+    {
+        // __error does not decode $ escapes, and a raw CR / LF in the
+        // arguments is whitespace that is folded into one space before the
+        // message is built; a raw tab is kept.
+        SCOPED_TRACE("__error tab, CR, LF");
+        pp("__error(p\tq\rr\ns)");
+        auto ms = messages();
+        ASSERT_EQ(1u, ms.size());
+        EXPECT_NE(std::string::npos, ms[0].find("PP91: 'p\tq r s'")) << ms[0];
+    }
+}
+
+namespace {
+
+// The context of the single PP91 message in ms (between "PP91: '" and the
+// last quote), or "**FAIL**" when there is not exactly one such message.
+std::string pp91_context(const std::vector<std::string>& ms) {
+    if (ms.size() != 1)
+        return "**FAIL** num of messages: " + std::to_string(ms.size());
+    const std::string head = "PP91: '";
+    auto b = ms[0].find(head);
+    auto e = ms[0].rfind('\'');
+    if (b == std::string::npos || e == std::string::npos || e < b + head.size())
+        return "**FAIL** " + ms[0];
+    b += head.size();
+    return ms[0].substr(b, e - b);
+}
+
+bool is_forbidden_c0_or_del(unsigned char c) {
+    return (c < 0x20 && c != '\n' && c != '\r' && c != '\t') || c == 0x7F;
+}
+
+// Reference model of the sandbox strip: remove the forbidden single bytes,
+// then remove C2 80 - C2 9F pairs, repeating until nothing changes.
+std::string strip_to_fixed_point(std::string s) {
+    for (;;) {
+        std::string t;
+        for (char ch : s)
+            if (!is_forbidden_c0_or_del(static_cast<unsigned char>(ch)))
+                t.push_back(ch);
+        std::string u;
+        for (std::size_t i = 0; i < t.size(); ++i) {
+            const auto c = static_cast<unsigned char>(t[i]);
+            if (c == 0xC2 && i + 1 < t.size()) {
+                const auto d = static_cast<unsigned char>(t[i + 1]);
+                if (d >= 0x80 && d <= 0x9F) {
+                    ++i;
+                    continue;
+                }
+            }
+            u.push_back(t[i]);
+        }
+        if (u == s)
+            return u;
+        s = std::move(u);
+    }
+}
+
+// True when s contains no C0 control other than LF/CR/tab, no DEL and no
+// C2 80 - C2 9F pair.
+bool free_of_controls(const std::string& s) {
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        if (is_forbidden_c0_or_del(c))
+            return false;
+        if (c == 0xC2 && i + 1 < s.size()) {
+            const auto d = static_cast<unsigned char>(s[i + 1]);
+            if (d >= 0x80 && d <= 0x9F)
+                return false;
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
+// B3 retry: the strip decides on the resulting text, so removing a byte
+// between C2 and 0x80-0x9F (or removing an inner C2 xx pair) must not leave
+// a C2 80 - C2 9F pair behind. A lone 0x80-0x9F not preceded by a kept C2,
+// a trailing C2 and C2 followed by another byte are kept.
+TEST_F(SandboxDirectiveTest, MessageStripLeavesNoReassembledC1Pair) {
+    Issue::ContinueMode guard({});
+    struct Case { const char* name; std::string in; std::string out; };
+    const std::vector<Case> cases = {
+        {"C2 01 9B", "P\xC2\x01\x9BQ", "PQ"},
+        {"C2 7F 9B", "P\xC2\x7F\x9BQ", "PQ"},
+        {"C2 C2 80 9B", "P\xC2\xC2\x80\x9BQ", "PQ"},
+        {"C2 C2 9B", "P\xC2\xC2\x9BQ", "P\xC2Q"},
+        {"trailing C2", "PQ\xC2", "PQ\xC2"},
+        {"C2 41", "P\xC2" "AQ", "P\xC2" "AQ"},
+        {"lone 9B", "P\x9BQ", "P\x9BQ"},
+        {"C2 A0 9B", "P\xC2\xA0\x9BQ", "P\xC2\xA0\x9BQ"},
+    };
+    for (const auto& k : cases) {
+        {
+            SCOPED_TRACE(std::string("{#error} ") + k.name);
+            pp("{#error " + k.in + "}");
+            EXPECT_EQ(k.out, pp91_context(messages()));
+        }
+        {
+            SCOPED_TRACE(std::string("__error ") + k.name);
+            pp("__error(" + k.in + ")");
+            EXPECT_EQ(k.out, pp91_context(messages()));
+        }
+    }
+
+    // Property check: every string of length 1..3 over an alphabet of the
+    // relevant bytes, wrapped in P..Q, matches the fixed-point reference
+    // model and contains no forbidden byte or pair, through both channels.
+    const std::string alphabet = "a\x01\x7F\xC2\x80\x9B\x9F\xA0";
+    std::vector<std::string> inputs = {""};
+    std::vector<std::string> all;
+    for (int len = 1; len <= 3; ++len) {
+        std::vector<std::string> next;
+        for (const auto& s : inputs)
+            for (char ch : alphabet)
+                next.push_back(s + ch);
+        all.insert(all.end(), next.begin(), next.end());
+        inputs = std::move(next);
+    }
+    int failures = 0;
+    for (const auto& s : all) {
+        const std::string in = "P" + s + "Q";
+        const std::string want = strip_to_fixed_point(in);
+        pp("{#error " + in + "}");
+        const std::string got_directive = pp91_context(messages());
+        pp("__error(" + in + ")");
+        const std::string got_builtin = pp91_context(messages());
+        if (got_directive != want || got_builtin != want ||
+            !free_of_controls(got_directive) || !free_of_controls(got_builtin)) {
+            if (++failures <= 5) {
+                std::ostringstream hex;
+                for (char ch : in)
+                    hex << std::hex << std::setw(2) << std::setfill('0')
+                        << static_cast<unsigned>(static_cast<unsigned char>(ch)) << ' ';
+                ADD_FAILURE() << "input bytes: " << hex.str();
+            }
+        }
+    }
+    EXPECT_EQ(0, failures) << "of " << all.size() << " generated inputs";
+}
+
 // R1 (E25): __has_include(...) in an __assert expression is PP62, then the
 // evaluator reports the call text that stays in the expression (PP52), the
 // same pair as {#if __has_include('x')}; no PP91 is stacked on top.
