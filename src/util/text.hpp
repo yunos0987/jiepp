@@ -43,4 +43,12 @@ std::string_view utf8_tail(std::string_view s, std::size_t max_bytes);
 // removals above. Defined in every build; only sandbox builds call it.
 std::string strip_control_chars(std::string_view s);
 
+// Replaces each '\n' and each '\r' in s with one space, byte for byte, so a
+// CR LF pair becomes two spaces; every other byte is unchanged. Used after
+// strip_control_chars() for diagnostics in JIEPP_SANDBOX builds (SPEC 14,
+// called from Issue::happen()): a space is neither C2 nor 0x80-0x9F and no
+// byte is removed, so the strip's "no forbidden byte or pair" result is
+// preserved. Defined in every build; only sandbox builds call it.
+std::string line_breaks_to_spaces(std::string_view s);
+
 } // namespace Util

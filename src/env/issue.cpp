@@ -230,8 +230,24 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // the printed line and the IssueMessage formatter both receive the
         // stripped text. The fixed placeholders ("jiepp", "<unknown location>",
         // "<no location>") contain no control characters and are unchanged.
+        // The strip keeps '\n' and '\r'; after it, each LF and each CR is
+        // replaced with one space (CR LF becomes two spaces) in the file
+        // path of every diagnostic and in the context of every diagnostic
+        // except the message passthrough codes PP90-PP93, whose context is
+        // the user's own message ({#error}/{#warning}/{#info}/{#severe},
+        // __error/__assert), where a $n/$r line break is intended. Elsewhere
+        // a line break would let quoted operand text or a path forge a whole
+        // extra diagnostic line. Replacing a byte with a space in place
+        // removes nothing and a space is neither C2 nor 0x80-0x9F, so the
+        // strip's "no forbidden byte or pair" result still holds.
+        const bool message_code = code == Code::SEVERE_MESSAGE
+            || code == Code::ERROR_MESSAGE
+            || code == Code::WARNING_MESSAGE
+            || code == Code::INFO_MESSAGE;
         context = Util::strip_control_chars(context);
-        loc_file = Util::strip_control_chars(loc_file);
+        if (!message_code)
+            context = Util::line_breaks_to_spaces(context);
+        loc_file = Util::line_breaks_to_spaces(Util::strip_control_chars(loc_file));
 #endif
         message_.message(*stream_, severity, code, context, loc_file, loc_line, 0, loc);
         *stream_ << '\n';

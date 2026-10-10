@@ -52,6 +52,15 @@ std::string Util::strip_control_chars(std::string_view s) {
     return out;
 }
 
+std::string Util::line_breaks_to_spaces(std::string_view s) {
+    std::string out(s);
+    for (char& ch : out) {
+        if (ch == '\n' || ch == '\r')
+            ch = ' ';
+    }
+    return out;
+}
+
 std::string_view Util::utf8_head(std::string_view s, std::size_t max_bytes) {
     if (s.size() <= max_bytes)
         return s;

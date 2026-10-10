@@ -560,4 +560,94 @@ TEST_F(SandboxDiagnosticStripTest, LibraryCallerReceivesStrippedText) {
     EXPECT_NE(std::string::npos, ms[1].find("PP91: 'mn'")) << ms[1];
 }
 
+// ---- LF/CR become spaces outside the message text (SPEC 14) ----
+
+// A $0A / $0D in a {#line} operand decodes to a real LF / CR, which the
+// PP41 handler already re-escapes to "$n" / "$r" (Util::escape_line_breaks)
+// before Issue::happen() sees it: the diagnostic stays on one line.
+TEST_F(SandboxDiagnosticStripTest, SetLineOperandStaysOneLine) {
+    Issue::ContinueMode guard({});
+    struct Case { const char* name; std::string in; std::string out; };
+    const std::vector<Case> cases = {
+        {"$0A", "abc$0Adef", "abc$ndef"},
+        {"$0D", "abc$0Ddef", "abc$rdef"},
+        {"$0D$0A", "abc$0D$0Adef", "abc$r$ndef"},
+    };
+    for (const auto& k : cases) {
+        SCOPED_TRACE(k.name);
+        pp("{#line " + k.in + "}");
+        const std::string m = only_message(messages());
+        EXPECT_NE(std::string::npos,
+                  m.find("PP41: Invalid operand for 'set_line'; '" + k.out + "'")) << m;
+        EXPECT_EQ(std::string::npos, m.find('\r')) << m;
+    }
+}
+
+// A real LF / CR that reaches Issue::happen() in the context of a
+// non-message diagnostic becomes one space each (CR LF two spaces), so the
+// context cannot forge a second diagnostic line; the message codes
+// PP90-PP93 keep theirs.
+TEST_F(SandboxDiagnosticStripTest, ContextLineBreaksReplaced) {
+    std::ostringstream own;
+    Issue::set_output(own);
+    Issue::ContinueMode guard({});
+    {
+        Issue::LineGuard g(3, std::string("a.iec"));
+        Issue::happen(Issue::Code::INVALID_EXPRESSION,
+                      "x\njiepp: error: PP01: y\rz\r\nw");
+        Issue::happen(Issue::Code::WARNING_MESSAGE, "m\nn");
+    }
+    Issue::set_output(output());
+    std::istringstream i(own.str());
+    std::vector<std::string> ms;
+    for (std::string line; std::getline(i, line);)
+        ms.push_back(PlainTextMessage::strip_source_location(line));
+    ASSERT_EQ(3u, ms.size()) << own.str();
+    EXPECT_EQ("a.iec:3.0: error: PP52: Invalid expression; "
+              "'x jiepp: error: PP01: y z  w'", ms[0]);
+    EXPECT_EQ("a.iec:3.0: warning: PP92: 'm", ms[1]);
+    EXPECT_EQ(0u, ms[2].find("n'")) << ms[2];
+}
+
+// A file path is never legitimately multi-line: LF/CR in a library-supplied
+// path become spaces for an ordinary diagnostic and for the message
+// diagnostics ({#error}, __assert) alike, while the line break that the
+// message text itself asks for with $n is kept.
+TEST_F(SandboxDiagnosticStripTest, PathLineBreaksReplacedMessageLineBreakKept) {
+    std::ostringstream own;
+    Issue::set_output(own);
+    Issue::ContinueMode guard({});
+    {
+        Issue::LineGuard g(7, std::string("dir\nx\r\ny\r.iec"));
+        Issue::happen(Issue::Code::INVALID_EXPRESSION, "e");
+        pp("{#error a$nb}");
+        pp("__assert(0, c)");
+    }
+    Issue::set_output(output());
+    const std::string raw = own.str();
+    EXPECT_EQ(std::string::npos, raw.find('\r')) << raw;
+    std::istringstream i(raw);
+    std::vector<std::string> ms;
+    for (std::string line; std::getline(i, line);)
+        ms.push_back(PlainTextMessage::strip_source_location(line));
+    ASSERT_EQ(4u, ms.size()) << raw;
+    EXPECT_EQ("dir x  y .iec:7.0: error: PP52: Invalid expression; 'e'", ms[0]);
+    EXPECT_EQ(0u, ms[1].find("dir x  y .iec:")) << ms[1];
+    EXPECT_NE(std::string::npos, ms[1].find("PP91: 'a")) << ms[1];
+    EXPECT_EQ(0u, ms[2].find("b'")) << ms[2];
+    EXPECT_EQ(0u, ms[3].find("dir x  y .iec:")) << ms[3];
+    EXPECT_NE(std::string::npos, ms[3].find("PP91: 'c'")) << ms[3];
+}
+
+// The message text of PP90-PP93 keeps its $n line break: {#error a$nb}
+// still spans two lines.
+TEST_F(SandboxDiagnosticStripTest, MessageLineBreakKept) {
+    Issue::ContinueMode guard({});
+    pp("{#error a$nb}");
+    auto ms = messages();
+    ASSERT_EQ(2u, ms.size());
+    EXPECT_NE(std::string::npos, ms[0].find("PP91: 'a")) << ms[0];
+    EXPECT_EQ("b'", ms[1].substr(0, 2)) << ms[1];
+}
+
 #endif  // JIEPP_SANDBOX
