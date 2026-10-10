@@ -485,3 +485,116 @@ TEST_F(ArgCountRecoveryTest, C2_OutputOnlyLinesInRescannedArgumentsDoNotMoveTheL
               PlainTextMessage::parse_code(msgs[0]));
     EXPECT_NE(std::string::npos, msgs[0].find(":2.")) << msgs[0];
 }
+
+// R3 (pp-assert-counter): the PP34 context names the invoked macro, as
+// "NAME: expected MIN[-MAX], got N" / "NAME: missing closing parenthesis".
+// The old text stays a substring (R8 / R10 above still assert on it).
+namespace {
+// True when `msg` carries exactly this quoted PP34 context.
+bool has_context(const std::string& msg, const std::string& context) {
+    return msg.find("Argument count mismatch; '" + context + "'") != std::string::npos;
+}
+}  // namespace
+
+TEST_F(ArgCountRecoveryTest, R3_MessageNamesMacroTooFew) {
+    Issue::ContinueMode guard({});
+    pp("{#define F2(x,y) x+y}F2(1)");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH, PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_TRUE(has_context(msgs[0], "F2: expected 2, got 1")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, R3_MessageNamesMacroTooMany) {
+    Issue::ContinueMode guard({});
+    pp("{#define F2(x,y) x+y}F2(1,2,3)");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_TRUE(has_context(msgs[0], "F2: expected 2, got 3")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, R3_MessageNamesVariadicMacro) {
+    Issue::ContinueMode guard({});
+    pp("{#define V(a,b,...) a}V(1)");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH, PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find("'V: expected 2-")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find(", got 1'")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, R3_MessageNamesMacroUnterminated) {
+    Issue::ContinueMode guard({});
+    pp("{#define F(x) <x>}A F(1");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_TRUE(has_context(msgs[0], "F: missing closing parenthesis")) << msgs[0];
+}
+
+// The name is the one invoked after rescanning (G expands to F2), and in a
+// nested call W(1) -> F2(x) the failing inner macro F2 is named, not W.
+TEST_F(ArgCountRecoveryTest, R3_MessageUsesInvokedMacroName) {
+    {
+        Issue::ContinueMode guard({});
+        pp("{#define F2(x,y) x+y}{#define G F2}G(1)");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_TRUE(has_context(msgs[0], "F2: expected 2, got 1")) << msgs[0];
+    }
+    {
+        Issue::ContinueMode guard({});
+        pp("{#define F2(x,y) x+y}{#define W(a) F2(a)}W(1)");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_TRUE(has_context(msgs[0], "F2: expected 2, got 1")) << msgs[0];
+    }
+}
+
+TEST_F(ArgCountRecoveryTest, R3_BuiltinNamesInMessage) {
+    {
+        Issue::ContinueMode guard({});
+        pp("__counter(a, b)");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_TRUE(has_context(msgs[0], "__counter: expected 1, got 2")) << msgs[0];
+    }
+    {
+        Issue::ContinueMode guard({});
+        pp("__error(x");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_TRUE(has_context(msgs[0], "__error: missing closing parenthesis")) << msgs[0];
+    }
+}
+
+TEST_F(ArgCountRecoveryTest, R3_WatchpointBracketArgumentCountsAsOne) {
+    Issue::ContinueMode guard({});
+    pp("{#define F2(x,y) x+y}F2(a[x,y])");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_TRUE(has_context(msgs[0], "F2: expected 2, got 1")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, R3_WatchpointIdenticalRedefinitionSilent) {
+    Issue::ContinueMode guard({});
+    pp("{#define F2(x,y) x+y}{#define F2(x,y) x+y}F2(1)");
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size()) << "only the PP34 is reported";
+    EXPECT_EQ(Issue::Code::ARGUMENT_COUNT_MISMATCH, PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_TRUE(has_context(msgs[0], "F2: expected 2, got 1")) << msgs[0];
+}
+
+TEST_F(ArgCountRecoveryTest, R3_WatchpointNestedBracketArguments) {
+    {
+        Issue::ContinueMode guard({});
+        pp("{#define F2(x,y) x+y}F2(a[b[1,2], c[3,4]])");
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_TRUE(has_context(msgs[0], "F2: expected 2, got 1")) << msgs[0];
+    }
+    {
+        Issue::ContinueMode guard({});
+        pp("{#define F2(x,y) x+y}F2(a[x,y], b[1,2])");
+        EXPECT_TRUE(messages().empty());
+    }
+}

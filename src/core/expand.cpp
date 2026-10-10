@@ -848,7 +848,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     bool call_error = false;
                     bool unterminated_call = false;
                     if (!found_rp) {
-                        ISSUE(ARGUMENT_COUNT_MISMATCH, "missing closing parenthesis");
+                        ISSUE(ARGUMENT_COUNT_MISMATCH, t.text + ": missing closing parenthesis");
                         call_error = true;
                         unterminated_call = true;
                     } else {
@@ -869,7 +869,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         int n = static_cast<int>(params.size());
                         if (n < pmin || n > pmax) {
                             std::string msg =
-                                "expected " + std::to_string(pmin)
+                                t.text + ": expected " + std::to_string(pmin)
                                 + (pmin == pmax ? "" : "-" + std::to_string(pmax))
                                 + ", got " + std::to_string(n);
                             // C2: too many arguments reports at the excess-argument

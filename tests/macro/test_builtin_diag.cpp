@@ -259,7 +259,7 @@ TEST_F(BuiltinDiagTest, NameWithoutParenIsPlainText) {
 TEST_F(BuiltinDiagTest, UnterminatedOrEmptyCalls) {
     Issue::ContinueMode guard({});
     EXPECT_EQ("a ", pp("a __error(x"));
-    EXPECT_EQ(Strings({"PP34: Argument count mismatch; 'missing closing parenthesis'"}), diags());
+    EXPECT_EQ(Strings({"PP34: Argument count mismatch; '__error: missing closing parenthesis'"}), diags());
     EXPECT_EQ(";", pp("__assert();"));
     auto cs = codes();
     ASSERT_EQ(1u, cs.size());
