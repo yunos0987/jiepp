@@ -243,7 +243,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Built-in function-like macros (__error, __assert)
+// Built-in function-like macros (__error, __assert; named counters below)
 // ---------------------------------------------------------------------------
 
 // Called like a function macro (needs an opening parenthesis, PP34 on an
@@ -294,6 +294,52 @@ public:
     std::string str() const override { return "__assert"; }
     int min_args() const override { return 1; }
     int max_args() const override { return FunctionMacro::NUM_OF_MAX_ARGS; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+};
+
+// ---------------------------------------------------------------------------
+// Named counters (__counter, __counter_peek, __counter_set; SPEC 12.10)
+// ---------------------------------------------------------------------------
+
+// __counter(name): the current value of the named counter, then increments
+// it (first value 0). __counter_peek(name): the current value without
+// incrementing (a never-used name gives 0 and is not created). The name is
+// one identifier and is NOT macro-expanded. The values live in the Env
+// (Param::counter_value()/counter_slot()), not in this object, so undefining
+// the built-in does not clear them.
+class CounterBuiltin : public BuiltinFunctionMacro {
+public:
+    enum class Kind { next, peek };
+    explicit CounterBuiltin(Kind kind) : kind_(kind) {}
+    bool equal(const Macro& other) const override {
+        auto* o = dynamic_cast<const CounterBuiltin*>(&other);
+        return o != nullptr && o->kind_ == kind_;
+    }
+    std::string str() const override {
+        return kind_ == Kind::next ? "__counter" : "__counter_peek";
+    }
+    int min_args() const override { return 1; }
+    int max_args() const override { return 1; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+
+private:
+    Kind kind_;
+};
+
+// __counter_set(name, value): evaluates value with the {#if} rules and, when
+// it is an integer in 0..2147483647, stores it; expands to nothing.
+class CounterSetBuiltin : public BuiltinFunctionMacro {
+public:
+    bool equal(const Macro& other) const override {
+        return dynamic_cast<const CounterSetBuiltin*>(&other) != nullptr;
+    }
+    std::string str() const override { return "__counter_set"; }
+    int min_args() const override { return 2; }
+    int max_args() const override { return 2; }
     std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
                               const std::vector<jiepp::expand_detail::ArgWs>& ws,
                               Env& env) const override;

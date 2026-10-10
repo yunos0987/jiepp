@@ -197,3 +197,16 @@ void Param::set_cache(std::string key, std::vector<Token> tokens) {
     cache_->data.insert_or_assign(
         std::move(key), std::make_shared<const std::vector<Token>>(std::move(tokens)));
 }
+
+// ---------------------------------------------------------------------------
+// Named counters
+// ---------------------------------------------------------------------------
+
+std::uint32_t Param::counter_value(std::string_view name) const {
+    auto it = counters_.find(std::string(name));
+    return it != counters_.end() ? it->second : 0;
+}
+
+std::uint32_t& Param::counter_slot(const std::string& name) {
+    return counters_[name];
+}

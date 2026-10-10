@@ -2723,6 +2723,29 @@ TEST_F(JieppCommandTest, DMExcludesBuiltinFunctionMacros) {
     EXPECT_NE(std::string::npos, out.find("{#define USER 1}")) << out;
     EXPECT_EQ(std::string::npos, out.find("__error")) << out;
     EXPECT_EQ(std::string::npos, out.find("__assert")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__counter")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__counter_peek")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__counter_set")) << out;
+    EXPECT_TRUE(empty());
+}
+
+// R2 (N14): the named counters live as long as the Env of one run, so an
+// -include file and the main input share them.
+TEST_F(JieppCommandTest, CountersSharedAcrossIncludeOption) {
+    fs::current_path(jiepp_root_dir());
+    fs::path inc = write_temp_iec("r2_counter_inc", "INC __counter(k);\n");
+    fs::path src = write_temp_iec("r2_counter_main", "MAIN __counter(k) __counter_peek(k);\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.include_filepaths = {inc.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("INC 0;")) << out;
+    EXPECT_NE(std::string::npos, out.find("MAIN 1 2;")) << out;
     EXPECT_TRUE(empty());
 }
 

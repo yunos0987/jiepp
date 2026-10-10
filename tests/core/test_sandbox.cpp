@@ -229,6 +229,12 @@ TEST_F(SandboxInfoLeakTest, CounterWorks) {
     EXPECT_TRUE(empty());
 }
 
+// R2 (N18): named counters need no filesystem access, so they work.
+TEST_F(SandboxInfoLeakTest, NamedCounterWorks) {
+    EXPECT_EQ("0 1 2 5", pp("__counter(a) __counter(a) __counter_peek(a) __counter_set(a, 5)__counter(a)"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(SandboxInfoLeakTest, DateTimeWork) {
     // __DATE__ and __TIME__ should still produce non-empty strings
     auto result_d = pp("__DATE__");

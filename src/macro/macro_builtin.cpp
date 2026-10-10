@@ -29,7 +29,9 @@ std::vector<Token> CounterMacro::replacement(Env& /*env*/) const {
     // wrapping/overflowing signed int. Every further call keeps reporting
     // the same error and the same saturated value (it never recovers).
     if (counter_ > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
-        ISSUE(COUNTER_OVERFLOW);
+        // The context names the counter (PP53 is shared with the named
+        // counters of SPECIFICATION.md 12.10).
+        ISSUE(COUNTER_OVERFLOW, "__COUNTER__");
         counter_ = static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max());
     }
     return {Token::create(Token::ANY, std::to_string(counter_++))};

@@ -507,8 +507,8 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
     return subst(repl, {}, no_params, no_actuals, nullptr, new_hs, env);
 }
 
-// The call of a built-in function macro (__error/__assert) on its collected,
-// flattened, unexpanded arguments. Out of line and never inlined so its
+// The call of a built-in function macro (__error/__assert/__counter*) on its
+// collected, flattened, unexpanded arguments. Out of line and never inlined so its
 // locals do not enlarge expand()'s frame (on the stack once per nesting
 // level). No hide set is added: the result holds no identifiers.
 [[gnu::noinline]] std::vector<Token> invoke_builtin_call(const BuiltinFunctionMacro& bm,

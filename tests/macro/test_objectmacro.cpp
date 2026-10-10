@@ -108,6 +108,21 @@ TEST_F(ObjectMacroTest, CounterOverflowSaturatesAndDiagnoses) {
     EXPECT_EQ(Issue::Code::COUNTER_OVERFLOW, code());
 }
 
+// Q2 (R2): PP53 is shared with the named counters, so its fixed text no
+// longer names __COUNTER__; the context does.
+TEST_F(ObjectMacroTest, CounterOverflowMessageNamesCounter) {
+    Env env = setup();
+    Issue::ContinueMode guard({});
+    CounterMacro counter(2147483648u);
+    auto toks = counter.replacement(env);
+    ASSERT_EQ(1u, toks.size());
+    EXPECT_EQ("2147483647", toks[0].text);
+    auto ms = messages();
+    ASSERT_EQ(1u, ms.size());
+    EXPECT_NE(std::string::npos,
+              ms[0].find("PP53: Counter value exceeds 2147483647; '__COUNTER__'")) << ms[0];
+}
+
 TEST_F(ObjectMacroTest, Redefine) {
     // same value redefinition (no warning)
     EXPECT_NO_THROW(pp("{#define N 2};N;{#define N 2};N"));

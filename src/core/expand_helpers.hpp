@@ -48,7 +48,7 @@ bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env);
 bool macro_name_is_defined(std::string_view name, Env& env);
 
 // Evaluates the operand tokens of a built-in function macro (__assert's
-// expression) with the {#if} rules: the tokens are NOT pre-expanded; they
+// expression, __counter_set's value) with the {#if} rules: the tokens are NOT pre-expanded; they
 // are expanded during evaluation with the transient 'defined' operator
 // installed (or, inside an {#if} condition, re-enabled with the outer
 // condition's defined-error state saved and restored), __has_include(...)

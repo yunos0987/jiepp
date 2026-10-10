@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 struct Token; // forward declaration (defined in loader/token.hpp)
@@ -83,6 +85,18 @@ public:
     std::shared_ptr<const std::vector<Token>> get_cache(const std::string& key) const;
     void set_cache(std::string key, std::vector<Token> tokens);
 
+    // ---- Named counters (__counter / __counter_peek / __counter_set) ----
+    // Separate namespace from macros: {#define}/{#undef} never touch it. Lives
+    // as long as the Env (like the state of __COUNTER__ in its CounterMacro),
+    // so it is shared by -include files and the main input and is NOT reset
+    // per preprocess() call; a caller wanting fresh counters uses a fresh
+    // setup() Env. A stored value above INT32_MAX means "overflowed" (see
+    // SPECIFICATION.md 12.10).
+    // The value of `name`, or 0 if it was never used; never inserts.
+    std::uint32_t counter_value(std::string_view name) const;
+    // The slot of `name`, inserted with 0 if absent.
+    std::uint32_t& counter_slot(const std::string& name);
+
 private:
     [[noreturn]] void raise_expansion_steps_exceeded() const;
 
@@ -110,6 +124,8 @@ private:
     bool        remove_comments_fixed_   = false;
 
     bool        dd_mode_                 = false;
+
+    std::unordered_map<std::string, std::uint32_t> counters_;
 
     struct CacheImpl;
     std::unique_ptr<CacheImpl> cache_;
