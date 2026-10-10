@@ -143,6 +143,11 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     env.define("__INCLUDE_LEVEL__",     std::make_unique<IncludeLevelMacro>());
     env.define("__BASE_FILE__",         std::make_unique<BaseFileMacro>());
     env.define("__FILE_NAME__",         std::make_unique<FileNameMacro>());
+    // Built-in function-like macros (SPEC 12.9): ordinary symbol-table
+    // entries like __COUNTER__, so {#ifdef} sees them and {#undef} removes
+    // them (with a PP35 warning); -dM does not list them.
+    env.define("__error",               std::make_unique<ErrorBuiltin>());
+    env.define("__assert",              std::make_unique<AssertBuiltin>());
     // NOTE: "defined" is NOT installed permanently; it is installed temporarily
     // by eval_cond_str during #if/#elif condition evaluation only.
 

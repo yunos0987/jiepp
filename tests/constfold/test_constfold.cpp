@@ -354,3 +354,86 @@ TEST_F(ConstfoldTest, BasedLiteralMinMagUnaffected) {
         "16#8000000000000000 = -9223372036854775807 - 1"));
     EXPECT_TRUE(empty());
 }
+// ---- R1 (H1): eval_const_value() returns the typed value ----
+
+TEST_F(ConstfoldTest, EvalConstValueReturnsKindAndValue) {
+    {
+        auto r = eval_const_value("10");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Int, r.value.kind);
+        EXPECT_EQ(10, r.value.i);
+    }
+    {
+        auto r = eval_const_value("-1");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Int, r.value.kind);
+        EXPECT_EQ(-1, r.value.i);
+    }
+    {
+        auto r = eval_const_value("2147483648");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Int, r.value.kind);
+        EXPECT_EQ(2147483648LL, r.value.i);
+    }
+    {
+        auto r = eval_const_value("2.5");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Float, r.value.kind);
+        EXPECT_DOUBLE_EQ(2.5, r.value.f);
+    }
+    {
+        auto r = eval_const_value("BYTE#16#FF");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Bitstring, r.value.kind);
+        EXPECT_EQ(BitKind::BYTE, r.value.bit_kind);
+        EXPECT_EQ(255u, r.value.bits);
+    }
+    {
+        auto r = eval_const_value("TRUE");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Bool, r.value.kind);
+        EXPECT_TRUE(r.value.b);
+    }
+    // eval_const_expr() still returns only the 0/1 truth value.
+    EXPECT_EQ(1LL, eval_const_expr("10"));
+    EXPECT_EQ(1LL, eval_const_expr("-1"));
+    EXPECT_EQ(1LL, eval_const_expr("2147483648"));
+    EXPECT_EQ(1LL, eval_const_expr("2.5"));
+    EXPECT_EQ(1LL, eval_const_expr("BYTE#16#FF"));
+    EXPECT_EQ(1LL, eval_const_expr("TRUE"));
+    EXPECT_EQ(0LL, eval_const_expr("0"));
+    EXPECT_TRUE(empty());
+}
+
+// ---- R1 (H1/M1): failure codes, including literal errors raised inside
+// scanner/grammar actions; division by zero is not a failure ----
+
+TEST_F(ConstfoldTest, EvalConstValueReportsFailureCode) {
+    Issue::ContinueMode guard({});
+    auto failure_of = [&](const std::string& expr) {
+        auto r = eval_const_value(expr);
+        return r.failure;
+    };
+    EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, failure_of(""));
+    EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, failure_of("1 +"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, failure_of("1 x"));
+    EXPECT_EQ(Issue::Code::EXPR_TYPE_ERROR, failure_of("TRUE + 1"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, failure_of("99999999999999999999"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, failure_of("2#102"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, failure_of("1.0e999"));
+    auto cs = codes();
+    ASSERT_EQ(7u, cs.size());
+
+    auto r = eval_const_value("1 / 0 + 5");
+    EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+    EXPECT_EQ(ValueKind::Int, r.value.kind);
+    EXPECT_EQ(5, r.value.i);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()); // "division by zero"
+
+    // A failure does not leak into the next evaluation.
+    EXPECT_EQ(Issue::Code::SUCCESS, failure_of("1"));
+
+    // {#if} keeps its result for the literal-error cases (F7).
+    EXPECT_EQ(1LL, eval_const_expr("99999999999999999999 > 0"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+}

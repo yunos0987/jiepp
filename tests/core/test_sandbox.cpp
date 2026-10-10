@@ -135,6 +135,31 @@ TEST_F(SandboxDirectiveTest, WarningAllowed) {
     EXPECT_EQ(Issue::Code::WARNING_MESSAGE, code());
 }
 
+// R1 (SPEC 12.9/14): __error/__assert need no filesystem access, so they are
+// allowed; their message goes through the same report_message() as
+// {#error}, so control characters are stripped the same way.
+TEST_F(SandboxDirectiveTest, BuiltinErrorAllowedAndStripsControlChars) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("a  b", pp("a __error(x\x01y\x1b" "z) b"));
+    EXPECT_EQ("", pp("__assert(0, p\x01q)"));
+    auto ms = messages();
+    ASSERT_EQ(2u, ms.size());
+    EXPECT_NE(std::string::npos, ms[0].find("PP91: 'xyz'")) << ms[0];
+    EXPECT_NE(std::string::npos, ms[1].find("PP91: 'pq'")) << ms[1];
+}
+
+// R1 (E25): __has_include(...) in an __assert expression is PP62, then the
+// evaluator reports the call text that stays in the expression (PP52), the
+// same pair as {#if __has_include('x')}; no PP91 is stacked on top.
+TEST_F(SandboxDirectiveTest, AssertHasIncludeIsPP62AndPP52) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";", pp("__assert(__has_include('dummy.iec'), m);"));
+    auto cs = codes();
+    ASSERT_EQ(2u, cs.size());
+    EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, cs[0]);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, cs[1]);
+}
+
 // ---- Expansion-step cap (PP64) applies in sandbox builds too ----
 
 class SandboxExpansionStepsTest : public JieppTest {};

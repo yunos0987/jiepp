@@ -507,6 +507,20 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
     return subst(repl, {}, no_params, no_actuals, nullptr, new_hs, env);
 }
 
+// The call of a built-in function macro (__error/__assert) on its collected,
+// flattened, unexpanded arguments. Out of line and never inlined so its
+// locals do not enlarge expand()'s frame (on the stack once per nesting
+// level). No hide set is added: the result holds no identifiers.
+[[gnu::noinline]] std::vector<Token> invoke_builtin_call(const BuiltinFunctionMacro& bm,
+                                                         std::vector<std::vector<Token>>& params,
+                                                         const std::vector<ArgWs>& arg_ws,
+                                                         Env& env) {
+    std::vector<Token> replaced = bm.invoke(params, arg_ws, env);
+    // See the function-macro case: a replacement never contributes source lines.
+    ts_mark_output_only(replaced);
+    return replaced;
+}
+
 } // namespace
 
 std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ots, Env& env) {
@@ -566,8 +580,11 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             Macro* macro = env.lookup(t.text);
             if (macro) {
 
-            // defined operator (jiepp extension)
-            if (auto* defop = dynamic_cast<DefinedOperator*>(macro)) {
+            // defined operator (jiepp extension). While suspended (a
+            // built-in's message expanded inside a condition), the word is an
+            // ordinary identifier and falls through to the output below.
+            auto* defop = dynamic_cast<DefinedOperator*>(macro);
+            if (defop && !defop->suspended) {
                 while (!work.empty() && (work.back().type & Token::MASK_WS))
                     work.pop_back();
 
@@ -592,6 +609,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 } else {
                     if (!defop->operand_error) {
                         defop->operand_error = true;
+                        defop->operand_error_code = Issue::Code::INVALID_DEFINED_OPERAND;
                         ISSUE(INVALID_DEFINED_OPERAND,
                               work.empty() ? "macro name missing"
                                            : "macro name must be an identifier: " +
@@ -609,6 +627,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     } else {
                         if (!defop->operand_error) {
                             defop->operand_error = true;
+                            defop->operand_error_code = Issue::Code::INVALID_EXPRESSION;
                             ISSUE(INVALID_EXPRESSION, "missing ')' after 'defined'");
                         }
                         ots.push_back(Token::create(Token::ANY, "0"));
@@ -622,7 +641,19 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             }
 
             // Case: T is a "()'d macro" → expand(subst(ts(T), fp(T), actuals, (HS∩HS')∪{T}, {}) • TS'')
-            if (auto* fm = dynamic_cast<FunctionMacro*>(macro)) {
+            // A built-in function macro (__error/__assert) shares the call
+            // handling below (opening parenthesis, argument collection,
+            // PP34 recovery, line accounting); only the final step differs:
+            // invoke() on the unexpanded arguments instead of subst().
+            auto* fm = dynamic_cast<FunctionMacro*>(macro);
+            // is_function_macro() is true only for FunctionMacro and
+            // BuiltinFunctionMacro, so an object macro pays one virtual call
+            // here instead of a second dynamic_cast.
+            auto* bm = (!fm && macro->is_function_macro())
+                           ? static_cast<BuiltinFunctionMacro*>(macro) : nullptr;
+            if (fm || bm) {
+                const int pmin = fm ? fm->num_of_params_min() : bm->min_args();
+                const int pmax = fm ? fm->num_of_params_max() : bm->max_args();
                 // Find '(' after macro name, skipping whitespace
                 std::vector<Token> pre_lp;
                 bool found_lp = false;
@@ -684,7 +715,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     // already exclude output-only lines the same way sum_uncounted
                     // does. Harmless to compute when the call does not turn out to
                     // have too many arguments.
-                    const int excess_after_params = fm->num_of_params_max();
+                    const int excess_after_params = pmax;
                     bool excess_past_trigger = (excess_after_params == 0);
                     int excess_trigger_uncounted = sum_uncounted; // pre_lp's value, i.e. right after '('
                     int excess_token_uncounted = -1;
@@ -830,24 +861,23 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                                     break;
                                 }
                             }
-                            if (empty && fm->num_of_params_min() == 0) {
+                            if (empty && pmin == 0) {
                                 params.clear();
                             }
                         }
 
                         int n = static_cast<int>(params.size());
-                        if (n < fm->num_of_params_min() || n > fm->num_of_params_max()) {
+                        if (n < pmin || n > pmax) {
                             std::string msg =
-                                "expected " + std::to_string(fm->num_of_params_min())
-                                + (fm->num_of_params_min() == fm->num_of_params_max()
-                                   ? "" : "-" + std::to_string(fm->num_of_params_max()))
+                                "expected " + std::to_string(pmin)
+                                + (pmin == pmax ? "" : "-" + std::to_string(pmax))
                                 + ", got " + std::to_string(n);
                             // C2: too many arguments reports at the excess-argument
                             // line derived above (clang); too few reports at the
                             // closing ')' line (gcc and clang agree there), i.e. the
                             // same line sum_uncounted resolves to once fully
                             // accumulated below -- same as advance_lineno()'s target.
-                            if (n > fm->num_of_params_max()) {
+                            if (n > pmax) {
                                 int excess_uncounted = (excess_token_uncounted >= 0)
                                     ? excess_token_uncounted : excess_trigger_uncounted;
                                 Issue::with_lineno(wrap_lineno(env.get_lineno() + excess_uncounted), [&] {
@@ -899,7 +929,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         // variable arguments are stringized); every other
                         // function-macro call pays nothing for it.
                         std::vector<jiepp::expand_detail::ArgWs> arg_ws;
-                        if (fm->args().count(FunctionMacro::VA_SYM)) {
+                        if (fm ? fm->args().count(FunctionMacro::VA_SYM) != 0
+                               : bm->max_args() == FunctionMacro::NUM_OF_MAX_ARGS) {
                             auto is_ws = [](const Token& tk) { return (tk.type & Token::MASK_WS) != 0; };
                             auto ends_nl = [](const Token& tk) {
                                 return !tk.text.empty() &&
@@ -942,35 +973,39 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         for (auto& p : params)
                             p = ts_flatten(std::move(p));
 
-                        Token::HideSet new_hs = Token::HideSet::intersect(t.hs, rp_token.hs).with(t.text);
+                        if (bm) {
+                            replaced = invoke_builtin_call(*bm, params, arg_ws, env);
+                        } else {
+                            Token::HideSet new_hs = Token::HideSet::intersect(t.hs, rp_token.hs).with(t.text);
 
-                        // task_slug arg-expand-once (D2): a memo is allocated only when
-                        // this macro has at least one parameter spelled >= 2 times in its
-                        // body (fm->num_arg_slots() > 0); otherwise nullptr is passed and
-                        // subst() takes its original per-occurrence expand() path for
-                        // every parameter, with no allocation. fm must stay valid across
-                        // this call (already required; see symtab.hpp F14).
-                        std::optional<ArgExpansionMemo> arg_memo;
-                        if (fm->num_arg_slots() > 0) {
-                            // Filled in place (no aggregate temporary in this
-                            // frame, which is on the stack once per nesting
-                            // level). `stringized` stays empty until the first
-                            // stringize (S-01).
-                            arg_memo.emplace();
-                            arg_memo->slots = &fm->arg_slots();
-                            arg_memo->remaining = fm->arg_slot_uses();
-                            arg_memo->expanded.resize(
-                                static_cast<std::size_t>(fm->num_arg_slots()));
+                            // task_slug arg-expand-once (D2): a memo is allocated only when
+                            // this macro has at least one parameter spelled >= 2 times in its
+                            // body (fm->num_arg_slots() > 0); otherwise nullptr is passed and
+                            // subst() takes its original per-occurrence expand() path for
+                            // every parameter, with no allocation. fm must stay valid across
+                            // this call (already required; see symtab.hpp F14).
+                            std::optional<ArgExpansionMemo> arg_memo;
+                            if (fm->num_arg_slots() > 0) {
+                                // Filled in place (no aggregate temporary in this
+                                // frame, which is on the stack once per nesting
+                                // level). `stringized` stays empty until the first
+                                // stringize (S-01).
+                                arg_memo.emplace();
+                                arg_memo->slots = &fm->arg_slots();
+                                arg_memo->remaining = fm->arg_slot_uses();
+                                arg_memo->expanded.resize(
+                                    static_cast<std::size_t>(fm->num_arg_slots()));
+                            }
+                            replaced = subst(fm->body(), fm->va_opt_spans(), fm->args(), params,
+                                             arg_ws.empty() ? nullptr : &arg_ws, new_hs, env,
+                                             /*va_sep_ws=*/false,
+                                             arg_memo ? &*arg_memo : nullptr);
+                            // A macro replacement never contributes source lines: a newline
+                            // in it is either a decoded $n in the body or a copy of an
+                            // argument newline, whose source line the call newline token
+                            // below already re-emits.
+                            ts_mark_output_only(replaced);
                         }
-                        replaced = subst(fm->body(), fm->va_opt_spans(), fm->args(), params,
-                                         arg_ws.empty() ? nullptr : &arg_ws, new_hs, env,
-                                         /*va_sep_ws=*/false,
-                                         arg_memo ? &*arg_memo : nullptr);
-                        // A macro replacement never contributes source lines: a newline
-                        // in it is either a decoded $n in the body or a copy of an
-                        // argument newline, whose source line the call newline token
-                        // below already re-emits.
-                        ts_mark_output_only(replaced);
                     }
 
                     const int source_lines = sum_num_of_lines - sum_output_only;

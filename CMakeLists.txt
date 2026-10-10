@@ -157,6 +157,7 @@ set(JIEPP_SOURCES
     src/loader/lexer_pragma.cpp
     src/loader/lexer_literal.cpp
     src/loader/directive_parser.cpp
+    src/core/builtin_function_macros.cpp
     src/core/directive_handlers.cpp
     src/core/expand.cpp
     src/core/expand_ctrl.cpp

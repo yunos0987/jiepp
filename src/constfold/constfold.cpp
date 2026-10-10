@@ -20,7 +20,26 @@ extern bool cf_expr_complete;  // set by bison grammar when expr is fully reduce
 // followed by more) is reported as INVALID_EXPRESSION, not MISSING_EXPRESSION.
 extern Issue::Code cf_error_code;
 
-int64_t eval_const_expr(const std::string& expr) {
+namespace {
+
+cf::ConstValue to_const_value(const CfValue& v) {
+    cf::ConstValue out;
+    out.kind = v.kind;
+    out.i = v.ival;
+    out.bits = v.bits;
+    out.bit_kind = v.bit_kind;
+    out.f = v.fval;
+    out.b = v.bval;
+    return out;
+}
+
+// The one evaluation behind eval_const_expr() and eval_const_value(). On an
+// empty expression, a parse failure or a type error, value stays Int 0 (the
+// old 0 result of eval_const_expr()); a literal error raised inside a scanner
+// or grammar action records a failure but keeps the parsed value.
+cf::EvalResult evaluate(const std::string& expr) {
+    cf::EvalResult r;
+    cf_failure_code = Issue::Code::SUCCESS;
     bool all_ws = true;
     for (char ch : expr) {
         if (!std::isspace(static_cast<unsigned char>(ch))) { all_ws = false; break; }
@@ -30,13 +49,15 @@ int64_t eval_const_expr(const std::string& expr) {
         // decoded, so a $n/$r escape in the source is a real line break
         // here; re-escape it so the diagnostic stays on one line, like the
         // directive-operand diagnostics in directive_handlers.cpp.
+        cf_note_failure(Issue::Code::MISSING_EXPRESSION);
         ISSUE(MISSING_EXPRESSION, Util::escape_line_breaks(expr));
-        return 0;
+        r.failure = cf_failure_code;
+        return r;
     }
 
     YY_BUFFER_STATE buf = cf_scan_string(expr.c_str());
     int rc = 0;
-    int64_t result = 0;
+    CfValue result;
     try {
         cf_expr_complete = false;
         cf_error_code = Issue::Code::MISSING_EXPRESSION;
@@ -48,7 +69,8 @@ int64_t eval_const_expr(const std::string& expr) {
         // {#ignore}) inside the grammar action; either way, recover here
         // instead of letting the internal signal escape uncaught.
         cf_delete_buffer(buf);
-        return 0;
+        r.failure = cf_failure_code;
+        return r;
     } catch (...) {
         cf_delete_buffer(buf);
         throw;
@@ -62,8 +84,25 @@ int64_t eval_const_expr(const std::string& expr) {
         // C1: the single diagnostic for this parse failure, using the code
         // cf::CfParser::error() chose (cf_error_code) instead of
         // unconditionally MISSING_EXPRESSION.
+        cf_note_failure(cf_error_code);
         Issue::happen(cf_error_code, Util::escape_line_breaks(expr));
-        return 0;
+        r.failure = cf_failure_code;
+        return r;
     }
-    return result;
+    r.failure = cf_failure_code;
+    r.value = to_const_value(result);
+    return r;
+}
+
+} // namespace
+
+int64_t eval_const_expr(const std::string& expr) {
+    // Unchanged {#if} result: 0 for an empty expression, a parse failure or
+    // a type error; otherwise the truth value of the parsed expression, even
+    // after a literal error (F7: that leniency is kept for {#if}).
+    return evaluate(expr).value.truthy() ? 1 : 0;
+}
+
+cf::EvalResult eval_const_value(const std::string& expr) {
+    return evaluate(expr);
 }

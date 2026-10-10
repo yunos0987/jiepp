@@ -3,6 +3,19 @@
 #include <cstdint>
 #include <string>
 
+#include "../env/issue.hpp"
+
+// Code of the first failing diagnostic of the current evaluation (see
+// eval_const_value(), constfold.hpp); reset to SUCCESS at the start of each
+// evaluation. Defined in constfold.y. cf_note_failure() is called right
+// BEFORE the ISSUE() of every failure site (the ISSUE may throw, and a
+// suppressed one returns), except division/modulo by zero.
+extern Issue::Code cf_failure_code;
+inline void cf_note_failure(Issue::Code code) {
+    if (cf_failure_code == Issue::Code::SUCCESS)
+        cf_failure_code = code;
+}
+
 enum class ValueKind {
     Int,
     Float,

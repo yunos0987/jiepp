@@ -41,6 +41,7 @@ ALPHA   [A-Za-z_]
     while (*p != '#') { base = base * 10 + (*p - '0'); ++p; }
     ++p; // skip '#'
     if (base < 2 || base > 36) {
+        cf_note_failure(Issue::Code::INVALID_EXPRESSION);
         ISSUE(INVALID_EXPRESSION, std::string("invalid base: ") + yytext);
         cflval = CfValue::int_value(0);
         return cf::CfParser::token::CF_INT;
@@ -64,12 +65,14 @@ ALPHA   [A-Za-z_]
         int d = std::isdigit((unsigned char)ch) ? (ch - '0') :
                 std::islower((unsigned char)ch) ? (ch - 'a' + 10) : (ch - 'A' + 10);
         if (d >= base) {
+            cf_note_failure(Issue::Code::INVALID_EXPRESSION);
             ISSUE(INVALID_EXPRESSION, std::string("invalid digit for base: ") + yytext);
             cflval = CfValue::int_value(0);
             return cf::CfParser::token::CF_INT;
         }
         const std::uint64_t ud = static_cast<std::uint64_t>(d);
         if (!overflowed && uval > (UINT64_MAX - ud) / ubase) {
+            cf_note_failure(Issue::Code::INVALID_EXPRESSION);
             ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
             overflowed = true;
         }
@@ -93,6 +96,7 @@ ALPHA   [A-Za-z_]
     try {
         fval = std::stod(clean);
     } catch (const std::out_of_range&) {
+        cf_note_failure(Issue::Code::INVALID_EXPRESSION);
         ISSUE(INVALID_EXPRESSION, std::string("float literal overflow: ") + yytext);
     }
     cflval = CfValue::float_value(fval);
@@ -135,6 +139,7 @@ ALPHA   [A-Za-z_]
         || (digits.size() == kInt64MaxDigits.size() && digits > kInt64MaxDigits);
     int64_t ival;
     if (overflow) {
+        cf_note_failure(Issue::Code::INVALID_EXPRESSION);
         ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
         std::uint64_t uval = 0;
         for (char c : clean) uval = uval * 10 + static_cast<std::uint64_t>(c - '0');

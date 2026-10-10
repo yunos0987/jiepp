@@ -2703,3 +2703,80 @@ TEST_F(JieppCommandTest, UnknownDirectiveIgnoredExitsZero) {
     EXPECT_NE(std::string::npos, out.find("y;")) << out;
     EXPECT_TRUE(empty());
 }
+
+// ─── R1: built-in function macros __error / __assert (SPEC 12.9) ─────────
+
+// E21: -dM lists neither built-in function macro (like __COUNTER__ and
+// gcc/clang -dM), while user macros are still listed.
+TEST_F(JieppCommandTest, DMExcludesBuiltinFunctionMacros) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("r1_dm_builtins", "{#define USER 1}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dM = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("{#define USER 1}")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__error")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__assert")) << out;
+    EXPECT_TRUE(empty());
+}
+
+// E23: like {#error}, a PP91 from __error/__assert is counted and processing
+// continues (later text and later diagnostics are still processed), the exit
+// code is 1, and -o is not written.
+TEST_F(JieppCommandTest, BuiltinErrorContinuesAndFailsLikeHashError) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("r1_builtin_continue",
+                                  "BEFORE;\n__error(first)\nMIDDLE;\n__assert(0, second)\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE;")) << out;
+    EXPECT_NE(std::string::npos, out.find("MIDDLE;")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER;")) << out;
+    auto ms = messages();
+    ASSERT_EQ(2u, ms.size());
+    EXPECT_NE(std::string::npos, ms[0].find(":2.0: error: PP91: 'first'")) << ms[0];
+    EXPECT_NE(std::string::npos, ms[1].find(":4.0: error: PP91: 'second'")) << ms[1];
+
+    fs::path out_path = fs::temp_directory_path() / "r1_builtin_continue.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+    opts.output_filepath = out_path.generic_string();
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_FALSE(fs::exists(out_path)) << "-o must not be created when error_count_ >= 1";
+}
+
+// M5/L4: -U __assert warns PP35 at the CLI location (clang "undefining
+// builtin macro"), exits 0, and __assert(...) is then plain text; with
+// -Werror the warning makes the run fail.
+TEST_F(JieppCommandTest, UOptionOnBuiltinWarns) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("r1_u_builtin", "__assert(0, m);\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.undef_macros = {"__assert"};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("__assert(0, m);")) << out;
+    EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__assert: undefining built-in macro'",
+              message());
+
+    opts.werror = true;
+    out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(1, rc);
+}

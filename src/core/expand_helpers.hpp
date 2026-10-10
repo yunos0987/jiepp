@@ -2,6 +2,7 @@
 // expand_helpers.hpp — Internal shared header for expand*.cpp files.
 // Mirrors cpp.algo.md (Prosser's algorithm) section structure.
 
+#include "../constfold/constfold.hpp"
 #include "../loader/token.hpp"
 #include "../env/env.hpp"
 #include "../env/issue.hpp"
@@ -45,6 +46,26 @@ bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env);
 // Whether NAME counts as defined for {#ifdef}/{#ifndef}/`defined`. See the
 // definition in expand_ctrl.cpp for the __has_include special case.
 bool macro_name_is_defined(std::string_view name, Env& env);
+
+// Evaluates the operand tokens of a built-in function macro (__assert's
+// expression) with the {#if} rules: the tokens are NOT pre-expanded; they
+// are expanded during evaluation with the transient 'defined' operator
+// installed (or, inside an {#if} condition, re-enabled with the outer
+// condition's defined-error state saved and restored), __has_include(...)
+// resolved, undefined identifiers = 0, comments = whitespace. Hide sets on
+// the tokens are kept (a text round trip would lose them, so
+// {#define N __assert(N, m)} would re-expand N until PP60). Charges one
+// expansion step per byte of the operand text (PP64), like an {#if} operand.
+// failure != SUCCESS when the evaluation itself failed -- PP62 (sandbox
+// __has_include), a 'defined' operand error (PP40, or PP52 for a missing
+// ')'), or a constfold failure (PP50/PP51/PP52, literal errors included) --
+// whether or not that diagnostic was shown (it may have been suppressed by
+// {#ignore}). Division/modulo by zero is not a failure (SPEC 6.3).
+struct CondValue {
+    Issue::Code failure = Issue::Code::SUCCESS; // first failing diagnostic code
+    cf::ConstValue value;                       // valid only when failure == SUCCESS
+};
+CondValue eval_cond_value_tokens(std::vector<Token> ts, Env& env);
 
 // ── Prosser's algorithm support (expand_subst.cpp) ─────────────────
 // Corresponds to cpp.algo.md: §hsadd, §glue, §Support functions, §subst.

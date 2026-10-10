@@ -129,6 +129,23 @@ std::size_t ellipsis_at(const std::vector<Token>& ts, std::size_t i) {
     return 3;
 }
 
+// A built-in macro: a symbol-table entry whose replacement jiepp computes
+// (__COUNTER__, __LINE__, __FILE__, __DATE__, ..., __error, __assert) --
+// anything that is neither a value macro (UserDefinedObjectMacro: user
+// definitions, -D, and the predefined values such as __INT_MAX__ or
+// _JIEPP_VER) nor a FunctionMacro, nor the transient 'defined' operator.
+// Undefining or redefining one warns PP35, like clang
+// -Wbuiltin-macro-redefined.
+bool is_builtin_macro(const Macro* m) {
+    return m && !dynamic_cast<const UserDefinedObjectMacro*>(m) &&
+           !dynamic_cast<const FunctionMacro*>(m) && !dynamic_cast<const DefinedOperator*>(m);
+}
+
+// PP35 context for redefining `existing` as `name`.
+std::string redefinition_context(const std::string& name, const Macro* existing) {
+    return is_builtin_macro(existing) ? name + ": redefining built-in macro" : name;
+}
+
 } // namespace
 
 namespace jiepp::preprocessor_detail {
@@ -330,7 +347,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
                 if (!existing->equal(*nm))
-                    ISSUE(MACRO_REDEFINED, name);
+                    ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
             }
             env.define(name, std::move(nm));
         } else {
@@ -338,7 +355,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
                 if (!existing->equal(*nm))
-                    ISSUE(MACRO_REDEFINED, name);
+                    ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
             }
             env.define(name, std::move(nm));
         }
@@ -377,6 +394,16 @@ bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_n
         ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
               "{#undef " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
     }
+    // Undefining a built-in macro warns PP35, like clang ("undefining
+    // builtin macro"). __has_include has no symbol-table entry and keeps
+    // working after {#undef} (SPEC 5.2), but clang warns for it too; in a
+    // sandbox build the operator itself is restricted (PP62), so no warning.
+    bool builtin = is_builtin_macro(env.lookup(ts[0].text));
+#ifndef JIEPP_SANDBOX
+    builtin = builtin || ts[0].text == "__has_include";
+#endif
+    if (builtin)
+        ISSUE(MACRO_REDEFINED, ts[0].text + ": undefining built-in macro");
     env.undef(ts[0].text);
     if (undefined_name)
         *undefined_name = ts[0].text;
@@ -536,14 +563,20 @@ void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
     // is printed as one. NewlineInStringAndMessageDirectives checks both.
     // A quote in the message text is not scanned for PP29, like clang's
     // #error/#warning (gcc does scan it).
-    std::string msg = expand_operand_text(raw_arg, env, /*report_unterminated=*/false);
+    report_message(expand_operand_text(raw_arg, env, /*report_unterminated=*/false), code);
+}
+
+// The single place a message-passthrough diagnostic (PP90-PP93) is raised:
+// {#error}/{#warning}/{#info}/{#severe} (handle_message() above) and the
+// built-ins __error/__assert (builtin_function_macros.cpp) all report here.
+void report_message(std::string msg, Issue::Code code) {
 #ifdef JIEPP_SANDBOX
     // Sandbox: strip control characters to prevent log injection
     std::erase_if(msg, [](unsigned char c) {
         return (c < 0x20) && (c != '\n') && (c != '\r') && (c != '\t');
     });
 #endif
-    Issue::happen(code, msg);
+    Issue::happen(code, std::move(msg));
 }
 
 void handle_ignore(const std::string& raw_arg, Env& env) {

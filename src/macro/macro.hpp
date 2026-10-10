@@ -6,9 +6,14 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "../env/issue.hpp"
 #include "../loader/token.hpp"
 
 class Env;
+
+namespace jiepp::expand_detail {
+struct ArgWs;
+}
 
 // Per-token __VA_OPT__ layout of a normalized macro body (S-01). Present
 // (size == body size) only when the body has a __VA_OPT__ token. Offsets are
@@ -148,6 +153,15 @@ public:
     // the expression without evaluating it. Not part of macro identity, so
     // equal() (which only checks the dynamic type) intentionally ignores it.
     bool operand_error = false;
+    // The code of that first error (INVALID_DEFINED_OPERAND, or
+    // INVALID_EXPRESSION for a missing ')'), set together with
+    // operand_error; read by eval_cond_value_tokens() as its failure code.
+    Issue::Code operand_error_code = Issue::Code::SUCCESS;
+    // While true, expand() treats the word 'defined' as an ordinary
+    // identifier instead of this operator. Set by __error/__assert while
+    // they expand a message inside a condition (a message is not an
+    // expression); cleared again for a nested expression evaluation.
+    bool suspended = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -226,4 +240,61 @@ private:
     static std::vector<Token> normalize(
         std::vector<Token> ts,
         const std::unordered_map<std::string, std::pair<int, bool>>& args);
+};
+
+// ---------------------------------------------------------------------------
+// Built-in function-like macros (__error, __assert)
+// ---------------------------------------------------------------------------
+
+// Called like a function macro (needs an opening parenthesis, PP34 on an
+// unterminated or wrong-count call, arguments collected by the expand()
+// call loop with [...] comma protection and the same handling of directives
+// in the argument list), but its arguments are NOT pre-expanded and its
+// result is computed by invoke(). Deliberately NOT derived from
+// FunctionMacro, so define_directive_text()/-dM skip it (like __COUNTER__).
+class BuiltinFunctionMacro : public Macro {
+public:
+    std::vector<Token> replacement(Env& /*env*/) const override { return {}; } // unused
+    bool is_function_macro() const override { return true; }
+    virtual int min_args() const = 0;
+    // FunctionMacro::NUM_OF_MAX_ARGS means a variadic tail.
+    virtual int max_args() const = 0;
+    // args: one token vector per actual, ts_flatten()ed like FunctionMacro
+    // actuals (hide sets kept). ws: per-actual whitespace flags, built as for
+    // a variadic FunctionMacro call (empty when max_args() is not variadic).
+    // Implementations live in src/core/builtin_function_macros.cpp.
+    virtual std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                                      const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                                      Env& env) const = 0;
+};
+
+// __error(msg...): reports PP91 with the macro-expanded message; expands to
+// nothing.
+class ErrorBuiltin : public BuiltinFunctionMacro {
+public:
+    bool equal(const Macro& other) const override {
+        return dynamic_cast<const ErrorBuiltin*>(&other) != nullptr;
+    }
+    std::string str() const override { return "__error"; }
+    int min_args() const override { return 0; }
+    int max_args() const override { return FunctionMacro::NUM_OF_MAX_ARGS; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+};
+
+// __assert(expr, msg...): evaluates expr with the {#if} rules; when it is
+// false, reports PP91 with the macro-expanded message (or the clang default
+// text); expands to nothing.
+class AssertBuiltin : public BuiltinFunctionMacro {
+public:
+    bool equal(const Macro& other) const override {
+        return dynamic_cast<const AssertBuiltin*>(&other) != nullptr;
+    }
+    std::string str() const override { return "__assert"; }
+    int min_args() const override { return 1; }
+    int max_args() const override { return FunctionMacro::NUM_OF_MAX_ARGS; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
 };

@@ -188,10 +188,29 @@ TEST_F(HasIncludeTest, IfdefGuardsActualUse) {
 // H3
 TEST_F(HasIncludeTest, StaysDefinedAfterUndef) {
     // jiepp's __has_include(...) operator cannot be disabled by {#undef}
-    // (Q4: documented, not changed); it survives.
+    // (Q4: documented, not changed); it survives. Like clang ("undefining
+    // builtin macro"), the {#undef} itself warns PP35 (SPEC 3.6).
     auto r = pp("{#undef __has_include}{#ifdef __has_include}y{#else}n{#endif}");
     EXPECT_EQ("y", r);
+    auto ms = messages();
+    ASSERT_EQ(1u, ms.size());
+    EXPECT_NE(std::string::npos,
+              ms[0].find("warning: PP35: Macro redefined; '__has_include: undefining built-in macro'"))
+        << ms[0];
+}
+
+// R1: __has_include written in an __assert expression is resolved like in
+// {#if} (before macro expansion): a missing file fires, an existing one is
+// silent.
+TEST_F(HasIncludeTest, HasIncludeInsideAssert) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";", pp_hi("__assert(__has_include(\"existing.iec\"), present);"));
+    EXPECT_EQ(";", pp_hi("__assert(__has_include(<existing.iec>) \\and\\ 1, present);"));
     EXPECT_TRUE(empty());
+    EXPECT_EQ(";", pp_hi("__assert(__has_include('no_such_file_zz.iec'), missing);"));
+    auto ms = messages();
+    ASSERT_EQ(1u, ms.size());
+    EXPECT_NE(std::string::npos, ms[0].find("PP91: 'missing'")) << ms[0];
 }
 
 // H4: regression -- __has_include_next is not implemented, so it reads as

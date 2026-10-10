@@ -4,7 +4,7 @@
 %define api.namespace {cf}
 %define api.parser.class {CfParser}
 %define api.value.type variant
-%parse-param {int64_t& result}
+%parse-param {CfValue& result}
 
 %code requires {
 #include "constfold/constfold_internal.hpp"
@@ -28,6 +28,8 @@ bool cf_expr_complete = false;  // set true when a complete expr is reduced
 // eval_const_expr() is the single place a parse failure is reported, using
 // this code instead of unconditionally reporting MISSING_EXPRESSION.
 Issue::Code cf_error_code = Issue::Code::MISSING_EXPRESSION;
+// See cf_note_failure() (constfold_internal.hpp) and eval_const_value().
+Issue::Code cf_failure_code = Issue::Code::SUCCESS;
 
 extern int cflex(void);
 
@@ -63,6 +65,7 @@ static CfValue cast_int_literal_to_dword(const CfValue& v) {
 }
 
 [[noreturn]] static void type_error() {
+    cf_note_failure(Issue::Code::EXPR_TYPE_ERROR);
     ISSUE(EXPR_TYPE_ERROR);
     // Reached when EXPR_TYPE_ERROR (PP50) is suppressed via {#ignore}, in
     // which case Issue::happen() above returns instead of throwing.
@@ -139,6 +142,7 @@ static int64_t cast_scalar_to_int(const CfValue& v) {
         constexpr auto max_i64 = static_cast<double>(INT64_MAX);
         constexpr auto min_i64 = static_cast<double>(INT64_MIN);
         if (v.fval > max_i64 || v.fval < min_i64 || std::isnan(v.fval)) {
+            cf_note_failure(Issue::Code::INVALID_EXPRESSION);
             ISSUE(INVALID_EXPRESSION, "float value out of integer range");
             return 0;
         }
@@ -226,7 +230,9 @@ void cf::CfParser::error(const std::string& msg) {
 
 %%
 
-start: expr { result = $1.truthy() ? 1 : 0; }
+// The full typed value: eval_const_expr() takes its truth value for
+// {#if}, eval_const_value() returns it as is.
+start: expr { result = $1; }
      ;
 
 expr: or_expr { cf_expr_complete = true; $$ = $1; }
@@ -420,6 +426,7 @@ unary_expr:
         // overflow, but the value is INT64_MIN (its low 64 bits, same as
         // "CF_MINUS CF_INT_MIN_MAG" below), not 0 -- gcc/clang both keep
         // going with the value after warning/erroring.
+        cf_note_failure(Issue::Code::INVALID_EXPRESSION);
         ISSUE(INVALID_EXPRESSION, "integer literal overflow: " + $1.text);
         $$ = CfValue::int_value(INT64_MIN);
     }

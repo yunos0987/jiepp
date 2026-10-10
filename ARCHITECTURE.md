@@ -83,10 +83,12 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `preprocess_text()` — 文字列を `preprocess()` に通してマクロ展開後の文字列を返す公開 API。空行圧縮（`compact_blank_lines()`）込みで、ディレクティブのオペランド再展開には使わない
 - `preprocessor_detail::expand_operand_tokens()`/`expand_operand_text()` — ディレクティブのオペランド（`{#if}`/`{#elif}` の条件式、`{#line}`/`{#include}`/`{#sinclude}`/`{#syspath}` のオペランド、メッセージ本文）と通常のプラグマ本体をマクロ展開する。空行圧縮を一切行わない点が `preprocess_text()` との違いで、圧縮は最終出力に対する後処理であり、オペランドのテキスト自体に行マーカーが混入するのを防ぐ（詳細は「データフロー」）。`{#string}`/`{#wstring}` だけは `expand_operand_tokens()` の結果を `expand_operand_text()`（単純連結）ではなく `expand_detail::stringize_text()`（文字列化の空白圧縮規則、`expand_subst.cpp`、§4.1）に通す
 - `dump_macros()` — `env` のユーザー定義マクロを `{#define ...}` 形式で書き出す。`-dM` の実体
+- ビルトイン関数マクロ `__error`/`__assert`（SPEC §12.9）— `expand()` の関数マクロ呼び出しの分岐を `FunctionMacro` と `BuiltinFunctionMacro` で共有する（`(` の検索、引数の収集、`[...]` のカンマ保護、引数内ディレクティブ、`PP34` の回復、行番号の計算は同じ）。最後の段だけが異なり、`FunctionMacro` は `subst()`、ビルトインは `invoke_builtin_call()`（`expand()` のフレームを大きくしないよう非インライン）から `invoke()` を呼ぶ。`invoke()` の実装は `builtin_function_macros.cpp`。メッセージは `report_message()`（`directive_handlers.cpp`）を通して報告し、`{#error}` などの `handle_message()` と同じ 1 か所で `Issue::happen()` を呼ぶ
+- `expand_detail::eval_cond_value_tokens()`（`expand_ctrl.cpp`）— `__assert` の条件式をトークンのまま `{#if}` の規則で評価する。テキストに戻して `eval_cond()` に渡すと隠しセット（hide set）が失われ、`{#define N __assert(N, m)}` の `N` が `PP60` まで再展開されるため、トークンのまま `expand()` してから `eval_const_value()` に渡す。`defined` 演算子の導入は `eval_cond_str()` と共通の `DefinedScope` で行う。`{#if}` の条件式の中で入れ子に呼ばれた場合は、外側の条件式の `operand_error` などを保存してから評価し、終わったら元に戻す。メッセージの展開中は `DefinedOperator::suspended` を立て、メッセージ中の `defined` をただの語として扱う
 
 ### macro/ の内部構成
 
-`Macro` クラス（`macro.hpp/cpp`）はオブジェクト形式・関数形式マクロの定義を表現する（パラメータ一覧・本体トークン列を保持）。`macro_builtin.cpp` は `__LINE__`/`__FILE__`/`__COUNTER__`/`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__` 等、値が動的に決まる組み込みオブジェクトマクロを実装する。`TimeStampMacro` はファイルシステムにアクセスするため `JIEPP_SANDBOX` ビルドでは空文字列を返すスタブに切り替わる（`BaseFileMacro`/`FileNameMacro` は `__FILE__` と同じ情報しか返さず、ファイルシステムにもアクセスしないため、サンドボックスでも通常ビルドと同じ値を返す）。
+`Macro` クラス（`macro.hpp/cpp`）はオブジェクト形式・関数形式マクロの定義を表現する（パラメータ一覧・本体トークン列を保持）。`BuiltinFunctionMacro`（`ErrorBuiltin`/`AssertBuiltin`）は関数マクロと同じ形で呼び出すビルトインで、引数を事前展開せず `invoke()` で結果を計算する。`FunctionMacro` から派生させないので、`define_directive_text()`/`-dM` には `__COUNTER__` と同じく出ない。`macro_builtin.cpp` は `__LINE__`/`__FILE__`/`__COUNTER__`/`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__` 等、値が動的に決まる組み込みオブジェクトマクロを実装する。`TimeStampMacro` はファイルシステムにアクセスするため `JIEPP_SANDBOX` ビルドでは空文字列を返すスタブに切り替わる（`BaseFileMacro`/`FileNameMacro` は `__FILE__` と同じ情報しか返さず、ファイルシステムにもアクセスしないため、サンドボックスでも通常ビルドと同じ値を返す）。
 
 `FunctionMacro` と `UserDefinedObjectMacro` は、本体に `__VA_OPT__` がある場合に限り、正規化した本体と同じ長さの `VaOptSpan` 表を定義時に 1 回だけ作る（`compute_va_opt_spans()`、本体の長さに比例する時間）。各要素は自分の位置からの相対オフセットで、次の空白以外のトークン（`next`）、`__VA_OPT__` の `(` に対応する `)`（`close`、形が崩れていれば 0）、その中の入れ子の `__VA_OPT__` の数（`nested`。`)` が閉じていなければ本体の末尾まで数える。`(` がなければ 0）を持つ。相対オフセットなので、外側の `__VA_OPT__` の中身には表の同じ部分範囲をそのまま使える。表は本体から導かれる値なので `equal()`（再定義の同一判定）には含めない。
 
@@ -113,9 +115,9 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 ### constfold/ の内部構成
 
-- `constfold.hpp` — 公開 API: `eval_const_expr()`（`#if` 式文字列を評価して int64_t 値を返す）
-- `constfold.cpp` — `eval_const_expr` 実装。生成された parser/scanner の定義をヘッダ経由で利用
-- `constfold_internal.hpp` — 型定義（`ValueKind`, `BitKind`, `CfValue`, `bit_mask`）
+- `constfold.hpp` — 公開 API: `eval_const_expr()`（`#if` 式文字列を評価して真偽を 0/1 で返す）と `eval_const_value()`（型付きの値 `cf::ConstValue` と、失敗した最初の診断のコードを返す。`__assert` が使う）
+- `constfold.cpp` — 両 API が共有する評価の実装。生成された parser/scanner の定義をヘッダ経由で利用。`eval_const_expr()` は `{#if}` 向けの従来の結果（構文エラー・型エラー・空の式は 0、それ以外は値の真偽）を変えない
+- `constfold_internal.hpp` — 型定義（`ValueKind`, `BitKind`, `CfValue`, `bit_mask`）と失敗コードの記録 `cf_failure_code`/`cf_note_failure()`。失敗は、スキャナやグラマーのアクションの中で出る診断（不正な基数・桁、リテラルの桁あふれ、浮動小数点値の整数範囲外）でも、その `ISSUE()` の直前に記録する（構文解析そのものは成功するため、戻り値だけでは分からない）。0 による除算・剰余は失敗にしない
 - `constfold.l` — Flex ソース → ビルド時に `constfold_scanner.cpp` を生成
 - `constfold.y` — Bison ソース → ビルド時に `constfold_parser.cpp` を生成
 
