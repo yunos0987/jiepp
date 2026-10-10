@@ -10,7 +10,13 @@
 std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, int lineno = 1);
 
 // Tokenize text string
-std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno = 1);
+// report_nested_brace: false only when re-lexing the body of a pragma that
+// was itself produced by re-lexing a pragma body (Token::relexed_pragma):
+// a raw '{' inside a nested pragma/directive body is then not reported (PP22), since
+// the enclosing pass already reported it. Every other diagnostic is
+// reported as usual.
+std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno = 1,
+                                           bool report_nested_brace = true);
 
 // True iff `s` is exactly one identifier as tokenize() lexes it:
 // [A-Za-z_][A-Za-z0-9_]* (ASCII only, like IEC 61131-3 identifiers).

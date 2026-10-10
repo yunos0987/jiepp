@@ -410,11 +410,17 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
 
     std::string expanded_body;
     int body_lines = 0;
-    for (const auto& et : jiepp::preprocessor_detail::expand_operand_tokens(body, env)) {
+    using jiepp::preprocessor_detail::OperandKind;
+    for (const auto& et : jiepp::preprocessor_detail::expand_operand_tokens(
+             body, env, true,
+             t.relexed_pragma ? OperandKind::nested_pragma_body : OperandKind::pragma_body)) {
         expanded_body += et.text;
         body_lines += et.num_of_lines;
     }
     Token out = t;
+    // The text is rewritten below, so it is no longer the lexer's own text:
+    // a rescan (macro argument) re-lexes it with every diagnostic reported.
+    out.relexed_pragma = false;
     // A newline printed inside the pragma text comes from a macro
     // replacement (the lexer already folded the raw newlines of the body),
     // so it is not a source line (see Token::output_only_lines).

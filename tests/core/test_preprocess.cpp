@@ -1,5 +1,7 @@
 #include "test_helper.hpp"
 
+#include <algorithm>
+
 class PreprocessTest : public JieppTest {};
 
 // ---- test_simple ----
@@ -383,4 +385,192 @@ TEST_F(PreprocessTest, DiagnosticLineFollowsEnvCounterAcrossRepeatedCalls) {
 
     EXPECT_THROW(pp("{#error x}", env), Issue::Exception);
     EXPECT_EQ("<unknown location>:4.0: error: PP91: 'x'", message());
+}
+
+// ---- nested pragma brace diagnostics are linear (A2 / S-02) ----
+//
+// expand_pragma_token() re-lexes a pragma body, and every '{' nested in it
+// was reported again (PP22) at each re-lex level: N nested braces gave
+// N(N+1)/2 lines. A raw '{' inside the body of a pragma produced by a
+// re-lex is no longer reported (the enclosing pass already reported it);
+// the "unclosed pragma" PP22 of every level, the closer mismatches and PP23
+// still are. For N nested braces: (N-1)+1 at the source lex, (N-2)+1 at the
+// first re-lex, then one "unclosed" PP22 for each of the N-2 deeper levels:
+// 3N-3 lines.
+
+namespace {
+
+// "PPnn: text" of each diagnostic, without the location prefix (and
+// without anything after the closing quote of the context).
+std::vector<std::string> diag_tails(std::vector<std::string> ms) {
+    std::vector<std::string> r;
+    for (auto& m : ms) {
+        auto pos = m.find(": PP");
+        std::string s = (pos == std::string::npos) ? m : m.substr(pos + 2);
+        auto q = s.rfind('\'');
+        if (q != std::string::npos)
+            s.resize(q + 1);
+        r.push_back(s);
+    }
+    return r;
+}
+
+std::string nested_annotated_pragmas(int n, const std::string& inner) {
+    std::string s;
+    for (int i = 0; i < n; ++i)
+        s += "(*{";
+    s += inner;
+    for (int i = 0; i < n; ++i)
+        s += "}*)";
+    return s;
+}
+
+} // namespace
+
+TEST_F(PreprocessTest, NestedPragmaBraceErrorsAreLinear) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    constexpr int kN = 100;
+    const std::string out = pp(std::string(kN, '{') + "x\n");
+    // Same output as before the fix.
+    EXPECT_EQ(nested_annotated_pragmas(kN, "x ") + "\n", out);
+    auto cs = codes();
+    // Pre-fix: 5050 = N(N+1)/2.
+    EXPECT_EQ(static_cast<std::size_t>(3 * kN - 3), cs.size());
+    EXPECT_EQ(cs.size(),
+              static_cast<std::size_t>(std::count(cs.begin(), cs.end(),
+                                                  Issue::Code::INVALID_PRAGMA_SYNTAX)));
+}
+
+TEST_F(PreprocessTest, NestedPragmaBraceErrorsExactList) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    // N = 3: 3N-3 = N(N+1)/2 = 6, so the list is the same as before the fix.
+    EXPECT_EQ(nested_annotated_pragmas(3, "x"), pp("{{{x"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP22: Invalid syntax for pragma; '{{{x'",
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP22: Invalid syntax for pragma; '{{x'",
+                  "PP22: Invalid syntax for pragma; '{x'",
+              }),
+              diag_tails(messages()));
+
+    // N = 4: the raw '{' in "{{x" (the second re-lex) is no longer
+    // reported; before the fix it was, after "{{{x" (10 lines, now 9).
+    EXPECT_EQ(nested_annotated_pragmas(4, "x"), pp("{{{{x"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP22: Invalid syntax for pragma; '{{{{x'",
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP22: Invalid syntax for pragma; '{{{x'",
+                  "PP22: Invalid syntax for pragma; '{{x'",
+                  "PP22: Invalid syntax for pragma; '{x'",
+              }),
+              diag_tails(messages()));
+}
+
+// Guard: an unclosed nested pragma whose opener is written "${" is reported
+// at every level (only raw '{' characters inside a re-lexed body are
+// deduplicated), the same two messages as before the fix.
+TEST_F(PreprocessTest, EscapedNestedPragmaOpenerStillErrors) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("(*{$(*{$(*{x }*)}*)}*)", pp("{ ${ ${ x }"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{ ${ x '",
+                  "PP22: Invalid syntax for pragma; '{ x '",
+              }),
+              diag_tails(messages()));
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+// Guard: the diagnostics of the source lex and of the first re-lex of a
+// pragma body are unchanged (PP20/PP29 come from the re-lex of the body).
+TEST_F(PreprocessTest, FirstLevelPragmaRelexDiagnosticsUnchanged_Guard) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("(*{(* x }*)", pp("{ (* x }"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP20: Unclosed comment; '(* x '",
+              }),
+              diag_tails(messages()));
+
+    EXPECT_EQ("(*{(*{(* x }*)}*)", pp("{ { (* x }"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP22: Invalid syntax for pragma; '{ (* x '",
+                  "PP20: Unclosed comment; '(* x '",
+              }),
+              diag_tails(messages()));
+
+    EXPECT_EQ("(*{'abc }*)", pp("{ 'abc }"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP29: Missing terminating quote character; ''abc '",
+              }),
+              diag_tails(messages()));
+}
+
+// Guard (design review H2): a pragma rescanned in a macro argument can be
+// re-lexed from expanded text that holds a closed nested pragma whose body
+// opens an unclosed pragma with "${". That PP22 is the only diagnostic of
+// the input and must stay (it decides the error status).
+TEST_F(PreprocessTest, RescannedPragmaUnclosedEscapedOpenerStillErrors) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    auto env = setup();
+    env.set_pragma_style("standard");
+    const std::string out = pp("{#define N ${z$}}\n"
+                               "{#define QM ${B $$N$}}\n"
+                               "{#define PM ${ QM $}}\n"
+                               "{#define F(x) x}\n"
+                               "F(PM)\n", env);
+    EXPECT_NE(std::string::npos, out.find("{{B ${z}}} }")) << out;
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{z'",
+              }),
+              diag_tails(messages()));
+    EXPECT_EQ(1, Issue::error_count_);
+}
+
+// Guard for clearing Token::relexed_pragma in expand_pragma_token() (design
+// review M1): the expanded pragma text, rescanned in a macro argument, holds
+// a raw '{' that no earlier pass reported, so its re-lex must report it.
+// Keeping the mark on the rewritten token drops that PP22, the only error
+// of the input (verified by removing the clearing line: error count 0).
+TEST_F(PreprocessTest, RewrittenPragmaRescanStillReportsRawBrace) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    auto env = setup();
+    env.set_pragma_style("standard");
+    const std::string out = pp("{#define F(x) x}\n"
+                               "{#define E}\n"
+                               "{#define B ${b$}}\n"
+                               "{#define S(x) @x}\n"
+                               "{#define S2(x) S(x)}\n"
+                               "{#define M() ${q S2(B)$}}\n"
+                               "{#define IN ${ M E () $}}\n"
+                               "{#define OUT ${ F E (IN) $}}\n"
+                               "F(OUT)\n", env);
+    EXPECT_NE(std::string::npos, out.find("{{{q '{b}'} } }")) << out;
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP29: Missing terminating quote character; ''} '",
+                  "PP29: Missing terminating quote character; ''{b'",
+              }),
+              diag_tails(messages()));
+    EXPECT_EQ(1, Issue::error_count_);
+}
+
+// Guard (design review H1): PP23 for an unclosed directive found by a
+// deeper re-lex is never suppressed. With PP22 ignored it is the only
+// error, so dropping it would turn the run into a success.
+TEST_F(PreprocessTest, UnclosedDirectiveInDeepRelexStillReportsPP23) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    Issue::Ignoring ignoring({Issue::Code::INVALID_PRAGMA_SYNTAX});
+    const std::string out = pp("{ { {#define Q 1 }\nQ\n");
+    EXPECT_NE(std::string::npos, out.find("\n1\n")) << out;
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1 '",
+              }),
+              diag_tails(messages()));
+    EXPECT_EQ(1, Issue::error_count_);
 }

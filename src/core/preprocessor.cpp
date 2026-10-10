@@ -46,8 +46,8 @@ void report_unterminated_literal(Token& t) {
 }
 
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
-                               bool report_unterminated) {
-    auto ts = iec3_tokens_from_string(text, remove_comments);
+                               bool report_unterminated, bool report_nested_brace) {
+    auto ts = iec3_tokens_from_string(text, remove_comments, 1, report_nested_brace);
     for (auto& t : ts) {
         if (report_unterminated)
             report_unterminated_literal(t);
@@ -58,12 +58,22 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
 }
 
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
-                                         bool report_unterminated) {
+                                         bool report_unterminated, OperandKind kind) {
     // Work budget (PP64): one step per byte, charged BEFORE lexing, so an
     // operand (pragma body, {#if} condition, {#include} path, message, ...)
     // costs work in proportion to its size even if it expands to nothing.
     env.charge_expansion_steps(text.size());
-    auto its = lex_operand(text, env.get_remove_comments(), report_unterminated);
+    auto its = lex_operand(text, env.get_remove_comments(), report_unterminated,
+                           kind != OperandKind::nested_pragma_body);
+    // A2 / S-02: a pragma lexed from a pragma body is still the lexer's own
+    // text here; every raw '{' in its body was met by this lex and reported
+    // by it or by an enclosing pass (see read_pragma_body()), so its own
+    // re-lex need not report them again.
+    if (kind != OperandKind::operand) {
+        for (auto& t : its)
+            if (t.type == Token::PRAGMA)
+                t.relexed_pragma = true;
+    }
     // Every newline in an operand is a decoded $n/$l/$r/$0A/$0D escape: the
     // raw newlines of the directive are counted by the lexer separately
     // (the extra newline tokens of read_pragma_body()), so none is a source line.

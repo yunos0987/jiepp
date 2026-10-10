@@ -105,6 +105,9 @@ void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
 
     prev.hs = Token::HideSet::intersect(prev.hs, next.hs);
     prev.text += next.text;
+    // A pasted token is not the lexer's own text: its pragma body (if it
+    // is a PRAGMA) is re-lexed with every diagnostic reported (A2 / S-02).
+    prev.relexed_pragma = false;
 
     for (std::size_t k = 1; k < item.size(); ++k)
         src.push_back(std::move(item[k]));

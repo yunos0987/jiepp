@@ -17,7 +17,8 @@ namespace {
 // Unified handler for (* ... *) and /* ... */ families.
 // opener is '(' or '/'; pos points to the opener char.
 void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
-                      std::size_t n, int& lineno, std::vector<Token>& result) {
+                      std::size_t n, int& lineno, std::vector<Token>& result,
+                      bool report_nested_brace) {
     if (pos + 2 < n && text[pos + 2] == '!') {
         // Doc comment: (*! or /*!
         pos += 3;
@@ -31,7 +32,7 @@ void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
             // Pragma: (*{ or /*{
             pos = look + 1;
             std::vector<Token> extra_nl;
-            auto tok = read_pragma_body(text, pos, lineno, opener, extra_nl);
+            auto tok = read_pragma_body(text, pos, lineno, opener, extra_nl, report_nested_brace);
             result.push_back(std::move(tok));
             for (const auto& et : extra_nl)
                 result.push_back(et);
@@ -43,7 +44,7 @@ void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
     }
 }
 
-std::vector<Token> tokenize(const std::string& text, int lineno) {
+std::vector<Token> tokenize(const std::string& text, int lineno, bool report_nested_brace) {
     std::vector<Token> r;
     r.reserve(text.size() / 8);
 
@@ -76,7 +77,7 @@ std::vector<Token> tokenize(const std::string& text, int lineno) {
 
         // ---- (* ... *) and /* ... */ families (unified) ----
         if ((c == '(' || c == '/') && p + 1 < n && text[p + 1] == '*') {
-            lex_block_opener(c, text, p, n, lineno, r);
+            lex_block_opener(c, text, p, n, lineno, r, report_nested_brace);
             continue;
         }
 
@@ -89,7 +90,7 @@ std::vector<Token> tokenize(const std::string& text, int lineno) {
             if (look < n && text[look] == '{') {
                 p = look + 1;
                 std::vector<Token> extra_nl;
-                auto tok = read_pragma_body(text, p, lineno, '{', extra_nl);
+                auto tok = read_pragma_body(text, p, lineno, '{', extra_nl, report_nested_brace);
                 while (p < n && is_ws_char(text[p]))
                     ++p;
                 if (p < n && is_nl_char(text[p])) {
@@ -118,7 +119,7 @@ std::vector<Token> tokenize(const std::string& text, int lineno) {
         if (c == '{') {
             ++p;
             std::vector<Token> extra_nl;
-            auto tok = read_pragma_body(text, p, lineno, '{', extra_nl);
+            auto tok = read_pragma_body(text, p, lineno, '{', extra_nl, report_nested_brace);
             r.push_back(std::move(tok));
             for (const auto& et : extra_nl)
                 r.push_back(et);
@@ -222,7 +223,8 @@ std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, int li
     return iec3_tokens_from_string(text, remove_comments, lineno);
 }
 
-std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno) {
+std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno,
+                                           bool report_nested_brace) {
     std::string text = input;
     // Strip UTF-8 BOM if present
     if ((text.size() >= 3) &&
@@ -230,7 +232,7 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
         (static_cast<unsigned char>(text[1]) == 0xBB) &&
         (static_cast<unsigned char>(text[2]) == 0xBF))
         text.erase(0, 3);
-    auto tokens = tokenize(text, lineno);
+    auto tokens = tokenize(text, lineno, report_nested_brace);
     if (remove_comments) {
         for (auto& t : tokens) {
             if (t.type == Token::C) { // Token::DOCUMENT (/*!  //!  (*!) is preserved

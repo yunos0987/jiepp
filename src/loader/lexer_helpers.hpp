@@ -40,9 +40,12 @@ Token read_line_comment(const std::string& text, std::size_t& pos,
                         int& lineno, int type);
 
 // Pragma/directive reader (lexer_pragma.cpp)
+// report_nested_brace: whether a raw '{' inside the body is reported as
+// PP22 (see iec3_tokens_from_string()). Nothing else depends on it.
 Token read_pragma_body(const std::string& text, std::size_t& pos,
                        int& lineno, char opener_sign,
-                       std::vector<Token>& extra_nl);
+                       std::vector<Token>& extra_nl,
+                       bool report_nested_brace = true);
 
 // Literal helpers (lexer_literal.cpp)
 bool try_push_date_or_time(std::vector<Token>& result,

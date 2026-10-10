@@ -105,6 +105,8 @@ Jiepp is a preprocessor for IEC 61131-3, providing C-preprocessor-equivalent mac
 (*{block}*)
 ```
 
+通常のプラグマの本体はマクロ展開のために字句解析し直す（再字句解析）。本体の中に入れ子のプラグマ（`{`）があれば、それも同じように字句解析し直す。このとき、プラグマ本体の中にある生の `{` による構文エラー（`PP22`）は、外側の字句解析と、そのプラグマ本体の最初の再字句解析でだけ報告する。さらに内側の再字句解析では、同じ文字について重複して報告しない。閉じていないプラグマの `PP22`・閉じ記号の不一致の `PP22`・閉じていないディレクティブの `PP23` は、どの段でも従来どおり報告する。マクロ引数の中のプラグマは展開結果をもう一度走査（再走査）するので、展開のたびに報告する。マクロの置換リストの中のプラグマも同じく、展開のたびにその最初の再字句解析で報告する。いずれの場合も終了コードは変わらない。
+
 ### 複数行ディレクティブ / Multi-line Directives
 
 ディレクティブは閉じ `}` まで複数行に跨れる。行継続文字は不要。
@@ -1330,7 +1332,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP14 | `INCLUDE_TARGET_IS_DIRECTORY` | ERROR | Include target is a directory | インクルード対象がディレクトリ |
 | PP20 | `UNCLOSED_COMMENT` | ERROR | Unclosed comment | コメントが閉じられていない |
 | PP21 | `INVALID_ESCAPE_SEQUENCE` | ERROR | Invalid escape sequence | 不正なエスケープシーケンス |
-| PP22 | `INVALID_PRAGMA_SYNTAX` | ERROR | Invalid syntax for pragma | プラグマの構文エラー |
+| PP22 | `INVALID_PRAGMA_SYNTAX` | ERROR | Invalid syntax for pragma | プラグマの構文エラー（§2「通常のプラグマの正規化」。プラグマ本体の中の入れ子のプラグマ（`{`）による構文エラーは、外側の字句解析と、そのプラグマ本体の最初の再字句解析でだけ報告し、さらに内側の再字句解析では同じ文字について重複して報告しない。閉じていないプラグマと閉じ記号の不一致はどの段でも報告し、マクロ引数の再走査では展開のたびに報告する。終了コードは変わらない） |
 | PP23 | `INVALID_PP_SYNTAX` | ERROR | Invalid preprocessor syntax | プリプロセッサの構文エラー（汎用） |
 | PP24 | `UNTERMINATED_CONDITIONAL` | ERROR | Unterminated conditional directive | `{#if}` が閉じられていない |
 | PP25 | `ELIF_ERROR` | ERROR | Unexpected elif directive | `{#elif}` の位置エラー |

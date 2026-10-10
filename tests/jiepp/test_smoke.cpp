@@ -659,3 +659,94 @@ TEST_F(SmokeTest, DefaultStepLimitStopsDoublingBombQuickly) {
     EXPECT_LE(secs, 10.0) << "took " << secs << " s";
 }
 #endif
+
+// ---- A2 / S-02: nested pragma brace diagnostics through the CLI ----
+
+namespace {
+
+std::size_t count_lines_with(const std::string& s, const std::string& needle) {
+    std::istringstream lines(s);
+    std::string line;
+    std::size_t n = 0;
+    while (std::getline(lines, line))
+        if (line.find(needle) != std::string::npos)
+            ++n;
+    return n;
+}
+
+} // namespace
+
+// '{' x 1000: each pragma body is re-lexed until PP60 stops the recursion at
+// depth 256. Before the fix every level reported every remaining '{' again
+// (224104 PP22 lines, 44 MB of stderr; 14.0-15.8 s measured on Release on
+// the development machine). Now the source
+// lex and the first re-lex report the raw braces (999 + 998) and every
+// level reports its own unclosed pragma once (257 levels): 2254 lines.
+TEST_F(SmokeTest, NestedBracePragmaDiagnosticsAreLinear) {
+    fs::path input = tmp_dir_ / "nested_brace_1000.iec";
+    write_file(input, std::string(1000, '{') + "x\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(count_lines_with(r.err, ": PP22:"), 2254u);
+    EXPECT_EQ(count_lines_with(r.err, ": PP60:"), 1u);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 2255);
+}
+
+// Guard (design review H2): the only diagnostic of this input is a PP22 for
+// an unclosed "${" pragma found while re-lexing a closed nested pragma in a
+// rescanned macro argument; the run must still fail.
+TEST_F(SmokeTest, RescannedPragmaUnclosedEscapedOpenerStillFails) {
+    fs::path input = tmp_dir_ / "rescanned_escaped_opener.iec";
+    write_file(input, "{#define N ${z$}}\n"
+                      "{#define QM ${B $$N$}}\n"
+                      "{#define PM ${ QM $}}\n"
+                      "{#define F(x) x}\n"
+                      "F(PM)\n");
+
+    auto r = run("-P --pp-output-pragma-style standard \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(r.out, "{{B ${z}}} }\n");
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find(": PP22: Invalid syntax for pragma; '{z'"), std::string::npos)
+        << "stderr: " << r.err;
+}
+
+// Guard: a pragma whose text was rewritten by expansion is re-lexed with
+// every diagnostic when rescanned; the raw '{' it reports is the only error.
+TEST_F(SmokeTest, RewrittenPragmaRescanStillFails) {
+    fs::path input = tmp_dir_ / "rewritten_pragma_rescan.iec";
+    write_file(input, "{#define F(x) x}\n"
+                      "{#define E}\n"
+                      "{#define B ${b$}}\n"
+                      "{#define S(x) @x}\n"
+                      "{#define S2(x) S(x)}\n"
+                      "{#define M() ${q S2(B)$}}\n"
+                      "{#define IN ${ M E () $}}\n"
+                      "{#define OUT ${ F E (IN) $}}\n"
+                      "F(OUT)\n");
+
+    auto r = run("-P --pp-output-pragma-style standard \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "{{{q '{b}'} } }\n");
+    EXPECT_EQ(count_lines_with(r.err, ": PP22: Invalid syntax for pragma; '{'"), 1u)
+        << "stderr: " << r.err;
+    EXPECT_EQ(count_lines_with(r.err, ": PP29:"), 2u) << "stderr: " << r.err;
+}
+
+#ifndef JIEPP_SANDBOX
+// Guard (design review H1): PP23 for an unclosed directive found by a deeper
+// re-lex is always reported ({#ignore} is restricted in sandbox builds).
+TEST_F(SmokeTest, UnclosedDirectiveInDeepRelexKeepsPP23) {
+    fs::path input = tmp_dir_ / "deep_relex_pp23.iec";
+    write_file(input, "{#ignore PP22}\n{ { {#define Q 1 }\nQ\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(count_lines_with(r.err, ": PP23:"), 1u) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find(": PP23: Invalid preprocessor syntax; '{#define Q 1 '"),
+              std::string::npos) << "stderr: " << r.err;
+    // The source lex runs before {#ignore PP22} takes effect.
+    EXPECT_EQ(count_lines_with(r.err, ": PP22:"), 2u) << "stderr: " << r.err;
+}
+#endif

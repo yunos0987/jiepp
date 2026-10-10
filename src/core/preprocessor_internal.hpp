@@ -63,9 +63,23 @@ void report_unterminated_literal(Token& t);
 
 // Lexes a decoded directive operand and reports PP29 for each unterminated
 // literal in it; with report_unterminated == false (message text, like
-// clang's #error/#warning) only clears the marks.
+// clang's #error/#warning) only clears the marks. report_nested_brace is
+// passed to iec3_tokens_from_string().
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
-                               bool report_unterminated = true);
+                               bool report_unterminated = true,
+                               bool report_nested_brace = true);
+
+// What expand_operand_tokens() lexes (A2 / S-02):
+// - operand: a directive operand or message text.
+// - pragma_body: the body of a pragma token that the lexer did not produce
+//   while re-lexing a pragma body (a source pragma, a pragma from a macro
+//   replacement, or one whose text was rewritten).
+// - nested_pragma_body: the body of a Token::relexed_pragma token; a raw
+//   '{' inside a nested pragma body is not reported again (see
+//   read_pragma_body()).
+// For both pragma kinds every PRAGMA token lexed from the body is marked
+// Token::relexed_pragma.
+enum class OperandKind { operand, pragma_body, nested_pragma_body };
 
 // Lexes text -- a decoded directive operand ({#if}/{#elif} condition,
 // {#string}/{#wstring}/{#line}/{#include}/{#sinclude}/{#syspath} operand,
@@ -74,7 +88,8 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
 // runs: compaction is a post-pass over the final output stream, and running
 // it here spliced a line marker into the operand text itself.
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
-                                         bool report_unterminated = true);
+                                         bool report_unterminated = true,
+                                         OperandKind kind = OperandKind::operand);
 // Concatenated text of expand_operand_tokens().
 std::string expand_operand_text(const std::string& text, Env& env,
                                 bool report_unterminated = true);

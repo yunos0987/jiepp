@@ -66,6 +66,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `{` と `#` の間に空白・改行・コメントがあると通常のプラグマとして扱われる。空白/改行なら `PP28`（`WHITESPACE_BEFORE_DIRECTIVE`）警告（`lexer_pragma.cpp`）
 - 閉じていない文字列リテラルは `tokenize()` が `Token::unterminated` を立て（後続リテラルと結合しない）、`PP29`（`UNTERMINATED_STRING_LITERAL`）警告は core がトークンを処理するとき（`expand()` 主ループ・関数マクロ引数収集・`preprocessor_detail::lex_operand()`）に 1 回だけ出してフラグを下ろす。無効なグループとメッセージディレクティブでは出さない
 - `Token`（`token.hpp`）はトークン 1 個を表す構造体（`text`, `kind` 等のフィールド）
+- `Token::relexed_pragma` は、プラグマ本体の再字句解析（`core/expand.cpp` の `expand_pragma_token()` → `preprocessor_detail::expand_operand_tokens()`）で字句解析器が作った PRAGMA トークンに立つ印で、テキストは字句解析器が作ったままのものに限る。印の付いたトークンの本体を再字句解析するときは、`read_pragma_body()` が本体の中の生の `{` に対する `PP22` だけを出さない（外側の段で同じ文字を報告済みのため。入れ子の `{` N 個で N(N+1)/2 行だった報告が線形になる）。閉じていないプラグマの `PP22`・閉じ記号の不一致・`PP23` は常に出す。テキストを書き換える `expand_pragma_token()` の出力と `@@` 連結（`glue_tokens()`）の結果では印を下ろす
 - Prosser の hide set（`Token::hs`）は `hideset.hpp/cpp` の `HideSet` が実装する。中身はインターン済みマクロ名 id 上の永続的（immutable、構造共有）ビットマップ基数トライで、値はポインタ 1 個のハンドル（コピーは参照カウントの加算のみ。カウントは atomic ではないため、HideSet の値をスレッド間で共有しない）。名前→id のテーブルはプロセス全体で 1 つ・一度登録した名前は解放されず・`Issue` 同様スレッドセーフではない
 
 ### core/ の内部構成
