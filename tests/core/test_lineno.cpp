@@ -1,4 +1,5 @@
 #include "lineno_test_helper.hpp"
+#include "loader/lexer.hpp"
 
 // ---- Basic directive, defined operator, object macro, all-token-kinds: line number tracking ----
 
@@ -343,3 +344,136 @@ $
     }
 }
 
+
+// ---- U1: diagnostics of a re-lex (directive operand, pragma body, macro
+// text) are reported at the current Issue location ----
+//
+// Before the fix lex_operand() re-lexed with the lexer's own line counter
+// starting at 1, so PP20/PP22/PP23 found while re-lexing pointed at line 1
+// (plus any decoded $n newlines) instead of the directive or pragma being
+// processed. They now use the same line as the other diagnostics of that
+// directive/pragma (PP29, PP51, PP52, ...): the opening '{' line, the macro
+// name's line for an object macro, the closing ')' line of a function-macro
+// call. The fixture name matches the sandbox test presets' filter
+// ^(Sandbox|RobustnessTest), so these also run in sandbox builds (none of
+// the inputs uses a sandbox-restricted directive).
+
+namespace {
+
+std::vector<std::string> relex_diags(JieppTest& t, const std::string& src) {
+    Issue::ContinueMode guard({});
+    (void)pp(src);
+    return t.messages();
+}
+
+const std::string kLoc = "<unknown location>:";
+
+} // namespace
+
+class RobustnessTestRelexLineno : public LinenoTest {};
+
+TEST_F(RobustnessTestRelexLineno, T1_NestedPragmaInSourcePragma) {
+    EXPECT_EQ((std::vector<std::string>{
+                  kLoc + "4.0: error: PP22: Invalid syntax for pragma; '{'",
+                  kLoc + "4.0: error: PP22: Invalid syntax for pragma; '{ (* x '",
+                  kLoc + "4.0: error: PP20: Unclosed comment; '(* x '",
+              }),
+              relex_diags(*this, "\n\n\n{ { (* x }"));
+}
+
+TEST_F(RobustnessTestRelexLineno, T2_MultiLinePragmaReportsOpeningLine) {
+    EXPECT_EQ((std::vector<std::string>{kLoc + "4.0: error: PP20: Unclosed comment; '(* x '"}),
+              relex_diags(*this, "x\n\n\n{ a\n (* x }\n"));
+}
+
+TEST_F(RobustnessTestRelexLineno, T3_DecodedNewlinesAreNotSourceLines) {
+    EXPECT_EQ((std::vector<std::string>{kLoc + "5.0: error: PP20: Unclosed comment; '(* x'"}),
+              relex_diags(*this, "\n\n\n\n{#if 1 $n$n (* x}\n{#endif}\n"));
+}
+
+TEST_F(RobustnessTestRelexLineno, T4_ObjectMacroPragmaAtMacroNameLine) {
+    EXPECT_EQ((std::vector<std::string>{kLoc + "4.0: error: PP20: Unclosed comment; '(* x '"}),
+              relex_diags(*this, "{#define P ${ (* x $}}\n\n\nP\n"));
+}
+
+TEST_F(RobustnessTestRelexLineno, T5_FunctionMacroPragmaAtClosingParenLine) {
+    EXPECT_EQ((std::vector<std::string>{kLoc + "4.0: error: PP20: Unclosed comment; '(* y '"}),
+              relex_diags(*this, "{#define F() ${ (* y $}}\nF(\n\n)\n"));
+}
+
+TEST_F(RobustnessTestRelexLineno, T6_PragmaInMacroArgumentAtClosingParenLine) {
+    EXPECT_EQ((std::vector<std::string>{
+                  kLoc + "5.0: error: PP20: Unclosed comment; '(* arg '",
+                  kLoc + "5.0: error: PP20: Unclosed comment; '(* arg '",
+              }),
+              relex_diags(*this, "{#define F(x) x}\n\nF(\n{ (* arg }\n)\n"));
+}
+
+TEST_F(RobustnessTestRelexLineno, T7_LineDirectiveApplies) {
+    EXPECT_EQ((std::vector<std::string>{kLoc + "100.0: error: PP20: Unclosed comment; '(* q '"}),
+              relex_diags(*this, "a\n{#line 100}\n{ (* q }\n"));
+}
+
+#ifndef JIEPP_SANDBOX
+// Not in the sandbox-safe fixture: a sandbox build does not apply the file
+// name of {#line N 'file'}.
+TEST_F(LinenoTest, RelexT8_LineDirectiveFileNameApplies) {
+    EXPECT_EQ((std::vector<std::string>{"other.iec:200.0: error: PP20: Unclosed comment; '(* q '"}),
+              relex_diags(*this, "a\n{#line 200 'other.iec'}\n{ (* q }\n"));
+}
+#endif
+
+TEST_F(RobustnessTestRelexLineno, T9_T11_DirectiveOperands) {
+    EXPECT_EQ((std::vector<std::string>{kLoc + "3.0: error: PP20: Unclosed comment; '(* z'"}),
+              relex_diags(*this, "\n\n{#define Z (* z}\n"));
+    EXPECT_EQ((std::vector<std::string>{kLoc + "3.0: error: PP20: Unclosed comment; '(* z'"}),
+              relex_diags(*this, "\n\n{#ifdef X (* z}\n{#endif}\n"));
+    EXPECT_EQ((std::vector<std::string>{kLoc + "4.0: error: PP20: Unclosed comment; '(* z'"}),
+              relex_diags(*this, "\n\n{#if 0}\n{#else (* z}\n{#endif}\n"));
+}
+
+TEST_F(RobustnessTestRelexLineno, T12_NestedDirectiveInPragmas) {
+    EXPECT_EQ((std::vector<std::string>{
+                  kLoc + "3.0: error: PP22: Invalid syntax for pragma; '{'",
+                  kLoc + "3.0: error: PP22: Invalid syntax for pragma; '{'",
+                  kLoc + "3.0: error: PP22: Invalid syntax for pragma; '{'",
+                  kLoc + "3.0: error: PP22: Invalid syntax for pragma; '{ {#define Q 1 '",
+                  kLoc + "3.0: error: PP23: Invalid preprocessor syntax; '{#define Q 1 '",
+              }),
+              relex_diags(*this, "\n\n{ { {#define Q 1 }\n"));
+}
+
+// The relex lexer pushes no location of its own: the diagnostic goes to the
+// current Issue location. iec3_tokens_from_string() still counts the text's
+// own lines (source lexing is unchanged).
+TEST_F(RobustnessTestRelexLineno, T14_RelexUsesCurrentLocation) {
+    Issue::ContinueMode guard({});
+    {
+        Issue::LineGuard g(7, "f.iec");
+        (void)iec3_relex("\n\n(* x", false);
+    }
+    EXPECT_EQ((std::vector<std::string>{"f.iec:7.0: error: PP20: Unclosed comment; '(* x'"}),
+              messages());
+    {
+        Issue::LineGuard g(7, "f.iec");
+        (void)iec3_tokens_from_string("\n\n(* x", false);
+    }
+    EXPECT_EQ((std::vector<std::string>{"f.iec:3.0: error: PP20: Unclosed comment; '(* x'"}),
+              messages());
+}
+
+// PP20 inside a multi-line pragma now agrees with PP29 from the same kind of
+// re-lex, which was already reported at the opening '{' line (SPEC: PP29).
+TEST_F(RobustnessTestRelexLineno, T15_AgreesWithPP29) {
+    EXPECT_EQ((std::vector<std::string>{
+                  kLoc + "3.0: error: PP20: Unclosed comment; '(* x '",
+                  kLoc + "6.0: warning: PP29: Missing terminating quote character; ''x'",
+              }),
+              relex_diags(*this, "\n\n{ a\n\n (* x }\n{attribute\n\n 'x}\n"));
+    // Same shape as T6, with PP29: twice at the closing ')' line.
+    EXPECT_EQ((std::vector<std::string>{
+                  kLoc + "5.0: warning: PP29: Missing terminating quote character; ''arg '",
+                  kLoc + "5.0: warning: PP29: Missing terminating quote character; ''arg '",
+              }),
+              relex_diags(*this, "{#define F(x) x}\n\nF(\n{ 'arg }\n)\n"));
+}

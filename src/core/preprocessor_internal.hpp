@@ -63,8 +63,9 @@ void report_unterminated_literal(Token& t);
 
 // Lexes a decoded directive operand and reports PP29 for each unterminated
 // literal in it; with report_unterminated == false (message text, like
-// clang's #error/#warning) only clears the marks. report_nested_brace is
-// passed to iec3_tokens_from_string().
+// clang's #error/#warning) only clears the marks. Lexes with iec3_relex(),
+// so its own diagnostics (PP20/PP22/PP23) are also reported at the current
+// Issue location; report_nested_brace is passed to it.
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
                                bool report_unterminated = true,
                                bool report_nested_brace = true);

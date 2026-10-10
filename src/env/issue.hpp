@@ -71,11 +71,13 @@ public:
     // any source file has been pushed -- CLI option errors, -o/-MF open
     // failures, INVALID_COMMAND, the top-level input's FILE_NOT_FOUND, and
     // (C5/U2) a lexer diagnostic raised while tokenizing a -D/-U operand
-    // (e.g. UNCLOSED_COMMENT), even though that reaches happen() through a
-    // with_fallback_line()-pushed LineGuard copy of the dummy entry below,
-    // not through loc_stack_ still being exactly the dummy. PlainTextMessage
-    // ::message() renders this exact value without a trailing ":line.column",
-    // i.e. "jiepp: error: PPxx: message". This is distinct from the
+    // (e.g. UNCLOSED_COMMENT). That operand is re-lexed with iec3_relex(),
+    // which pushes no location of its own, so loc_stack_ is still exactly
+    // the dummy; happen() also treats an entry that merely copies the
+    // dummy's placeholder filename forward as CLI-level (see there).
+    // PlainTextMessage::message() renders this exact value without a
+    // trailing ":line.column", i.e. "jiepp: error: PPxx: message". This is
+    // distinct from the
     // "<unknown location>" bottom-of-stack dummy pushed by initialize(): the
     // string-input preprocess()/preprocess_text() API keeps using that
     // dummy's "<unknown location>:N.0" form unchanged.

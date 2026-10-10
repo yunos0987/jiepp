@@ -3,7 +3,8 @@
 namespace jiepp::detail {
 
 Token read_block_comment(const std::string& text, std::size_t& pos,
-                         int& lineno, char opener1, int type) {
+                         int& lineno, char opener1, int type,
+                         LexOptions opts) {
     char closer_end = (opener1 == '(') ? ')' : '/';
     std::string body;
     body.reserve(128);
@@ -43,7 +44,7 @@ Token read_block_comment(const std::string& text, std::size_t& pos,
         ++pos;
     }
 
-    with_fallback_line(lineno, [&] {
+    report_lex_issue(lineno, opts, [&] {
         ISSUE(UNCLOSED_COMMENT, body);
     });
     return Token::create(type, std::move(body), lines_in_comment);

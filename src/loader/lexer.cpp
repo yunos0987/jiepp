@@ -18,11 +18,11 @@ namespace {
 // opener is '(' or '/'; pos points to the opener char.
 void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
                       std::size_t n, int& lineno, std::vector<Token>& result,
-                      bool report_nested_brace) {
+                      LexOptions opts) {
     if (pos + 2 < n && text[pos + 2] == '!') {
         // Doc comment: (*! or /*!
         pos += 3;
-        auto tok = read_block_comment(text, pos, lineno, opener, Token::DOCUMENT);
+        auto tok = read_block_comment(text, pos, lineno, opener, Token::DOCUMENT, opts);
         tok.text.insert(2, 1, '!');
         result.push_back(std::move(tok));
     } else {
@@ -32,19 +32,19 @@ void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
             // Pragma: (*{ or /*{
             pos = look + 1;
             std::vector<Token> extra_nl;
-            auto tok = read_pragma_body(text, pos, lineno, opener, extra_nl, report_nested_brace);
+            auto tok = read_pragma_body(text, pos, lineno, opener, extra_nl, opts);
             result.push_back(std::move(tok));
             for (const auto& et : extra_nl)
                 result.push_back(et);
         } else {
             // Block comment: (* or /*
             pos += 2;
-            result.push_back(read_block_comment(text, pos, lineno, opener, Token::C));
+            result.push_back(read_block_comment(text, pos, lineno, opener, Token::C, opts));
         }
     }
 }
 
-std::vector<Token> tokenize(const std::string& text, int lineno, bool report_nested_brace) {
+std::vector<Token> tokenize(const std::string& text, int lineno, LexOptions opts) {
     std::vector<Token> r;
     r.reserve(text.size() / 8);
 
@@ -77,7 +77,7 @@ std::vector<Token> tokenize(const std::string& text, int lineno, bool report_nes
 
         // ---- (* ... *) and /* ... */ families (unified) ----
         if ((c == '(' || c == '/') && p + 1 < n && text[p + 1] == '*') {
-            lex_block_opener(c, text, p, n, lineno, r, report_nested_brace);
+            lex_block_opener(c, text, p, n, lineno, r, opts);
             continue;
         }
 
@@ -90,7 +90,7 @@ std::vector<Token> tokenize(const std::string& text, int lineno, bool report_nes
             if (look < n && text[look] == '{') {
                 p = look + 1;
                 std::vector<Token> extra_nl;
-                auto tok = read_pragma_body(text, p, lineno, '{', extra_nl, report_nested_brace);
+                auto tok = read_pragma_body(text, p, lineno, '{', extra_nl, opts);
                 while (p < n && is_ws_char(text[p]))
                     ++p;
                 if (p < n && is_nl_char(text[p])) {
@@ -119,7 +119,7 @@ std::vector<Token> tokenize(const std::string& text, int lineno, bool report_nes
         if (c == '{') {
             ++p;
             std::vector<Token> extra_nl;
-            auto tok = read_pragma_body(text, p, lineno, '{', extra_nl, report_nested_brace);
+            auto tok = read_pragma_body(text, p, lineno, '{', extra_nl, opts);
             r.push_back(std::move(tok));
             for (const auto& et : extra_nl)
                 r.push_back(et);
@@ -223,8 +223,12 @@ std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, int li
     return iec3_tokens_from_string(text, remove_comments, lineno);
 }
 
-std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno,
-                                           bool report_nested_brace) {
+namespace {
+
+// Shared by iec3_tokens_from_string() and iec3_relex(), so the two cannot
+// drift apart (BOM stripping, comment removal).
+std::vector<Token> lex_text(const std::string& input, bool remove_comments, int lineno,
+                            LexOptions opts) {
     std::string text = input;
     // Strip UTF-8 BOM if present
     if ((text.size() >= 3) &&
@@ -232,7 +236,7 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
         (static_cast<unsigned char>(text[1]) == 0xBB) &&
         (static_cast<unsigned char>(text[2]) == 0xBF))
         text.erase(0, 3);
-    auto tokens = tokenize(text, lineno, report_nested_brace);
+    auto tokens = tokenize(text, lineno, opts);
     if (remove_comments) {
         for (auto& t : tokens) {
             if (t.type == Token::C) { // Token::DOCUMENT (/*!  //!  (*!) is preserved
@@ -245,6 +249,23 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
         }
     }
     return tokens;
+}
+
+} // anonymous namespace
+
+std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno,
+                                           bool report_nested_brace) {
+    return lex_text(input, remove_comments, lineno,
+                    LexOptions{.report_nested_brace = report_nested_brace});
+}
+
+std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
+                              bool report_nested_brace) {
+    // The line counter only feeds diagnostics, which at_current_location
+    // reports at the current Issue location instead; 1 is never shown.
+    return lex_text(text, remove_comments, 1,
+                    LexOptions{.report_nested_brace = report_nested_brace,
+                               .at_current_location = true});
 }
 
 std::string iec3_blank_out_comments(std::string_view s, bool header_name) {

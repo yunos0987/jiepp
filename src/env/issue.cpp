@@ -191,12 +191,15 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // preprocess()/preprocess_text() API keeps using unchanged.
         // C5/U2: also render as CLI_LOCATION when a real entry was pushed on
         // top of the dummy but still carries the dummy's own placeholder
-        // filename -- e.g. with_fallback_line() (lexer_helpers.hpp), used by
-        // a lexer diagnostic (like UNCLOSED_COMMENT) raised while tokenizing
-        // a -D/-U operand at the CLI stage, pushes {ln, filepath()} which
-        // just copies that placeholder forward. Without this, such a
-        // diagnostic rendered as "<unknown location>:N.0: ..." instead of
-        // "jiepp: ...", because loc_stack_.size() was already 2 by then.
+        // filename -- a LineGuard pushed while only the dummy is below it
+        // (LineGuard(ln) pushes {ln, filepath()}) just copies that
+        // placeholder forward.
+        // Without this, such a diagnostic rendered as "<unknown
+        // location>:N.0: ..." instead of "jiepp: ...", because
+        // loc_stack_.size() was already 2 by then. (A -D/-U operand itself
+        // is re-lexed with iec3_relex(), which pushes nothing, so its lexer
+        // diagnostics take the size() == 1 branch; this condition stays as
+        // a guard for the other paths.)
         // B1 defensive: loc_stack_ should never be empty here (ensure_location_stack()
         // and initialize() both guarantee a bottom dummy entry), but if some future
         // caller manages to hit this with an empty stack, filepath()/lineno() calling

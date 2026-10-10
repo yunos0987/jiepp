@@ -815,3 +815,24 @@ TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsPP63NotCrash) {
     EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err.substr(0, 2000);
     EXPECT_EQ(r.out.find("after_m"), std::string::npos);
 }
+
+// ---- U1: re-lex diagnostics are reported at the file and line of the
+// directive or pragma being processed ----
+
+#ifndef JIEPP_SANDBOX
+// The pragma's PP20 is reported in the included file at its own '{' line,
+// and the includer's at its own line (not at line 1 of either).
+TEST_F(SmokeTest, RelexDiagnosticInIncludedFileAtPragmaLine) {
+    write_file(tmp_dir_ / "inc.iec", "x\n\n{ (* inc }\n");
+    fs::path input = tmp_dir_ / "o.iec";
+    write_file(input, "a\n{#include \"inc.iec\"}\n{ (* top }\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("inc.iec:3.0: error: PP20: Unclosed comment; '(* inc '"), std::string::npos)
+        << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("o.iec:3.0: error: PP20: Unclosed comment; '(* top '"), std::string::npos)
+        << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 2) << "stderr: " << r.err;
+}
+#endif

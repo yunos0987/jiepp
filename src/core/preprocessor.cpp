@@ -47,7 +47,9 @@ void report_unterminated_literal(Token& t) {
 
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
                                bool report_unterminated, bool report_nested_brace) {
-    auto ts = iec3_tokens_from_string(text, remove_comments, 1, report_nested_brace);
+    // U1: re-lexed text is not source text, so its diagnostics go to the
+    // current Issue location (the directive/pragma being processed).
+    auto ts = iec3_relex(text, remove_comments, report_nested_brace);
     for (auto& t : ts) {
         if (report_unterminated)
             report_unterminated_literal(t);

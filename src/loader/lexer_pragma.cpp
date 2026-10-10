@@ -55,7 +55,7 @@ Token read_pragma_body(const std::string& text,
                        int& lineno,
                        char opener_sign,
                        std::vector<Token>& extra_nl,
-                       bool report_nested_brace)
+                       LexOptions opts)
 {
     const std::size_t start_pos = pos;
     size_t len = text.size();
@@ -215,8 +215,8 @@ Token read_pragma_body(const std::string& text,
             continue;
         }
 
-        // A raw '{' inside the body (A2 / S-02). report_nested_brace is
-        // false only while re-lexing the body of a Token::relexed_pragma
+        // A raw '{' inside the body (A2 / S-02). opts.report_nested_brace
+        // is false only while re-lexing the body of a Token::relexed_pragma
         // token, i.e. a pragma the lexer itself produced, with its text
         // unchanged, while re-lexing the body B of an enclosing pragma.
         // The pass that read B called this function over the same
@@ -233,8 +233,8 @@ Token read_pragma_body(const std::string& text,
         // only grows during a run, the earlier report counted whenever this
         // one would have, so the error count stays >= 1 and the exit status
         // cannot change.
-        if (c == '{' && report_nested_brace) {
-            Issue::with_lineno(lineno, [&] {
+        if (c == '{' && opts.report_nested_brace) {
+            report_lex_issue(lineno, opts, [&] {
                 ISSUE(INVALID_PRAGMA_SYNTAX, std::string(1, c));
             });
         }
@@ -250,14 +250,14 @@ Token read_pragma_body(const std::string& text,
                 if (has_star && text[cl + 1] == expected_end) {
                     pos = cl + 2;
                 } else {
-                    Issue::with_lineno(lineno, [&] {
+                    report_lex_issue(lineno, opts, [&] {
                         ISSUE(INVALID_PRAGMA_SYNTAX, std::string(1, c));
                     });
                     pos = has_star ? cl + 2 : pos + 1;
                 }
             } else {
                 if (has_star) {
-                    Issue::with_lineno(lineno, [&] {
+                    report_lex_issue(lineno, opts, [&] {
                         ISSUE(INVALID_PRAGMA_SYNTAX, std::string(1, c));
                     });
                     pos = cl + 2;
@@ -286,12 +286,12 @@ Token read_pragma_body(const std::string& text,
 
     if (!closed) {
         if (is_directive) {
-            Issue::with_lineno(lineno, [&] {
+            report_lex_issue(lineno, opts, [&] {
                 std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
                 ISSUE(INVALID_PP_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
             });
         } else {
-            Issue::with_lineno(lineno, [&] {
+            report_lex_issue(lineno, opts, [&] {
                 std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
                 ISSUE(INVALID_PRAGMA_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
             });
