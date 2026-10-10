@@ -483,6 +483,23 @@ struct ExpansionDepthGuard {
     ExpansionDepthGuard& operator=(const ExpansionDepthGuard&) = delete;
 };
 
+// subst() of a "()-less macro" (object macro). Kept out of expand() so its
+// locals do not enlarge expand()'s frame, which is on the stack once per
+// nesting level (unoptimized builds give every local its own slot). S-01: a
+// user object macro's body is substituted by reference instead of being
+// copied on every use. Safe: subst() of an object macro never calls
+// expand(), and a superseded macro is retired, never destroyed (symtab.hpp
+// lifetime invariant, F14).
+std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new_hs, Env& env) {
+    static const std::unordered_map<std::string, std::pair<int, bool>> no_params;
+    static const std::vector<std::vector<Token>> no_actuals;
+    if (auto* um = dynamic_cast<UserDefinedObjectMacro*>(&om))
+        return subst(um->tokens(), um->va_opt_spans(), no_params, no_actuals, nullptr, new_hs,
+                     env);
+    auto repl = om.replacement(env);
+    return subst(repl, {}, no_params, no_actuals, nullptr, new_hs, env);
+}
+
 } // namespace
 
 std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ots, Env& env) {
@@ -928,12 +945,17 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         // this call (already required; see symtab.hpp F14).
                         std::optional<ArgExpansionMemo> arg_memo;
                         if (fm->num_arg_slots() > 0) {
-                            arg_memo.emplace(ArgExpansionMemo{
-                                &fm->arg_slots(), fm->arg_slot_uses(),
-                                std::vector<std::optional<std::vector<Token>>>(
-                                    static_cast<std::size_t>(fm->num_arg_slots()))});
+                            // Filled in place (no aggregate temporary in this
+                            // frame, which is on the stack once per nesting
+                            // level). `stringized` stays empty until the first
+                            // stringize (S-01).
+                            arg_memo.emplace();
+                            arg_memo->slots = &fm->arg_slots();
+                            arg_memo->remaining = fm->arg_slot_uses();
+                            arg_memo->expanded.resize(
+                                static_cast<std::size_t>(fm->num_arg_slots()));
                         }
-                        replaced = subst(fm->body(), fm->args(), params,
+                        replaced = subst(fm->body(), fm->va_opt_spans(), fm->args(), params,
                                          arg_ws.empty() ? nullptr : &arg_ws, new_hs, env,
                                          /*va_sep_ws=*/false,
                                          arg_memo ? &*arg_memo : nullptr);
@@ -976,11 +998,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             }
             // Case: T is a "()-less macro" → expand(subst(ts(T), {}, {}, HS∪{T}, {}) • TS')
             else if (auto* om = dynamic_cast<ObjectMacro*>(macro)) {
-                auto repl = om->replacement(env);
-                Token::HideSet new_hs = t.hs.with(t.text);
-                static const std::unordered_map<std::string, std::pair<int, bool>> no_params;
-                static const std::vector<std::vector<Token>> no_actuals;
-                repl = subst(repl, no_params, no_actuals, nullptr, new_hs, env);
+                auto repl = subst_object_macro(*om, t.hs.with(t.text), env);
                 // See the function-macro case above: never source lines.
                 ts_mark_output_only(repl);
 

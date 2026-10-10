@@ -5,8 +5,10 @@
 #include "../loader/token.hpp"
 #include "../env/env.hpp"
 #include "../env/issue.hpp"
+#include "../macro/macro.hpp"
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -89,6 +91,10 @@ std::vector<Token> select_arg(int idx,
                               bool is_va,
                               const std::vector<ArgWs>* ws = nullptr,
                               VaJoin join = VaJoin::plain);
+// select_arg(idx, actuals, is_va).empty(), in O(1) and without copying any
+// actual token: it runs the same join as select_arg() (one definition of the
+// separator rule) and stops at the first token produced (S-01).
+bool va_args_empty(int idx, const std::vector<std::vector<Token>>& actuals, bool is_va);
 int argc_from(int idx, const std::vector<std::vector<Token>>& actuals);
 
 // ── §subst — argument-expansion memoisation (task_slug arg-expand-once, D1/D2) ──
@@ -109,10 +115,20 @@ int argc_from(int idx, const std::vector<std::vector<Token>>& actuals);
 // (computed from FunctionMacro::arg_slot_uses(), which over-counts, so
 // remaining can reach 0 only at the true last need) moves the vector out
 // instead of copying it.
+//
+// S-01: `stringized` caches, per slot, the encoded STRING text of `@param`
+// (or `@__VA_ARGS__` / `@args`), so a parameter is stringized at most once
+// per invocation however often `@` names it. The text depends only on the
+// slot: `@param` always joins variable arguments with VaJoin::stringize
+// (R6), whatever va_sep_ws is. `@__VA_ARGC__` resolves to the same pidx (and
+// so the same slot) as the variable arguments, so subst() looks the cache up
+// only after it has ruled `__VA_ARGC__` out. The vector stays empty until
+// the first stringize of a parameter with a slot.
 struct ArgExpansionMemo {
     const std::vector<int>* slots;      // FunctionMacro::arg_slots(), by pidx
     std::vector<int> remaining;         // copy of FunctionMacro::arg_slot_uses()
     std::vector<std::optional<std::vector<Token>>> expanded; // per slot, lazy
+    std::vector<std::optional<std::string>> stringized;      // per slot, lazy
 };
 
 // §Support functions: stringize
@@ -134,8 +150,15 @@ Token stringize_tokens(const std::vector<Token>& ts);
 // (see ArgExpansionMemo above); forwarded unchanged through every recursive
 // subst() call for __VA_OPT__(...) content, so the single shared expansion
 // is visible to occurrences inside and outside that content alike.
+// va_opt: the VaOptSpan table of `body` (FunctionMacro / UserDefinedObjectMacro
+// ::va_opt_spans(), or the matching subrange for __VA_OPT__ content). An
+// empty table is computed locally the first time a __VA_OPT__ token is met,
+// so a caller without one (a built-in replacement) stays correct. The
+// content of __VA_OPT__(...) is substituted as a subspan of `body`, never
+// copied or rescanned.
 std::vector<Token> subst(
-    const std::vector<Token>& body,
+    std::span<const Token> body,
+    std::span<const VaOptSpan> va_opt,
     const std::unordered_map<std::string, std::pair<int, bool>>& formal_params,
     const std::vector<std::vector<Token>>& actual_params,
     const std::vector<ArgWs>* actual_ws,

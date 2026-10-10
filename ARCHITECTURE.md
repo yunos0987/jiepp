@@ -77,6 +77,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `apply_undef_option()` — `-U NAME` を `preprocessor_detail::handle_undef()` を通して `{#undef NAME}` と同じ検証で処理する（R4/C4）
 - `expand()`（ファイルパス版オーバーロード） — `Loader::fullpath()`/`Loader::tokens()` で対象ファイルを解決・読み込み、トークン版 `expand()` に委譲（利用元は「データフロー」参照）
 - `expand()`（トークン列版オーバーロード） — Prosser のアルゴリズムに基づく展開の主ループ。トークン列を受けマクロ展開・ディレクティブ処理して出力トークン列を返す
+- `expand_detail::subst()`（`expand_subst.cpp`） — マクロ本体への引数の置換・`@`（文字列化）・`@@`（連結）・`__VA_OPT__` を処理する。本体はコピーせず `std::span` で受け、マクロが定義時に持つ `VaOptSpan` 表（「macro/ の内部構成」）の対応する部分範囲と組で渡す。`__VA_OPT__(…)` の中身は本体の部分範囲として再帰的に置換し、コピーも再走査もしない。可変長引数が空かどうかは `va_args_empty()` が O(1) で判定する（`select_arg()` と同じ結合処理 `join_va_args()` を最初のトークンで打ち切る。区切りの規則は 1 か所だけにある）。`@@` の被演算子かどうかは隣のトークンが `GLUE` かどうかだけで決める（`normalize_glue()` が `GLUE` の隣の空白を必ず除くため。Debug ビルドでは定義時に表明する）。ユーザー定義オブジェクトマクロの本体は参照で渡し、使うたびにコピーしない。2 回以上書かれた仮引数を `@` で文字列化した結果は、呼び出しごとのメモ `ArgExpansionMemo::stringized` に保存し、1 回の呼び出しで 1 回だけ文字列化する（`@__VA_ARGC__` は可変長引数と同じスロットを指すため、キャッシュを引く前に判定する）
 - `preprocess()` — ストリーム/ファイルパス向け簡易 API。CLI は使わず、主に `tests/test_helper.hpp` が利用
 - `preprocess_text()` — 文字列を `preprocess()` に通してマクロ展開後の文字列を返す公開 API。空行圧縮（`compact_blank_lines()`）込みで、ディレクティブのオペランド再展開には使わない
 - `preprocessor_detail::expand_operand_tokens()`/`expand_operand_text()` — ディレクティブのオペランド（`{#if}`/`{#elif}` の条件式、`{#line}`/`{#include}`/`{#sinclude}`/`{#syspath}` のオペランド、メッセージ本文）と通常のプラグマ本体をマクロ展開する。空行圧縮を一切行わない点が `preprocess_text()` との違いで、圧縮は最終出力に対する後処理であり、オペランドのテキスト自体に行マーカーが混入するのを防ぐ（詳細は「データフロー」）。`{#string}`/`{#wstring}` だけは `expand_operand_tokens()` の結果を `expand_operand_text()`（単純連結）ではなく `expand_detail::stringize_text()`（文字列化の空白圧縮規則、`expand_subst.cpp`、§4.1）に通す
@@ -85,6 +86,8 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 ### macro/ の内部構成
 
 `Macro` クラス（`macro.hpp/cpp`）はオブジェクト形式・関数形式マクロの定義を表現する（パラメータ一覧・本体トークン列を保持）。`macro_builtin.cpp` は `__LINE__`/`__FILE__`/`__COUNTER__`/`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__` 等、値が動的に決まる組み込みオブジェクトマクロを実装する。`TimeStampMacro` はファイルシステムにアクセスするため `JIEPP_SANDBOX` ビルドでは空文字列を返すスタブに切り替わる（`BaseFileMacro`/`FileNameMacro` は `__FILE__` と同じ情報しか返さず、ファイルシステムにもアクセスしないため、サンドボックスでも通常ビルドと同じ値を返す）。
+
+`FunctionMacro` と `UserDefinedObjectMacro` は、本体に `__VA_OPT__` がある場合に限り、正規化した本体と同じ長さの `VaOptSpan` 表を定義時に 1 回だけ作る（`compute_va_opt_spans()`、本体の長さに比例する時間）。各要素は自分の位置からの相対オフセットで、次の空白以外のトークン（`next`）、`__VA_OPT__` の `(` に対応する `)`（`close`、形が崩れていれば 0）、その中の入れ子の `__VA_OPT__` の数（`nested`。`)` が閉じていなければ本体の末尾まで数える。`(` がなければ 0）を持つ。相対オフセットなので、外側の `__VA_OPT__` の中身には表の同じ部分範囲をそのまま使える。表は本体から導かれる値なので `equal()`（再定義の同一判定）には含めない。
 
 ### jiepp/ の内部構成
 

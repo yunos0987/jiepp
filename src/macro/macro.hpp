@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -8,6 +9,26 @@
 #include "../loader/token.hpp"
 
 class Env;
+
+// Per-token __VA_OPT__ layout of a normalized macro body (S-01). Present
+// (size == body size) only when the body has a __VA_OPT__ token. Offsets are
+// relative to the entry's own token, so the content subrange of an enclosing
+// __VA_OPT__ can use the matching subrange of the table: inside a closed
+// content every nested '(' also closes inside it, and an offset that leaves
+// the subrange is clamped by subst() to "no further token".
+struct VaOptSpan {
+    std::uint32_t next = 0;   // offset to the next non-MASK_WS token (size - i if none)
+    std::uint32_t close = 0;  // __VA_OPT__ only: offset to the ')' matching the '(' at
+                              // `next`; 0 = malformed (no '(' there, or unclosed)
+    std::uint32_t nested = 0; // __VA_OPT__ only: __VA_OPT__ tokens after that '(' up to
+                              // `close` (to the body end if unclosed; 0 if no '(') --
+                              // one PP37 each, raised by subst() per occurrence
+};
+
+// Computes the VaOptSpan table of `body` in O(body) (one backward pass, one
+// '('/')' stack pass, one prefix count). Returns an empty table when `body`
+// has no __VA_OPT__ token.
+std::vector<VaOptSpan> compute_va_opt_spans(std::span<const Token> body);
 
 // ---------------------------------------------------------------------------
 // Base class
@@ -35,8 +56,11 @@ public:
     bool equal(const Macro& other) const override;
     std::string str() const override;
     const std::vector<Token>& tokens() const { return ts_; }
+    // See VaOptSpan; derived from tokens(), so not part of equal().
+    const std::vector<VaOptSpan>& va_opt_spans() const { return va_opt_spans_; }
 private:
     std::vector<Token> ts_;
+    std::vector<VaOptSpan> va_opt_spans_;
     static std::vector<Token> normalize(std::vector<Token> ts);
 };
 
@@ -174,6 +198,9 @@ public:
     const std::vector<int>& arg_slot_uses() const { return arg_slot_uses_; }
     int num_arg_slots() const { return static_cast<int>(arg_slot_uses_.size()); }
 
+    // See VaOptSpan; derived from body(), so not part of equal().
+    const std::vector<VaOptSpan>& va_opt_spans() const { return va_opt_spans_; }
+
 private:
     std::unordered_map<std::string, std::pair<int, bool>> args_;
     int num_params_min_ = 0;
@@ -183,6 +210,7 @@ private:
     bool named_variadic_ = false;
     std::vector<int> arg_slots_;     // size == number of formals; -1 or slot index
     std::vector<int> arg_slot_uses_; // size == number of slots; spelling count
+    std::vector<VaOptSpan> va_opt_spans_;
 
     // task_slug arg-expand-once (D2). num_formals is the number of distinct
     // formal-parameter slots in args() (regular params plus, for a
