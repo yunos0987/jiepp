@@ -47,6 +47,21 @@ bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env);
 // definition in expand_ctrl.cpp for the __has_include special case.
 bool macro_name_is_defined(std::string_view name, Env& env);
 
+// __has_builtin(NAME) (SPEC 5.2): 1 for the operators `__has_builtin`,
+// `defined` and (normal build) `__has_include`, and for a symbol-table entry
+// that is still a built-in kind (is_builtin_macro()); 0 otherwise.
+bool has_builtin(std::string_view name, Env& env);
+
+// The __has_builtin operator branch of expand(), called with the operator
+// token already popped from `work` while the transient 'defined' operator is
+// active and not suspended. Pushes "1"/"0" to `ots`; an operand error is
+// reported once per condition through `defop` like the 'defined' branch.
+// noinline so the expand() frame does not grow.
+[[gnu::noinline]] void expand_has_builtin(std::vector<Token>& work,
+                                          std::vector<Token>& ots,
+                                          Env& env,
+                                          DefinedOperator& defop);
+
 // Evaluates the operand tokens of a built-in function macro (__assert's
 // expression, __counter_set's value) with the {#if} rules: the tokens are
 // NOT pre-expanded; they are expanded during evaluation with the transient

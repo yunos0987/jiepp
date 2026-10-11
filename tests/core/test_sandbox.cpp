@@ -349,6 +349,22 @@ TEST_F(SandboxDirectiveTest, AssertHasIncludeIsPP62AndPP52) {
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, cs[1]);
 }
 
+// __has_builtin(NAME) needs no filesystem access, so it is allowed; the
+// restricted __has_include operator reads as 0 (like defined(__has_include)).
+TEST_F(SandboxDirectiveTest, HasBuiltinAllowed) {
+    EXPECT_EQ("y", pp("{#if __has_builtin(__assert)}y{#else}n{#endif}"));
+    EXPECT_EQ("n", pp("{#if __has_builtin(__has_include)}y{#else}n{#endif}"));
+    EXPECT_EQ("y", pp("{#if defined(__has_builtin)}y{#else}n{#endif}"));
+    EXPECT_TRUE(empty());
+}
+
+// __has_include is not a macro in a sandbox build (it reads as undefined), so
+// defining it is not a redefinition of a built-in: no PP35.
+TEST_F(SandboxDirectiveTest, DefineHasIncludeStaysSilent) {
+    EXPECT_EQ("1", pp("{#define __has_include 1}__has_include"));
+    EXPECT_TRUE(empty());
+}
+
 // ---- Expansion-step cap (PP64) applies in sandbox builds too ----
 
 class SandboxExpansionStepsTest : public JieppTest {};

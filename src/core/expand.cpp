@@ -574,6 +574,20 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             continue;
         }
 
+        // ── jiepp extension: __has_builtin(NAME) operator ──
+        // Recognised only while the transient 'defined' operator is active
+        // and not suspended (same places as 'defined'), before the hide-set
+        // check and the macro lookup so no {#define}/-D can replace it.
+        // The size/first-character test keeps the common token cheap.
+        if (t.type == Token::ANY && t.text.size() == 13 && t.text[0] == '_' &&
+            t.text == "__has_builtin") {
+            auto* hb_defop = dynamic_cast<DefinedOperator*>(env.lookup("defined"));
+            if (hb_defop && !hb_defop->suspended) {
+                expand_has_builtin(work, ots, env, *hb_defop);
+                continue;
+            }
+        }
+
         // ── Prosser's algorithm (cpp.algo.md §expand) ──
 
         if (t.type == Token::ANY && !t.hs.contains(t.text)) {

@@ -67,6 +67,7 @@ echo '{#define X 42} VAR x : INT := X; END_VAR' | .\build\windows-clang-ninja-de
 | `__LINE__` | 現在の行番号 / Current line number |
 | `__COUNTER__` | インクリメントカウンタ / Auto-incrementing counter |
 | `__has_include(...)` | インクルード存在チェック / Include file existence check |
+| `__has_builtin(NAME)` | `NAME` がビルトインなら 1（条件式内。`-D __assert=` で無効にした `__assert` の検出に使える） / 1 if `NAME` is a built-in (in conditions; detects a disabled `__assert`) |
 | `__error(...)` / `__assert(expr, ...)` | マクロ展開中に `PP91` を出す（`__assert` は条件が偽のとき） / Report PP91 during macro expansion (`__assert`: when the condition is false) |
 | `__counter(name)` / `__counter_peek(name)` / `__counter_set(name, value)` | 名前ごとに独立したカウンタ / Named counters, independent per name |
 | `_JIEPP` | jiepp 識別マクロ / jiepp identification |

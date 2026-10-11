@@ -123,6 +123,8 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 対応する演算子・優先順位は [`SPECIFICATION.md` §6.2](SPECIFICATION.md#62-演算子の優先順位--operator-precedence)、型規則は [§6.3](SPECIFICATION.md#63-型の規則--type-rules) を参照。生成された `constfold_scanner.cpp`/`constfold_parser.cpp` はリポジトリに存在せず、CMakeLists.txt の `FLEX_TARGET`/`BISON_TARGET` がビルド時に生成し `JIEPP_SOURCES` に別の翻訳単位として追加する。
 
+`__has_builtin(NAME)` は `expand()`（`expand.cpp`）の専用の分岐で 1/0 にする。過渡的な `defined` 演算子が有効で `suspended` でない間（`{#if}`/`{#elif}`、`__assert` の条件式、`__counter_set` の値）だけ働き、ハイドセット検査とマクロ検索より前に判定するので、ユーザーの `{#define __has_builtin …}` で置き換えられない。本体は `expand_ctrl.cpp` の `expand_has_builtin()`（`[[gnu::noinline]]`。`expand()` のフレームを大きくしないため）で、被演算子はマクロ展開せずトークンのまま読み、誤りは `defined` と同じく `DefinedOperator::operand_error`/`operand_error_code` に最初の 1 件だけ記録する（`eval_cond()`/`eval_cond_value_tokens()` が条件式全体を失敗として扱う）。値は `has_builtin()`（同ファイル）が決め、「ビルトインか」の判定は `macro.hpp` の `is_builtin_macro()` で、`{#undef}`/`{#define}` の `PP35`（`directive_handlers.cpp`）と共有する。シンボル表に項目がない演算子 `__has_builtin`/`__has_include` の `PP35` は、`directive_handlers.cpp` の `is_builtin_operator_name()` が判定する。
+
 `__has_include` は `expand_ctrl.cpp` の `resolve_has_include()` で 1/0 に解決される。`{#if}` / `{#elif}` の条件式ではマクロ展開前に raw 文字列レベルで解決する。ビルトイン関数マクロの `__assert` の条件式と `__counter_set` の値（`eval_cond_value_tokens()`）でも、マクロ展開前のオペランドのトークン列を連結したテキストに対して同じ `resolve_has_include()` を呼んで解決する（`{#if}` と同じで、引数はマクロ展開しない）。`"path"` 形式は INCLUDE 検索、`<path>` 形式は SINCLUDE 検索を使用。
 
 ## エラー処理 (Issue)

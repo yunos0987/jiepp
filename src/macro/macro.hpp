@@ -146,7 +146,8 @@ public:
     }
     std::string str() const override { return "defined"; }
 
-    // C3: set by expand()'s 'defined' branch the first time an operand is
+    // C3: set by expand()'s 'defined' branch (and by the __has_builtin
+    // branch, which shares this state) the first time an operand is
     // missing/non-identifier or an opened '(' has no matching ')' within one
     // #if/#elif condition, so only the first such error in that condition is
     // reported (like clang) and eval_cond() can short-circuit the rest of
@@ -344,3 +345,17 @@ public:
                               const std::vector<jiepp::expand_detail::ArgWs>& ws,
                               Env& env) const override;
 };
+
+// A built-in macro: a symbol-table entry whose replacement jiepp computes
+// (__COUNTER__, __LINE__, __FILE__, __DATE__, ..., __error, __assert, the
+// named counters) -- anything that is neither a value macro
+// (UserDefinedObjectMacro: user definitions, -D, and the predefined values
+// such as __INT_MAX__ or _JIEPP_VER) nor a FunctionMacro, nor the transient
+// 'defined' operator. Undefining or redefining one warns PP35, like clang
+// -Wbuiltin-macro-redefined; __has_builtin(NAME) reports it as 1. Built-in
+// entries are created only by Env setup, so "built-in kind" means "still the
+// original entry".
+inline bool is_builtin_macro(const Macro* m) {
+    return m && !dynamic_cast<const UserDefinedObjectMacro*>(m) &&
+           !dynamic_cast<const FunctionMacro*>(m) && !dynamic_cast<const DefinedOperator*>(m);
+}

@@ -413,7 +413,7 @@ LOG('code=%d', 42);    (* → write_log('code=%d' , 42); — 本体の `fmt` の
 名前がない・識別子でない `{#undef}` は `PP30` エラーになり、何もしない（`-dD` にも出ない）。
 `NAME` の後に余分なトークンがあると（`{#undef A B}`・`{#undef A(x)}` など）`EXTRA_TOKENS_AT_END_OF_DIRECTIVE` (`PP49`) 警告を出し、`NAME` だけを解除する（gcc/clang と同じ）。後ろのコメントは空白として扱うので警告にならないが、ドキュメントコメント `(*! … *)` はトークンとして数える。
 
-ビルトインマクロを `{#undef}` または `-U` で解除すると、`MACRO_REDEFINED` (`PP35`) 警告を補足情報 `NAME: undefining built-in macro` 付きで出す（clang の `-Wbuiltin-macro-redefined` と同じ）。解除はそのまま行われ、同じ `Env` では元に戻せない。対象は §12.1・§12.2 の動的なマクロ（`__COUNTER__`・`__LINE__`・`__FILE__`・`__DATE__` など）、ビルトイン関数マクロ `__error`・`__assert`（§12.9）と `__counter`・`__counter_peek`・`__counter_set`（§12.10）、および通常ビルドの `{#undef __has_include}`（`__has_include` は解除後も働く。§5.2）。§12.3〜§12.7 の値を持つ定義済みマクロ（`__INT_MAX__`・`_JIEPP` など）は対象外で、警告なしに解除できる（clang の `__INT_MAX__` と同じ）。`PP35` は警告なので、`-Werror` を付けると終了コードが 1 になる。
+ビルトインマクロを `{#undef}` または `-U` で解除すると、`MACRO_REDEFINED` (`PP35`) 警告を補足情報 `NAME: undefining built-in macro` 付きで出す（clang の `-Wbuiltin-macro-redefined` と同じ）。解除はそのまま行われ、同じ `Env` では元に戻せない。対象は §12.1・§12.2 の動的なマクロ（`__COUNTER__`・`__LINE__`・`__FILE__`・`__DATE__` など）、ビルトイン関数マクロ `__error`・`__assert`（§12.9）と `__counter`・`__counter_peek`・`__counter_set`（§12.10）、`{#undef __has_builtin}`、および通常ビルドの `{#undef __has_include}`（`__has_builtin` と `__has_include` は演算子で、解除後も働く。§5.2）。§12.3〜§12.7 の値を持つ定義済みマクロ（`__INT_MAX__`・`_JIEPP` など）は対象外で、警告なしに解除できる（clang の `__INT_MAX__` と同じ）。`PP35` は警告なので、`-Werror` を付けると終了コードが 1 になる。
 
 ### 3.6 マクロ再定義 / Redefinition
 
@@ -421,7 +421,7 @@ LOG('code=%d', 42);    (* → write_log('code=%d' , 42); — 本体の `fmt` の
 
 「同一内容」の判定は C17 6.10.3p2 に従い、トークン間の空白の**有無**のみを比較し、**量**（スペース個数・改行有無）は無視する。`{#define X 1 + 2}` の後に `{#define X 1  +  2}`（スペース2個）は警告なしだが、`{#define Y 1+2}` の後に `{#define Y 1 + 2}`（空白の有無が変わる）は `MACRO_REDEFINED` になる。
 
-ビルトインマクロ（§3.5 と同じ範囲）を `{#define}` または `-D` で再定義すると、補足情報が `NAME: redefining built-in macro` の `MACRO_REDEFINED` 警告になる（clang と同じ）。ユーザーの定義がビルトインと同一になることはないため、常に警告する。再定義した後はユーザーの定義が使われる。§12.3〜§12.7 の定義済みマクロは通常のマクロと同じく、同じ値で再定義すれば警告しない。
+ビルトインマクロ（§3.5 と同じ範囲）を `{#define}` または `-D` で再定義すると、補足情報が `NAME: redefining built-in macro` の `MACRO_REDEFINED` 警告になる（clang と同じ）。ユーザーの定義がビルトインと同一になることはないため、常に警告する。再定義した後はユーザーの定義が使われる。演算子 `__has_builtin`（と通常ビルドの `__has_include`）にはシンボル表の項目がないので、最初の `{#define __has_builtin …}` だけがこの補足情報付きの警告になる。以降はユーザーの定義との比較になり、同一内容の再定義は警告なし、異なる内容は補足情報なしの `MACRO_REDEFINED` になる。定義した後も、条件式の中の `__has_builtin(NAME)` は演算子のまま働く（§5.2）。§12.3〜§12.7 の定義済みマクロは通常のマクロと同じく、同じ値で再定義すれば警告しない。
 
 ### 3.7 再帰防止 / Recursion Prevention
 
@@ -576,9 +576,27 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 
 `defined` の被演算子は識別子でなければならない。被演算子がない、または識別子でない場合（`defined 1`・`defined(%IX0)`・`defined 'a'` など）は `PP40`、`defined(` の後に `)` がない場合は `PP52` エラーになる。このとき条件式全体を偽とみなし、残りの部分は評価しない（診断はその式の最初の 1 件だけ。clang と同じ）。
 
-`__has_include` はマクロではないが、gcc/clang と同じく `{#ifdef}` / `{#ifndef}` / `defined` では定義済みとして扱う。`{#ifdef __has_include}` で `__has_include(…)` を使えるか判定できる。jiepp の `__has_include(…)` は `{#undef}` / `{#define}` で働きが変わらないため、`{#undef __has_include}` の後も定義済みのまま（gcc/clang では `#undef` で使えなくなり、未定義になる）。ただし `{#undef __has_include}` 自体は clang と同じく `PP35` 警告を出す（§3.5）。サンドボックスモード（§14）では未定義として扱う。
+`__has_include` はマクロではないが、gcc/clang と同じく `{#ifdef}` / `{#ifndef}` / `defined` では定義済みとして扱う。`{#ifdef __has_include}` で `__has_include(…)` を使えるか判定できる。jiepp の `__has_include(…)` は `{#undef}` / `{#define}` で働きが変わらないため、`{#undef __has_include}` の後も定義済みのまま（gcc/clang では `#undef` で使えなくなり、未定義になる）。ただし `{#undef __has_include}` 自体は clang と同じく `PP35` 警告を出す（§3.5）。通常ビルドの `{#define __has_include …}` も `PP35` 警告になる（§3.6）。サンドボックスモード（§14）では未定義として扱う。
 
 ビルトイン関数マクロ `__error` / `__assert`（§12.9）と `__counter` / `__counter_peek` / `__counter_set`（§12.10）は `__COUNTER__` と同じくシンボル表の通常の項目なので、`{#ifdef}` / `defined` では定義済みとして扱う。`{#undef}` で解除でき、解除と再定義には `PP35` のビルトイン警告が出る（§3.5・§3.6）。解除した後の `__error(x)` はただのテキストとして出力される。
+
+#### `__has_builtin(NAME)`
+
+```
+{#if __has_builtin(__assert)}
+{#if \not\ __has_builtin(__assert)}{#error assert is disabled}{#endif}
+```
+
+`NAME` がビルトインなら `1`、そうでなければ `0` に評価される。ビルトイン関数マクロの `__assert` を `-D __assert=` などで無効にしたヘッダーが、`__assert` が使えるかを調べるための演算子（clang の `__has_builtin` に倣う）。
+
+- 使える場所は `defined` と同じ（`{#if}` / `{#elif}` 式内、`__assert` の条件式、`__counter_set` の値。§12.8）。それ以外の場所では `__has_builtin` はただの識別子（またはユーザーのマクロ）で、そのまま出力する。条件式の中のメッセージ展開中（`__error(…)` の引数など）も、`defined` と同じくただの語として扱う
+- ここでの「ビルトイン」は §3.5 の範囲、つまり動的なマクロ（`__COUNTER__`・`__LINE__` など）、ビルトイン関数マクロ（`__error`・`__assert`・`__counter`・`__counter_peek`・`__counter_set`）、演算子（`__has_builtin`・`defined`、通常ビルドの `__has_include`）である。§12.3〜§12.7 の値を持つ定義済みマクロ（`__INT_MAX__`・`_JIEPP`・`_JIEPP_VER` など）、ユーザーのマクロ、未定義の名前は `0` になる
+- 調べる `NAME` の状態を反映する。`{#undef __assert}` や `-D __assert=` の後の `__has_builtin(__assert)` は `0`、`{#define __LINE__ 5}` の後の `__has_builtin(__LINE__)` も `0`（この 3 つはどれも `PP35` 警告を出す）。一方、演算子 `__has_builtin` そのものは `{#undef __has_builtin}` / `{#define __has_builtin …}` / `-D` / `-U` の後も働く。条件式の中の `__has_builtin(…)` をユーザーの定義で置き換えることはできない
+- `{#ifdef __has_builtin}` と `defined(__has_builtin)` は、`{#undef __has_builtin}` の後も含めて真（ビルドの種類を問わない）。`__has_builtin(__has_include)` は通常のビルドでは `1`、サンドボックスでは `0`（`defined(__has_include)` と同じ。§14）
+- `NAME` はマクロ展開しない。`{#define N __LINE__}` の後の `__has_builtin(N)` は `0`。`(` の後と `)` の前の空白とコメントは読み飛ばす
+- 評価中のマクロ展開が生んだ `__has_builtin` も `defined` と同じく演算子として認識する（`{#define HB(x) __has_builtin(x)}{#if HB(__assert)}` は `1`）。外側のマクロのパラメータを通した被演算子は置換の時点で事前展開されるため、`HB(__LINE__)` は `__has_builtin(1)` になり `PP39` を出す（`defined` なら `PP40`）
+- 誤り（診断は 1 つの条件式で最初の 1 件だけ。条件式全体を偽とみなし、残りは評価しない。`defined` と同じ）: `(` がない場合（`__has_builtin` だけ）は `PP52`（`missing '(' after '__has_builtin'`）。被演算子がない場合（`__has_builtin()`）は `PP39`（`__has_builtin: name missing`）。識別子でない場合（`__has_builtin(1)`・`__has_builtin(%IX0)`）は `PP39`（`__has_builtin: name must be an identifier: TEXT`）。`)` がない場合（`__has_builtin(A B)`・`__has_builtin(A`）は `PP52`（`missing ')' after '__has_builtin'`）。`__assert` と `__counter_set` の中では、これらも評価の失敗として扱う（§12.9・§12.10）
+- 既知の差異: clang の `__has_builtin` はコンパイラの組み込み関数を調べ、マクロの定義や解除には影響されない。jiepp のものは jiepp のビルトインマクロと演算子を調べ、`NAME` の解除と再定義を反映する（§17）
 
 ### 5.3 未定義の識別子 / Undefined Identifiers
 
@@ -630,7 +648,7 @@ N進数リテラルの `N` は 2〜36。符号 `+`/`-` を基数の直後（通�
 | 8 | `or`, `xor`, `and`, `&` | ビット演算 |
 | 9 | `*`, `/`, `mod` | 乗除算・剰余 |
 | 10 | `+`, `-`, `not` | 単項演算子 |
-| 11 | リテラル, `(...)`, `defined()`, `__has_include()` | 基本要素 |
+| 11 | リテラル, `(...)`, `defined()`, `__has_include()`, `__has_builtin()` | 基本要素 |
 
 エスケープ形式 `\or\`, `\and\`, `\xor\`, `\not\` は常に論理演算。エスケープなしの `or`, `and`, `xor`, `not`（大文字小文字区別なし）は表のとおり優先度 8・10 のビット演算専用で、優先度 1〜4 の論理演算にはならない。比較の間をエスケープなしの `or` でつなぐと、比較より先にビット演算として評価され、意図と異なる型エラーになることがある:
 
@@ -723,7 +741,7 @@ N進数リテラルの `N` は 2〜36。符号 `+`/`-` を基数の直後（通�
 
 指定ファイルがインクルードパスに存在すれば `1`、なければ `0` に評価される。`"file"` 形式は `{#include}` 検索順序、`<file>` 形式は `{#sinclude}` 検索順序を使う。候補がディレクトリの場合もファイルとして存在しないため `0`。
 
-`{#ifdef __has_include}` / `defined(__has_include)` は通常のビルドでは真（§5.2）。
+`{#ifdef __has_include}` / `defined(__has_include)` は通常のビルドでは真（§5.2）。同じ形の演算子 `__has_builtin(NAME)` はビルトインの有無を調べる（§5.2）。`__has_builtin(__has_include)` は通常のビルドで `1`。
 
 ### 7.6 `{#pragma once}` — 重複インクルード防止
 
@@ -1051,6 +1069,7 @@ CLI オプションで設定した値はソースコード内のディレクテ�
 |-------|----|
 | `defined(NAME)` | `{#if}` / `{#elif}` 式内と `__assert` の条件式（§12.9）でのみ使用可能。NAME が定義されていれば 1、そうでなければ 0 |
 | `__has_include('file')` | `{#if}` 式内（`__assert` の条件式を含む）でファイルの存在を確認 (§7.5 参照) |
+| `__has_builtin(NAME)` | `defined` と同じ場所で使用可能。NAME がビルトイン（§3.5 の範囲）なら 1、そうでなければ 0 (§5.2 参照) |
 
 ### 12.9 診断用ビルトイン関数マクロ / Diagnostic Built-in Function Macros
 
@@ -1089,10 +1108,10 @@ __error(unsupported target);   (* → ; PP91 'unsupported target' *)
 
 **条件式（`__assert`）**:
 
-- `{#if}` と同じ規則（§6）で評価する。条件式のトークンは事前展開せず、評価の中で展開する。マクロは評価中に展開し、`defined` と `__has_include` を使え、未定義の識別子は `0`、コメントは空白。評価はトークンのまま行うため、展開済みのマクロの印（§3.7）が保たれ、`{#define N __assert(N, self)}N` は内側の `N` を未定義の識別子（`0`）として扱い、`PP91 'self'` を 1 回出す（`PP60` にならない）
+- `{#if}` と同じ規則（§6）で評価する。条件式のトークンは事前展開せず、評価の中で展開する。マクロは評価中に展開し、`defined`・`__has_include`・`__has_builtin` を使え、未定義の識別子は `0`、コメントは空白。評価はトークンのまま行うため、展開済みのマクロの印（§3.7）が保たれ、`{#define N __assert(N, self)}N` は内側の `N` を未定義の識別子（`0`）として扱い、`PP91 'self'` を 1 回出す（`PP60` にならない）
 - 外側のマクロのパラメータは、`__assert` が動く前に置換済み（事前展開済みの実引数。`__VA_ARGC__` も数値になっている）
 - `defined` を直接書けば働く（`__assert(defined(X), m)`）。評価中に展開されたマクロが生んだ `defined` も、`{#if}` と同じく演算子として認識する（`{#define D defined(X)}__assert(D, m)`。clang も同じ）。外側のマクロのパラメータを通した被演算子は置換の時点で事前展開されるため、`{#define REQ(n) __assert(defined(n), m)}{#define X 1}REQ(X)` は `defined(1)` になり `PP40` になる（C の規則と同じ。`{#define D(n) defined(n)}` と `{#if D(X)}` も同じ）
-- 評価できない式は、その式の診断だけを出し、`PP91` は重ねない（clang の `static_assert` と同じ）。対象は、空または不完全な式（`1 +`、`PP51`）、余分なトークン（`1 x`、`PP52`）、不正な基数・桁・リテラルの桁あふれ（`2#102`・`99999999999999999999`、`PP52`）、型エラー（`TRUE + 1`、`PP50`）、`defined` の被演算子の誤り（`PP40`、`)` がなければ `PP52`）、サンドボックスでの `__has_include`（`PP62`）。この診断を `{#ignore}` で抑制した場合は、壊れた条件で通らないよう `PP91`（メッセージ、または上記の既定の文面）を出す（§10）。最初の診断を抑制し、その後の別の診断が表示された場合は、両方（その診断と `PP91`）が出ることがある
+- 評価できない式は、その式の診断だけを出し、`PP91` は重ねない（clang の `static_assert` と同じ）。対象は、空または不完全な式（`1 +`、`PP51`）、余分なトークン（`1 x`、`PP52`）、不正な基数・桁・リテラルの桁あふれ（`2#102`・`99999999999999999999`、`PP52`）、型エラー（`TRUE + 1`、`PP50`）、`defined` の被演算子の誤り（`PP40`、`)` がなければ `PP52`）、`__has_builtin` の被演算子の誤り（`PP39`、`(` や `)` がなければ `PP52`。§5.2）、サンドボックスでの `__has_include`（`PP62`）。この診断を `{#ignore}` で抑制した場合は、壊れた条件で通らないよう `PP91`（メッセージ、または上記の既定の文面）を出す（§10）。最初の診断を抑制し、その後の別の診断が表示された場合は、両方（その診断と `PP91`）が出ることがある
 - 0 による除算・剰余は `{#if}` と同じく `PP52` を出し、その演算を 0 として評価を続け、結果の値で判定する（§6.3）
 - 条件式は 1 バイトにつき 1 ステップを数える（§11）
 - 条件式の中の `__error` は評価中に展開されて報告し、`__COUNTER__` と `__counter`（§12.10）は評価 1 回につき 1 回進む
@@ -1159,9 +1178,9 @@ CAT_X(edge_, __counter(e))              (* → edge_0（@@ の被演算子は展
 - 値は `{#if}` と同じ規則（§6）で評価する定数式。評価の中でマクロを展開し、`defined` を使え、未定義の識別子は `0`。真偽ではなく値そのものを使う。整数はその値、ブール値は `0` / `1`、ビット列は符号なしのビットパターン（`BYTE#16#FF` は `255`）
 - 実数は `EXPR_TYPE_ERROR` (`PP50`、補足情報 `__counter_set: value must be an integer: TEXT`)。暗黙に整数へ変換しない（§6.3 は整数と実数を相互に変換しない）
 - 0〜2147483647（`__COUNTER__` と同じ範囲）の外は `PP39`（`__counter_set: value out of range 0..2147483647: V`）。負の数、2147483648 以上の整数、パターンが 2147483647 を超えるビット列（`LWORD#16#FFFFFFFFFFFFFFFF`）が該当する
-- 評価できない値（`PP40`、`PP50`、空・不完全な式の `PP51`、構文エラー・不正な基数や桁・リテラルの桁あふれの `PP52`、サンドボックスでの `__has_include` の `PP62`）は、その診断だけを出す
+- 評価できない値（`PP40`、`__has_builtin` の被演算子の誤りの `PP39`、`PP50`、空・不完全な式の `PP51`、構文エラー・不正な基数や桁・リテラルの桁あふれの `PP52`、サンドボックスでの `__has_include` の `PP62`）は、その診断だけを出す
 - 上の 3 項目（実数の `PP50`、範囲外の `PP39`、評価できない値の診断）のどの場合も、カウンタは元の値のまま（`0` にはならない）
-- 評価に失敗した診断や実数の `PP50` を `{#ignore}` で抑制した場合は、黙って通らないよう `PP39`（`__counter_set: value could not be evaluated: TEXT`、実数は `__counter_set: value must be an integer: TEXT`）を出し、カウンタは元の値のまま（§10）
+- 評価に失敗した診断や実数の `PP50` を `{#ignore}` で抑制した場合は、黙って通らないよう `PP39`（`__counter_set: value could not be evaluated: TEXT`、実数は `__counter_set: value must be an integer: TEXT`）を出し、カウンタは元の値のまま（§10）。元の診断が `PP39` 自身（`__has_builtin(1)` や `-1` など）の場合、`{#ignore PP39}` は代わりの `PP39` も抑制するので、何も出さずにカウンタが元の値のままになる
 - 0 による除算・剰余は評価の失敗ではない。`PP52` を出すが、§6.3 のとおりその演算を 0 として評価を続け、結果が範囲内なら設定する。そのためカウンタは元の値にならず、結果の値になる（`__counter_set(a, 10 / 0 + 7)` は `7`、`__counter_set(a, 1 / 0)` は `0`）。`PP52` は報告されるので、jiepp コマンドの終了コードは `1` になる
 - 値の式は 1 バイトにつき 1 ステップを数える（§11）
 
@@ -1332,7 +1351,7 @@ jiepp -- -unusual-name.iec
 | `{#ignore}` | エラー抑制の防止 |
 | `__has_include` | ファイルシステム探査の防止。`__has_include(…)` の形で使うと `PP62`（`__assert` の条件式の中も同じ。§12.9）。`{#ifdef __has_include}` / `defined(__has_include)` は `PP62` にならず、偽になる |
 
-ビルトイン関数マクロ `__error` / `__assert`（§12.9）と名前付きカウンタ（§12.10）はファイルにアクセスしないため使える。名前付きカウンタは異なる名前 1 個につき 1 項目のメモリを使い、その数は入力の大きさでは抑えられず（名前をマクロ展開で作れるため、400 バイト程度の入力でも 100000 個の名前を作れる）、展開ステップの上限（既定 16777216、`--max-expansion-steps`）で抑えられる。
+ビルトイン関数マクロ `__error` / `__assert`（§12.9）、名前付きカウンタ（§12.10）、演算子 `__has_builtin`（§5.2）はファイルにアクセスしないため使える。`__has_builtin(__has_include)` は `0`（`defined(__has_include)` と同じ）。名前付きカウンタは異なる名前 1 個につき 1 項目のメモリを使い、その数は入力の大きさでは抑えられず（名前をマクロ展開で作れるため、400 バイト程度の入力でも 100000 個の名前を作れる）、展開ステップの上限（既定 16777216、`--max-expansion-steps`）で抑えられる。
 
 ### 展開ステップ数の上限 / Expansion Step Cap
 
@@ -1505,7 +1524,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP36 | `DUPLICATE_MACRO_PARAMETER` | ERROR | Duplicate macro parameter name | マクロパラメータ名の重複。最初の重複で 1 回だけ報告し、その `{#define}` は無視する（§3.2） |
 | PP37 | `INVALID_VA_OPT` | ERROR | Invalid __VA_OPT__ | `__VA_OPT__` の不正な使用（非可変長マクロ内での使用・ネスト） |
 | PP38 | `MISSING_WHITESPACE_AFTER_MACRO_NAME` | WARNING | Missing whitespace after the macro name | オブジェクトマクロの名前の直後に空白がない（`{#define A.B 1}` など。定義は行う。§3.1） |
-| PP39 | `INVALID_BUILTIN_OPERAND` | ERROR | Invalid operand for built-in macro | 名前付きカウンタの名前がない・識別子でない、または `__counter_set` の値が 0〜2147483647 の外。値の評価に失敗した診断を `{#ignore}` で抑制した場合にも出す（§12.10） |
+| PP39 | `INVALID_BUILTIN_OPERAND` | ERROR | Invalid operand for built-in macro | 名前付きカウンタの名前がない・識別子でない、`__has_builtin` の被演算子がない・識別子でない（§5.2）、または `__counter_set` の値が 0〜2147483647 の外。値の評価に失敗した診断を `{#ignore}` で抑制した場合にも出す（§12.10） |
 | PP40 | `INVALID_DEFINED_OPERAND` | ERROR | Invalid operand for 'defined' | `defined` / `{#ifdef}` / `{#ifndef}` の不正なオペランド（マクロ名がない、または識別子でない。§5） |
 | PP41 | `INVALID_SETLINE_OPERAND` | ERROR | Invalid operand for 'set_line' | `{#set_line}` の不正なオペランド |
 | PP42 | `INVALID_IGNORE_OPERAND` | ERROR | Invalid operand for 'ignore' | `{#ignore}` の不正なオペランド |
@@ -1576,6 +1595,7 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | — | `__VA_ARGC__` | Jiepp 拡張: 可変長引数の個数 |
 | `defined(NAME)` | `defined(NAME)` | 同等 |
 | `__has_include(...)` | `__has_include(...)` | 同等 |
+| `__has_builtin(NAME)` | `__has_builtin(NAME)` | 条件式で使う点と形は同じ。clang はコンパイラの組み込み関数を調べ、マクロの定義・解除に影響されないが、jiepp は jiepp のビルトインマクロと演算子（§3.5 の範囲）を調べ、`NAME` の解除と再定義を反映する（`{#undef __assert}` の後は `0`）。`defined` を使えない場所（条件式の外）では、ただの識別子（§5.2） |
 | `&&`, `\|\|`, `!` | `\and\`, `\or\`, `\not\` | IEC 61131-3 論理演算子形式 |
 | — | `{#info}` / `{#severe}` | Jiepp 拡張 |
 | — | `{#ignore CODE}` | Jiepp 拡張 |
@@ -1718,5 +1738,6 @@ unary-expr    := ('+' | '-' | 'not') unary-expr | primary
 primary       := INTEGER | FLOAT | BOOL | BITSTRING
                | 'defined' '(' NAME ')' | 'defined' NAME
                | '__has_include' '(' path ')'
+               | '__has_builtin' '(' identifier ')'
                | '(' if-expr ')'
 ```

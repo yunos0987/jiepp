@@ -2803,3 +2803,52 @@ TEST_F(JieppCommandTest, UOptionOnBuiltinWarns) {
     out = run_capturing_stdout(opts, rc);
     EXPECT_EQ(1, rc);
 }
+
+// __has_builtin lets a header detect that -D __assert= disabled __assert:
+// PP35 for the -D, then the guard raises PP91 (exit 1). The input goes to the
+// temp directory; nothing under the repository is touched.
+TEST_F(JieppCommandTest, HasBuiltinDetectsDisabledAssertCli) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("has_builtin_guard",
+        "{#if \\not\\ __has_builtin(__assert)}{#error assert disabled}{#endif}\nBODY;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.define_macros = {"__assert="};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BODY")) << out;
+
+    auto msgs = messages();
+    ASSERT_EQ(2u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find("warning: PP35")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("__assert: redefining built-in macro")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[1].find("error: PP91")) << msgs[1];
+    EXPECT_NE(std::string::npos, msgs[1].find("'assert disabled'")) << msgs[1];
+
+    std::error_code ec;
+    fs::remove(src, ec);
+}
+
+// -U __has_builtin warns PP35 (the operator keeps working) and exits 0.
+TEST_F(JieppCommandTest, UOptionOnHasBuiltinWarns) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("has_builtin_u",
+        "{#if __has_builtin(__LINE__)}OPERATOR_WORKS{#endif}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.undef_macros = {"__has_builtin"};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("OPERATOR_WORKS")) << out;
+    EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__has_builtin: undefining built-in macro'",
+              message());
+
+    std::error_code ec;
+    fs::remove(src, ec);
+}

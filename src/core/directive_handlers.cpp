@@ -129,21 +129,21 @@ std::size_t ellipsis_at(const std::vector<Token>& ts, std::size_t i) {
     return 3;
 }
 
-// A built-in macro: a symbol-table entry whose replacement jiepp computes
-// (__COUNTER__, __LINE__, __FILE__, __DATE__, ..., __error, __assert) --
-// anything that is neither a value macro (UserDefinedObjectMacro: user
-// definitions, -D, and the predefined values such as __INT_MAX__ or
-// _JIEPP_VER) nor a FunctionMacro, nor the transient 'defined' operator.
-// Undefining or redefining one warns PP35, like clang
-// -Wbuiltin-macro-redefined.
-bool is_builtin_macro(const Macro* m) {
-    return m && !dynamic_cast<const UserDefinedObjectMacro*>(m) &&
-           !dynamic_cast<const FunctionMacro*>(m) && !dynamic_cast<const DefinedOperator*>(m);
-}
-
-// PP35 context for redefining `existing` as `name`.
+// PP35 context for redefining `existing` as `name`. is_builtin_macro() is
+// defined in macro.hpp (shared with __has_builtin).
 std::string redefinition_context(const std::string& name, const Macro* existing) {
     return is_builtin_macro(existing) ? name + ": redefining built-in macro" : name;
+}
+
+// Operators that have no symbol-table entry but are built-in for PP35 and
+// __has_builtin: __has_builtin always, __has_include in a normal build (in a
+// sandbox build the operator itself is restricted, PP62, so no warning).
+bool is_builtin_operator_name(const std::string& name) {
+#ifndef JIEPP_SANDBOX
+    if (name == "__has_include")
+        return true;
+#endif
+    return name == "__has_builtin";
 }
 
 } // namespace
@@ -348,6 +348,8 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
                 Macro* existing = env.lookup(name);
                 if (!existing->equal(*nm))
                     ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
+            } else if (is_builtin_operator_name(name)) {
+                ISSUE(MACRO_REDEFINED, name + ": redefining built-in macro");
             }
             env.define(name, std::move(nm));
         } else {
@@ -356,6 +358,8 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
                 Macro* existing = env.lookup(name);
                 if (!existing->equal(*nm))
                     ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
+            } else if (is_builtin_operator_name(name)) {
+                ISSUE(MACRO_REDEFINED, name + ": redefining built-in macro");
             }
             env.define(name, std::move(nm));
         }
@@ -395,13 +399,12 @@ bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_n
               "{#undef " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
     }
     // Undefining a built-in macro warns PP35, like clang ("undefining
-    // builtin macro"). __has_include has no symbol-table entry and keeps
-    // working after {#undef} (SPEC 5.2), but clang warns for it too; in a
-    // sandbox build the operator itself is restricted (PP62), so no warning.
-    bool builtin = is_builtin_macro(env.lookup(ts[0].text));
-#ifndef JIEPP_SANDBOX
-    builtin = builtin || ts[0].text == "__has_include";
-#endif
+    // builtin macro"). __has_include and __has_builtin have no symbol-table
+    // entry and keep working after {#undef} (SPEC 5.2), but clang warns for
+    // them too; in a sandbox build __has_include is restricted (PP62), so no
+    // warning for it there.
+    bool builtin = is_builtin_macro(env.lookup(ts[0].text)) ||
+                   is_builtin_operator_name(ts[0].text);
     if (builtin)
         ISSUE(MACRO_REDEFINED, ts[0].text + ": undefining built-in macro");
     env.undef(ts[0].text);

@@ -366,14 +366,84 @@ bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env) {
 // feature-test it; jiepp's __has_include(...) operator cannot be disabled
 // by {#undef}/{#define}, so it stays defined even after
 // {#undef __has_include}. Not in a JIEPP_SANDBOX build, where the operator
-// itself is restricted (PP62): there it reads as undefined.
+// itself is restricted (PP62): there it reads as undefined. The
+// __has_builtin(NAME) operator counts in both builds (it needs no filesystem
+// access) and likewise survives {#undef __has_builtin}.
 bool macro_name_is_defined(std::string_view name, Env& env) {
 #ifndef JIEPP_SANDBOX
     if (name == "__has_include")
         return true;
 #endif
+    if (name == "__has_builtin")
+        return true;
     Macro* m = env.lookup(name);
     return m && !dynamic_cast<DefinedOperator*>(m);
+}
+
+// The value of __has_builtin(NAME), SPEC 5.2: 1 for the two operators and for
+// a symbol-table entry that is still a built-in kind (is_builtin_macro()); 0
+// for value macros, user macros, undefined/redefined names and unknown names.
+bool has_builtin(std::string_view name, Env& env) {
+    if (name == "__has_builtin" || name == "defined")
+        return true;
+#ifndef JIEPP_SANDBOX
+    if (name == "__has_include")
+        return true;
+#endif
+    return is_builtin_macro(env.lookup(name));
+}
+
+// The __has_builtin operator branch of expand(): `work` has the operator token
+// already popped. Errors follow the 'defined' branch (first error per
+// condition only, state kept in the DefinedOperator, remaining text not
+// evaluated by the caller); the result token is "1"/"0".
+[[gnu::noinline]] void expand_has_builtin(std::vector<Token>& work,
+                                          std::vector<Token>& ots,
+                                          Env& env,
+                                          DefinedOperator& defop) {
+    auto skip_ws = [&work]() {
+        while (!work.empty() && (work.back().type & Token::MASK_WS))
+            work.pop_back();
+    };
+    auto fail = [&](Issue::Code code, const std::string& what) {
+        if (!defop.operand_error) {
+            defop.operand_error = true;
+            defop.operand_error_code = code;
+            if (code == Issue::Code::INVALID_BUILTIN_OPERAND)
+                ISSUE(INVALID_BUILTIN_OPERAND, what);
+            else
+                ISSUE(INVALID_EXPRESSION, what);
+        }
+        ots.push_back(Token::create(Token::ANY, "0"));
+    };
+
+    skip_ws();
+    if (work.empty() || work.back().type != Token::LP) {
+        fail(Issue::Code::INVALID_EXPRESSION, "missing '(' after '__has_builtin'");
+        return;
+    }
+    work.pop_back();
+    skip_ws();
+
+    if (work.empty() || work.back().type == Token::RP) {
+        fail(Issue::Code::INVALID_BUILTIN_OPERAND, "__has_builtin: name missing");
+        return;
+    }
+    if (work.back().type != Token::ANY || !iec3_is_identifier(work.back().text)) {
+        fail(Issue::Code::INVALID_BUILTIN_OPERAND,
+             "__has_builtin: name must be an identifier: " +
+                 Util::escape_line_breaks(work.back().text));
+        return;
+    }
+    std::string operand = std::move(work.back().text);
+    work.pop_back();
+    skip_ws();
+    if (work.empty() || work.back().type != Token::RP) {
+        fail(Issue::Code::INVALID_EXPRESSION, "missing ')' after '__has_builtin'");
+        return;
+    }
+    work.pop_back();
+    ots.push_back(Token::create(Token::ANY, has_builtin(operand, env) ? "1" : "0"));
 }
 
 } // namespace jiepp::expand_detail
