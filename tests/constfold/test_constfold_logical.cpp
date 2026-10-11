@@ -151,3 +151,81 @@ TEST_F(ConstfoldTest, DepthResetAfterAbort) {
     EXPECT_THAT(msgs[0], ::testing::HasSubstr("PP54: 'FOO' is not defined, evaluates to 0"));
 }
 
+// ---- Value-dependent diagnostics in unevaluated operands (SPEC 6.4) ----
+// Division/modulo by zero and a float value out of the integer range are not
+// reported in the right operand of \and\ / \or\ that is not evaluated, and
+// the float range is then no evaluation failure either.
+
+TEST_F(ConstfoldTest, DivisionByZeroInDeadAndOperand) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(0LL, eval_const_expr("FALSE \\and\\ 1/0 = 1"));
+    EXPECT_EQ(0LL, eval_const_expr("0 \\and\\ 1/0 = 1"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, ModuloByZeroInDeadOrOperand) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(1LL, eval_const_expr("TRUE \\or\\ 1 mod 0 = 0"));
+    EXPECT_EQ(1LL, eval_const_expr("1 \\or\\ 1 mod 0 = 0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, FloatRangeInDeadOperand) {
+    Issue::ContinueMode guard({});
+    for (const char* expr : {"FALSE \\and\\ (1 << 1.0e30) = 0",
+                             "FALSE \\and\\ BYTE#1.0e30 = BYTE#0"}) {
+        auto r = eval_const_value(expr);
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure) << expr;
+        EXPECT_TRUE(empty()) << expr;
+    }
+}
+
+TEST_F(ConstfoldTest, FloatRangeInLiveOperandStillReports) {
+    Issue::ContinueMode guard({});
+    auto r = eval_const_value("TRUE \\and\\ BYTE#1.0e30 = BYTE#0");
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, r.failure);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+}
+
+TEST_F(ConstfoldTest, NestedDeadOperand) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(0LL, eval_const_expr("FALSE \\and\\ (TRUE \\or\\ 1/0 = 0)"));
+    EXPECT_EQ(1LL, eval_const_expr("TRUE \\or\\ (1/0 = 0 \\and\\ TRUE)"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, LiveOperandsStillReport) {
+    Issue::ContinueMode guard({});
+    for (const char* expr : {"TRUE \\and\\ 1/0 = 0",
+                             "FALSE \\or\\ 5 mod 0 = 0",
+                             "TRUE \\and\\ (FALSE \\or\\ 1/0 = 0)"}) {
+        eval_const_expr(expr);
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()) << expr;
+    }
+}
+
+TEST_F(ConstfoldTest, StaticErrorsInDeadOperand) {
+    Issue::ContinueMode guard({});
+    for (const char* expr : {"FALSE \\and\\ 99999999999999999999 > 0",
+                             "FALSE \\and\\ 2#102 = 2",
+                             "FALSE \\and\\ 9223372036854775808 > 0"}) {
+        eval_const_expr(expr);
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()) << expr;
+    }
+    eval_const_expr("FALSE \\and\\ (TRUE + 1)");
+    EXPECT_EQ(Issue::Code::EXPR_TYPE_ERROR, code());
+    eval_const_expr("FALSE \\and\\ (1 +");
+    EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, code());
+}
+
+// At depth 0 the order and the set of diagnostics are unchanged.
+TEST_F(ConstfoldTest, DepthZeroOrderUnchanged) {
+    Issue::ContinueMode guard({});
+    eval_const_expr("1/0 = 0 \\or\\ 2#102 = 2");
+    auto msgs = messages();
+    ASSERT_EQ(2u, msgs.size());
+    EXPECT_THAT(msgs[0], ::testing::HasSubstr("PP52: Invalid expression; 'division by zero'"));
+    EXPECT_THAT(msgs[1], ::testing::HasSubstr("PP52"));
+    EXPECT_THAT(msgs[1], ::testing::Not(::testing::HasSubstr("division by zero")));
+}
+

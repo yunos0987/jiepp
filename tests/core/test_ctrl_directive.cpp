@@ -295,3 +295,11 @@ TEST_F(CtrlDirectiveTest, MacroDefinedMinMagAfterUnaryMinusUsableInIf) {
     EXPECT_EQ("1e", strip(pp("{#define N 9223372036854775808}{#if -N < 0}1{#endif}e")));
     EXPECT_TRUE(empty());
 }
+
+// SPEC 6.4: division by zero in an unevaluated operand is not reported.
+TEST_F(CtrlDirectiveTest, IfDeadDivisionSilent) {
+    EXPECT_EQ("n", strip(pp("{#if FALSE \\and\\ 1/0 = 1}y{#else}n{#endif}")));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("y", strip(pp("{#if TRUE \\or\\ 1 mod 0 = 1}y{#else}n{#endif}")));
+    EXPECT_TRUE(empty());
+}

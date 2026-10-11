@@ -40,7 +40,9 @@ struct EvalResult {
     // The code of the first diagnostic that made the evaluation fail
     // (PP50/PP51/PP52), whether that diagnostic was shown or suppressed by
     // {#ignore}; SUCCESS otherwise. Division and modulo by zero (PP52) are
-    // not failures: evaluation continues with 0 for that operation.
+    // not failures: evaluation continues with 0 for that operation. A
+    // diagnostic suppressed in an unevaluated operand (SPEC 6.4) is no
+    // failure either.
     Issue::Code failure = Issue::Code::SUCCESS;
     ConstValue value; // meaningful only when failure == SUCCESS
 };

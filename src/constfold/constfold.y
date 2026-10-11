@@ -164,8 +164,9 @@ static int64_t cast_scalar_to_int(const CfValue& v) {
         constexpr auto max_i64 = static_cast<double>(INT64_MAX);
         constexpr auto min_i64 = static_cast<double>(INT64_MIN);
         if (v.fval > max_i64 || v.fval < min_i64 || std::isnan(v.fval)) {
-            cf_note_failure(Issue::Code::INVALID_EXPRESSION);
-            ISSUE(INVALID_EXPRESSION, "float value out of integer range");
+            // Value dependent: nothing (not even a failure) in an
+            // unevaluated operand (SPEC 6.4).
+            cf_value_diag(Issue::Code::INVALID_EXPRESSION, "float value out of integer range", true);
             return 0;
         }
         return static_cast<int64_t>(v.fval);
@@ -427,7 +428,7 @@ mul_expr:
     }
   | mul_expr CF_SLASH unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
-            if ($3.ival == 0) { ISSUE(INVALID_EXPRESSION, "division by zero"); $$ = CfValue::int_value(0); }
+            if ($3.ival == 0) { cf_value_diag(Issue::Code::INVALID_EXPRESSION, "division by zero", false); $$ = CfValue::int_value(0); }
             // A3: INT64_MIN / -1 overflows the quotient, which traps in
             // hardware (SIGFPE-style crash) even though two's-complement
             // wraparound defines the result as INT64_MIN itself.
@@ -437,7 +438,7 @@ mul_expr:
     }
   | mul_expr CF_MOD   unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
-            if ($3.ival == 0) { ISSUE(INVALID_EXPRESSION, "modulo by zero"); $$ = CfValue::int_value(0); }
+            if ($3.ival == 0) { cf_value_diag(Issue::Code::INVALID_EXPRESSION, "modulo by zero", false); $$ = CfValue::int_value(0); }
             // A3: same overflow trap as division by -1; the remainder is
             // mathematically 0 but the hardware idiv instruction used for
             // '%' still traps before producing it.

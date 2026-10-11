@@ -10,7 +10,10 @@
 // eval_const_value(), constfold.hpp); reset to SUCCESS at the start of each
 // evaluation. Defined in constfold.y. cf_note_failure() is called right
 // BEFORE the ISSUE() of every failure site (the ISSUE may throw, and a
-// suppressed one returns), except division/modulo by zero.
+// suppressed one returns), except division/modulo by zero. The value
+// dependent failure site (float value out of integer range) goes through
+// cf_value_diag() below, so a diagnostic suppressed in an unevaluated operand
+// records no failure.
 extern Issue::Code cf_failure_code;
 inline void cf_note_failure(Issue::Code code) {
     if (cf_failure_code == Issue::Code::SUCCESS)

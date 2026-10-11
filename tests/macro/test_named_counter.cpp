@@ -305,6 +305,17 @@ TEST_F(NamedCounterTest, SetDivisionByZeroStoresValue) {
     EXPECT_EQ(Strings({"PP52: Invalid expression; 'division by zero'"}), diags());
 }
 
+// SPEC 6.4: a dead operand never makes __counter_set fail; the value is
+// stored and nothing is reported.
+TEST_F(NamedCounterTest, SetDeadOperandNotFailure) {
+    Issue::ContinueMode guard({});
+    // A Boolean value is stored as 0 / 1 (SPEC 12.10).
+    EXPECT_EQ("1", pp("__counter_set(a, TRUE \\or\\ 10 / 0 = 1)__counter_peek(a)"));
+    EXPECT_EQ(Strings(), diags());
+    EXPECT_EQ("0", pp("__counter_set(b, FALSE \\and\\ (1 << 1.0e30) = 0)__counter_peek(b)"));
+    EXPECT_EQ(Strings(), diags());
+}
+
 // E27 (L4): a counter in an __assert expression counts once per evaluation.
 TEST_F(NamedCounterTest, CounterInsideAssertExpr) {
     Issue::ContinueMode guard({});

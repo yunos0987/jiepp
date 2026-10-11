@@ -174,6 +174,18 @@ TEST_F(BuiltinDiagTest, AssertDivisionByZeroDecidedByValue) {
     EXPECT_EQ(Strings({"PP52: Invalid expression; 'division by zero'", "PP91: 'm2'"}), diags());
 }
 
+// SPEC 6.4: a dead operand (not evaluated) is never an evaluation failure, so
+// a diagnostic suppressed there neither shows nor makes __assert fail.
+TEST_F(BuiltinDiagTest, AssertDeadOperandNotFailure) {
+    Issue::ContinueMode guard({});
+    // The dead operand would be a float-range failure; the condition is
+    // decided by the live left side (false), so exactly PP91 is reported.
+    EXPECT_EQ(";", pp("__assert(FALSE \\and\\ (1 << 1.0e30) = 0, m);"));
+    EXPECT_EQ(Strings({"PP91: 'm'"}), diags());
+    EXPECT_EQ(";", pp("__assert(TRUE \\or\\ 1/0 = 1, m);"));
+    EXPECT_EQ(Strings(), diags());
+}
+
 // E11
 TEST_F(BuiltinDiagTest, BuiltinsInsideIfExpression) {
     Issue::ContinueMode guard({});
