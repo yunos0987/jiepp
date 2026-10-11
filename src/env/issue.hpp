@@ -127,6 +127,13 @@ public:
     static void enable(Code c) { enabled_.insert(c); }
     static bool is_enabled(Code c) { return !is_default_off(c) || enabled_.count(c) != 0; }
 
+    // ---- Per-code promotion (-Werror=undef) ----
+    // Like -Werror, but only for this code: happen() reports it as an ERROR
+    // (counted; thrown in library mode unless ContinueMode is active). Also
+    // enables the code, so a default-off code needs no separate enable().
+    // initialize() clears the set.
+    static void add_werror(Code c) { werror_codes_.insert(c); enabled_.insert(c); }
+
     // ---- Issue a diagnostic ----
     static void happen(Code code, std::string context = "", std::source_location loc = std::source_location::current());
     [[noreturn]] static void fatal(std::string context = "", std::source_location loc = std::source_location::current());
@@ -136,6 +143,7 @@ public:
     static std::set<Code> ignorings_;
     static std::set<Code> blockings_;
     static std::set<Code> enabled_;  // default-off codes switched on by enable()
+    static std::set<Code> werror_codes_;  // codes promoted to ERROR by add_werror()
     static bool silent_;
     static bool suppress_warnings_;
     static bool werror_;

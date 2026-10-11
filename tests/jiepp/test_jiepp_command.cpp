@@ -2881,3 +2881,81 @@ TEST_F(JieppCommandTest, WundefPrintsWarningExitZero) {
     std::error_code ec;
     fs::remove(src, ec);
 }
+
+// -Werror=undef: PP54 is an error (exit 1, -o not written). -w still shows
+// it, --silent hides it (still exit 1), -Werror alone does not switch PP54 on.
+TEST_F(JieppCommandTest, WerrorUndefCli) {
+    IssueStateReset reset;
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("werror_undef_cli", "{#if FOO}A{#else}B{#endif}\n");
+    fs::path out_path = fs::temp_directory_path() / "werror_undef_cli.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+    opts.werror_undef = true;
+    Issue::initialize(output());
+    EXPECT_EQ(1, jiepp_command(opts));
+    std::string msg = message();
+    EXPECT_NE(std::string::npos,
+              msg.find(":1.0: error: PP54: 'FOO' is not defined, evaluates to 0")) << msg;
+    EXPECT_FALSE(fs::exists(out_path));
+
+    Issue::initialize(output());
+    opts.suppress_warnings = true;
+    EXPECT_EQ(1, jiepp_command(opts));
+    msg = message();
+    EXPECT_NE(std::string::npos, msg.find("error: PP54: 'FOO'")) << msg;
+
+    Issue::initialize(output());
+    opts.suppress_warnings = false;
+    opts.silent = true;
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+    EXPECT_FALSE(fs::exists(out_path));
+
+    // -Wundef and -Werror combined with -Werror=undef: still an error, exit 1.
+    Issue::initialize(output());
+    opts.silent = false;
+    opts.warn_undef = true;
+    EXPECT_EQ(1, jiepp_command(opts));
+    msg = message();
+    EXPECT_NE(std::string::npos, msg.find("error: PP54: 'FOO'")) << msg;
+    EXPECT_FALSE(fs::exists(out_path));
+
+    Issue::initialize(output());
+    opts.warn_undef = false;
+    opts.werror = true;
+    EXPECT_EQ(1, jiepp_command(opts));
+    msg = message();
+    EXPECT_NE(std::string::npos, msg.find("error: PP54: 'FOO'")) << msg;
+    EXPECT_FALSE(fs::exists(out_path));
+
+    // On error the -MD dependency file is not created either.
+    fs::path dep_path = fs::temp_directory_path() / "werror_undef_cli.d";
+    fs::remove(dep_path, ec);
+    Issue::initialize(output());
+    opts.werror = false;
+    opts.MD = true;
+    opts.dep_file = dep_path.generic_string();
+    EXPECT_EQ(1, jiepp_command(opts));
+    msg = message();
+    EXPECT_NE(std::string::npos, msg.find("error: PP54: 'FOO'")) << msg;
+    EXPECT_FALSE(fs::exists(out_path));
+    EXPECT_FALSE(fs::exists(dep_path));
+    opts.MD = false;
+    opts.dep_file.reset();
+
+    // -Werror alone: PP54 stays off, nothing printed, exit 0.
+    Issue::initialize(output());
+    opts.werror_undef = false;
+    opts.werror = true;
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+    EXPECT_TRUE(fs::exists(out_path));
+
+    fs::remove(src, ec);
+    fs::remove(out_path, ec);
+}

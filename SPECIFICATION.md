@@ -609,6 +609,8 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 - 1 つの識別子の出現ごとに 1 件、式の左から順に出す。識別子の直後が構文エラーなら、`PP54`、続いて `PP51` / `PP52` の順になる
 - `\and\` の左が偽（`0`）のときの右の被演算子と、`\or\` の左が真（`0` 以外）のときの右の被演算子では出さない（評価されないため。§6.4）
 - `{#ignore PP54}` で抑制でき（§10）、`-w` と `--silent` で非表示にできる。`-Werror` は `-Wundef` が有効なときだけ `PP54` をエラーにする（`-Werror` だけでは `PP54` は有効にならない。clang と同じ）
+- `-Werror=undef` は `-Wundef` を有効にしたうえで、`PP54` だけをエラーにする（ほかの警告は警告のまま。`-Wundef` と併用しても、`-Werror` と併用しても同じ）。エラーとして数え、jiepp コマンドは処理を続けて終了コード `1` を返し、`-o` と依存関係ファイルは書かない。ライブラリでは `Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER)` を `preprocess()` の前に呼ぶ（有効化も兼ねる）。継続モードでなければ、最初の `PP54` で `Issue::Exception`（`UNDEFINED_IDENTIFIER`）を投げる。`-w` はエラーになった `PP54` を隠さない（jiepp の既存の規則: `-w` は `-Werror` で昇格した警告を隠さない。clang の `-Wundef -Werror=undef -w` は隠すので、その点が違う）。`--silent` は表示だけを隠し、件数には数える。`{#ignore PP54}` は表示も件数加算もしない。`__assert(FOO, m)` は `PP54`（エラー）に続けて `PP91` を出す（`PP54` は評価の失敗ではない）
+- `-Werror` / `--silent` と同じく、有効化と昇格の状態はライブラリで使うときもプロセス全体で共有し、`Issue::initialize()` だけが元に戻す
 - `defined` / `__has_builtin` の被演算子の誤りで条件の評価が打ち切られた場合は、式を評価しないので `PP54` も出ない
 - `PP54` は評価の失敗ではない。`__assert` と `__counter_set` は `0` として評価を続ける（§12.9・§12.10）
 - ライブラリでは、`setup()` / `preprocess()` の前に `Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER)` を呼ぶ。`Issue::initialize()` までは有効なまま
@@ -1255,9 +1257,10 @@ jiepp [filepath] [options]
 | `-I PATH` | インクルード検索パスの追加。`PATH` は宣言元ファイルでなく常に**プロセス起動時の CWD** を基準に解決する（`{#syspath}` とは異なる。§7.4、§7.9） | — |
 | `-include FILE` | 入力ファイルの前に強制インクルード | — |
 | `-P` | 行マーカー出力を抑制（`(*{#:...}*)` / `{#:...}` を出さない）。連続空行もすべて除去 | off |
-| `-w` | 警告メッセージの抑制（エラーは出力） | off |
+| `-w` | 警告メッセージの抑制（エラーは出力）。`-Werror` / `-Werror=undef` でエラーに昇格した警告は隠れない | off |
 | `-Werror` | 警告をエラーに昇格 | off |
 | `-Wundef` | 条件式で `0` に評価した未定義の識別子ごとに `UNDEFINED_IDENTIFIER` (`PP54`) の警告を出す（§5.3）。`\and\` / `\or\` の評価されない被演算子の中では出さない（§6.4）。`-D` / `-U` より前に有効になる | off |
+| `-Werror=undef` | `-Wundef` と同じに有効にし、`PP54` をエラーとして報告する（ほかの警告は昇格しない。§5.3）。終了コードは `1`、`-o` は書かない。`-w` では隠れない。`-Werror=` に続けられるのは `undef` だけ（ほかの `-Werror=NAME`・`-Wno-undef`・`-Wno-error=undef` は `PP70`）。`-D` / `-U` より前に有効になる | off |
 | `-M` | Makefile 依存関係ルールを出力（全インクルード）。**プリプロセス結果は出力しない**。`-MF` がなければ出力先は `-o`（未指定時は stdout）。詳細は後述 | off |
 | `-MM` | `-M` と同様だがシステムインクルードを除外。**プリプロセス結果は出力しない** | off |
 | `-MD` | プリプロセス出力と同時に依存関係ファイル（`.d`）を自動生成（`-M`/`-MM` と異なりプリプロセス結果も出力） | off |
@@ -1341,6 +1344,9 @@ jiepp -Werror input.iec
 
 # 条件式で 0 に評価した未定義の識別子を警告（PP54）
 jiepp -Wundef input.iec
+
+# 未定義の識別子（PP54）だけをエラーにする（終了コード 1）
+jiepp -Werror=undef input.iec
 
 # Makefile 依存関係ルールを生成
 jiepp -M -MF deps.d input.iec
@@ -1503,12 +1509,12 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | WARNING | 警告。処理を続行する。`-Werror` 指定時はエラーに昇格し、以後は ERROR と同じ扱いになる |
 | INFO | 情報メッセージ。処理に影響しない |
 
-`PP54`（`UNDEFINED_IDENTIFIER`）は既定で無効な警告で、`-Wundef`（ライブラリでは `Issue::enable()`）を指定するまで、表示も件数加算も中断もしない。指定すると通常の WARNING として扱う（`-w`・`--silent` で非表示、`{#ignore PP54}` で抑制、`-Werror` で昇格）。`-Werror` だけでは有効にならない。
+`PP54`（`UNDEFINED_IDENTIFIER`）は既定で無効な警告で、`-Wundef`（ライブラリでは `Issue::enable()`）を指定するまで、表示も件数加算も中断もしない。指定すると通常の WARNING として扱う（`-w`・`--silent` で非表示、`{#ignore PP54}` で抑制、`-Werror` で昇格）。`-Werror` だけでは有効にならない。`-Werror=undef`（ライブラリでは `Issue::add_werror()`）は有効化と同時に、このコードだけをエラーに昇格する（`-Werror` と同じく、昇格したものは `-w` で隠れない）。
 
 **jiepp コマンドラインでの継続モード**: jiepp コマンド（`jiepp_command()`。CLI 本体）は、ライブラリの既定動作と別に、gcc と同じ「エラーが出ても最後まで処理を続ける」モードで動く。
 
 - 中断するのは SEVERE（`PP63`・`PP64` など）と `PP10`（`FILE_ERROR`）・`PP11`（`FILE_NOT_FOUND`）・`PP12`（`MAX_INCLUDE_DEPTH_EXCEEDED`）・`PP13`（`INVALID_COMMAND`）・`PP14`（`INCLUDE_TARGET_IS_DIRECTORY`）・`PP60`（`MAX_EXPANSION_DEPTH_EXCEEDED`）・`PP61`（`MAX_IF_NESTING_EXCEEDED`）だけ。gcc がまだ中断しない場合でも jiepp は中断する（例: インクルード深度超過を許すと処理量が指数的に増えかねないため）
-- 上記以外の ERROR（`{#error}` を含む）はメッセージを出してエラー件数を 1 増やし処理を続ける。`-Werror` で昇格した WARNING も、元のコードが中断コードでなければ同様に件数へ加算するだけ
+- 上記以外の ERROR（`{#error}` を含む）はメッセージを出してエラー件数を 1 増やし処理を続ける。`-Werror` や `-Werror=undef` で昇格した WARNING も、元のコードが中断コードでなければ同様に件数へ加算するだけ
 - `--silent`/`-w` は表示だけを抑制し件数には影響しない。`{#ignore}` で抑制した診断は表示も件数加算も行わない
 - 終了コードは、処理を中断した場合、またはエラー件数が 1 件以上ある場合に `1`
 - 最後まで処理してもエラーが 1 件以上あれば、`-o` と依存関係ファイルは書き込まず既存ファイルにも触れない。標準出力宛のとき（`-o` 省略または `-o -`）だけ、そこまで組み立てた内容を出す。宛先ごとの詳細は次の表（`-dM`/`-M`/`-MM` の扱いに注意）
@@ -1630,7 +1636,7 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | `__has_include(...)` | `__has_include(...)` | 同等 |
 | `__has_builtin(NAME)` | `__has_builtin(NAME)` | 条件式で使う点と形は同じ。clang はコンパイラの組み込み関数を調べ、マクロの定義・解除に影響されないが、jiepp は jiepp のビルトインマクロと演算子（§3.5 の範囲）を調べ、`NAME` の解除と再定義を反映する（`{#undef __assert}` の後は `0`）。`defined` を使えない場所（条件式の外）では、ただの識別子（§5.2） |
 | `&&`, `\|\|`, `!` | `\and\`, `\or\`, `\not\` | IEC 61131-3 論理演算子形式。`&&` / `\|\|` と同じく右の被演算子が評価されない場合があり、その中では値に依存する診断（`PP54`、ゼロ除算・剰余、実数の整数範囲外）を出さない（§6.4）。`\xor\` は両辺を評価する |
-| `-Wundef` | `-Wundef` | 同等（`#if` で未定義の識別子が `0` になるとき警告する）。警告の文面と既定の無効は clang と同じ。clang の `-Wundef` が `true` に出す特別な文面は持たず、jiepp の `True`・型キーワードだけの式は通常の `PP54` になる（§5.3）。`-Wno-undef`・`-Werror=undef` はない（`PP70`） |
+| `-Wundef` | `-Wundef` | 同等（`#if` で未定義の識別子が `0` になるとき警告する）。警告の文面と既定の無効は clang と同じ。clang の `-Wundef` が `true` に出す特別な文面は持たず、jiepp の `True`・型キーワードだけの式は通常の `PP54` になる（§5.3）。`-Werror=undef` は同等（有効化と `PP54` のエラー化）だが、`-w` は昇格した警告を隠さない（clang は隠す。jiepp の `-Werror` と同じ規則）。`-Wno-undef`・`-Wno-error=undef` と、`undef` 以外の `-Werror=NAME` はない（`PP70`） |
 | — | `{#info}` / `{#severe}` | Jiepp 拡張 |
 | — | `{#ignore CODE}` | Jiepp 拡張 |
 | — | `{#nop}` | Jiepp 拡張 |

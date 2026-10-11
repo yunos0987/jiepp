@@ -479,6 +479,31 @@ TEST_F(IssueTest, InitializeResetsEnabled) {
     EXPECT_TRUE(empty());
 }
 
+// add_werror() enables the code and promotes only that code; initialize()
+// clears both sets.
+TEST_F(IssueTest, AddWerrorPromotesOnlyThatCode) {
+    IssueStateReset reset;
+    Issue::initialize(output());
+    Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER);
+    EXPECT_TRUE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+
+    Issue::push({1, "test.iec"});
+    EXPECT_THROW(Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO"), Issue::Exception);
+    EXPECT_EQ("test.iec:1.0: error: PP54: 'FOO' is not defined, evaluates to 0", message());
+
+    // Another warning is not promoted.
+    EXPECT_NO_THROW(Issue::happen(Issue::Code::MACRO_REDEFINED, "X"));
+    EXPECT_THAT(message(), ::testing::HasSubstr("warning: PP35"));
+
+    Issue::initialize(output());
+    EXPECT_FALSE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    EXPECT_NO_THROW(Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO"));
+    EXPECT_TRUE(empty());
+    Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+    EXPECT_NO_THROW(Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO"));
+    EXPECT_THAT(message(), ::testing::HasSubstr("warning: PP54"));
+}
+
 // ensure_location_stack() (setup()) must not reset the enabled set.
 TEST_F(IssueTest, EnsureLocationStackKeepsEnabled) {
     IssueStateReset reset;

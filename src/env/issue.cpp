@@ -36,6 +36,7 @@ std::vector<Issue::LocationEntry> Issue::loc_stack_;
 std::set<Issue::Code> Issue::ignorings_;
 std::set<Issue::Code> Issue::blockings_ = make_default_blockings();
 std::set<Issue::Code> Issue::enabled_;
+std::set<Issue::Code> Issue::werror_codes_;
 bool Issue::silent_ = false;
 bool Issue::suppress_warnings_ = false;
 bool Issue::werror_ = false;
@@ -80,6 +81,7 @@ void Issue::initialize(std::ostream& stream) {
     ignorings_.clear();
     blockings_ = make_default_blockings();
     enabled_.clear();
+    werror_codes_.clear();
     loc_stack_.clear();
     loc_stack_.push_back({1, "<unknown location>"}); // dummy entry to avoid empty stack checks in filepath()/lineno()
     silent_ = false;
@@ -181,9 +183,10 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
 
     Severity severity = severity_of(code);
 
-    // -Werror: promote WARNING to ERROR
+    // -Werror (all warnings) or add_werror() (this code): promote WARNING
+    // to ERROR
     bool promoted = false;
-    if (werror_ && is_warning(code))
+    if (is_warning(code) && (werror_ || werror_codes_.count(code) != 0))
         promoted = true;
     if (promoted)
         severity = Severity::ERROR;

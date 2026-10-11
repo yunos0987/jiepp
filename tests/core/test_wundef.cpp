@@ -218,6 +218,75 @@ TEST_F(WundefTest, SuppressionAndPromotion) {
     EXPECT_EQ(1, Issue::error_count_);
 }
 
+// -Werror=undef (SPEC 5.3, 16): Issue::add_werror(PP54) switches the code on
+// and reports it as an error; the state is reset by the fixture TearDown.
+TEST_F(WundefTest, WerrorUndefContinueMode) {
+    Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER);
+    Issue::ContinueMode guard({});
+    Env env = setup();
+
+    pp("{#if FOO}{#endif}", env);
+    EXPECT_EQ("<unknown location>:1.0: error: PP54: 'FOO' is not defined, evaluates to 0",
+              message());
+    EXPECT_EQ(1, Issue::error_count_);
+
+    // A dead operand reports nothing.
+    pp("{#if FALSE \\and\\ FOO}{#endif}", env);
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(1, Issue::error_count_);
+
+    // Other warnings stay warnings.
+    pp("{#warning w1}", env);
+    EXPECT_THAT(message(), HasSubstr("warning: PP"));
+    EXPECT_EQ(1, Issue::error_count_);
+
+#ifndef JIEPP_SANDBOX
+    // {#ignore PP54}: not shown, not counted.
+    pp("{#ignore PP54}{#if FOO}{#endif}", env);
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(1, Issue::error_count_);
+#endif
+}
+
+// Without ContinueMode the promoted warning throws at the first one.
+TEST_F(WundefTest, WerrorUndefLibraryThrows) {
+    Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER);
+    try {
+        pp("{#if FOO}{#endif}");
+        FAIL() << "expected Issue::Exception";
+    } catch (const Issue::Exception& e) {
+        EXPECT_EQ(Issue::Code::UNDEFINED_IDENTIFIER, e.code);
+    }
+}
+
+// PP54 is not an evaluation failure: __assert still reports PP91 after it.
+TEST_F(WundefTest, WerrorUndefAssert) {
+    Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER);
+    Issue::ContinueMode guard({});
+    pp("__assert(FOO, m)");
+    auto msgs = messages();
+    ASSERT_EQ(2u, msgs.size());
+    EXPECT_THAT(msgs[0], HasSubstr("error: PP54: 'FOO'"));
+    EXPECT_THAT(msgs[1], HasSubstr("error: PP91"));
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+// -w does not hide a promoted warning (existing jiepp rule); --silent hides
+// it but it is still counted.
+TEST_F(WundefTest, WerrorUndefWithSuppressAndSilent) {
+    Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER);
+    Issue::ContinueMode guard({});
+    Issue::suppress_warnings_ = true;
+    pp("{#if FOO}{#endif}");
+    EXPECT_THAT(message(), HasSubstr("error: PP54: 'FOO'"));
+    EXPECT_EQ(1, Issue::error_count_);
+
+    Issue::silent_ = true;
+    pp("{#if FOO}{#endif}");
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
 TEST_F(WundefTest, SilentHides) {
     enable();
     Issue::silent_ = true;

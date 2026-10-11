@@ -538,3 +538,21 @@ TEST_F(OptionTest, ParsesWundef) {
     EXPECT_TRUE(opts.warn_undef);
     EXPECT_FALSE(opts.werror);
 }
+
+TEST_F(OptionTest, ParsesWerrorUndef) {
+    char* plain[] = {const_cast<char*>("jiepp")};
+    EXPECT_FALSE(parse_args(1, plain).werror_undef);
+
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Werror=undef")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.werror_undef);
+    EXPECT_FALSE(opts.werror);
+    EXPECT_FALSE(opts.warn_undef);
+
+    // No other -Werror= / -Wno- form is accepted.
+    for (const char* bad : {"-Werror=foo", "-Wno-undef", "-Wno-error=undef"}) {
+        char* argv2[] = {const_cast<char*>("jiepp"), const_cast<char*>(bad)};
+        EXPECT_THROW(parse_args(2, argv2), Issue::Exception) << bad;
+        EXPECT_EQ(Issue::Code::UNKNOWN_OPTION, code()) << bad;
+    }
+}

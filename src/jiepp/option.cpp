@@ -77,6 +77,7 @@ void display_help_and_exit(int exit_code = 0) {
         "  -w                       Suppress warnings\n"
         "  -Werror                  Promote warnings to errors\n"
         "  -Wundef                  Warn when an undefined identifier in a condition evaluates to 0\n"
+        "  -Werror=undef            Like -Wundef, but report it as an error\n"
         "  -M                       Output Makefile dependency rules\n"
         "  -MM                      Like -M but exclude system includes\n"
         "  -MD                      Write dependency rules to .d file (keep normal output)\n"
@@ -229,6 +230,11 @@ JieppOptions parse_args(int argc, char* argv[]) {
 
         if (arg == "-Wundef") {
             opts.warn_undef = true;
+            ++i; continue;
+        }
+
+        if (arg == "-Werror=undef") {
+            opts.werror_undef = true;
             ++i; continue;
         }
 

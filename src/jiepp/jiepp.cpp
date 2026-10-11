@@ -251,6 +251,9 @@ int jiepp_command(const JieppOptions& opts)
         // the options above.
         if (opts.warn_undef)
             Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+        // -Werror=undef: -Wundef, with PP54 reported as an error.
+        if (opts.werror_undef)
+            Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER);
 
         std::vector<std::pair<std::string,std::string>> predefine_macros;
         for (const auto& dm : opts.define_macros)
