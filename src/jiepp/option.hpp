@@ -28,6 +28,7 @@ struct JieppOptions {
     bool silent = false;
     bool suppress_warnings = false;  // -w: suppress warning output
     bool werror = false;             // -Werror: promote warnings to errors
+    bool warn_undef = false;         // -Wundef: warn (PP54) on an undefined identifier in a condition
     DepMode dep_mode = DepMode::NONE;           // -M / -MM
     std::optional<std::string> dep_file;        // -MF: dependency output file
     std::optional<std::string> dep_target;      // -MT: dependency target name

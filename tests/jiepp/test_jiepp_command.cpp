@@ -2852,3 +2852,32 @@ TEST_F(JieppCommandTest, UOptionOnHasBuiltinWarns) {
     std::error_code ec;
     fs::remove(src, ec);
 }
+
+// -Wundef switches PP54 on: a warning on stderr in clang's wording, exit 0.
+// Without the option nothing is printed. The input goes to the temp
+// directory; the Issue state is reset when the test ends.
+TEST_F(JieppCommandTest, WundefPrintsWarningExitZero) {
+    IssueStateReset reset;
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("wundef_cli", "{#if FOO}A{#else}B{#endif}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("B")) << out;
+    EXPECT_TRUE(empty());
+
+    opts.warn_undef = true;
+    out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("B")) << out;
+    std::string msg = message();
+    EXPECT_NE(std::string::npos,
+              msg.find(":1.0: warning: PP54: 'FOO' is not defined, evaluates to 0")) << msg;
+
+    std::error_code ec;
+    fs::remove(src, ec);
+}

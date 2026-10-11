@@ -188,6 +188,16 @@ private:
     std::ostringstream o_;
 };
 
+// Resets the process-wide Issue state (default-off codes enabled by
+// Issue::enable(), -Werror, ...) when a test scope ends, even on an early
+// return from a failed ASSERT. Output goes back to std::cerr.
+struct IssueStateReset {
+    IssueStateReset() = default;
+    IssueStateReset(const IssueStateReset&) = delete;
+    IssueStateReset& operator=(const IssueStateReset&) = delete;
+    ~IssueStateReset() { Issue::initialize(std::cerr); }
+};
+
 // SetUp/TearDown helper for test fixtures
 struct JieppTest : public ::testing::Test, public DiagBox {
 

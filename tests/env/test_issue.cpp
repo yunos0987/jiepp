@@ -444,3 +444,45 @@ TEST_F(IssueTest, EmptyStackFatalThrowsInsteadOfRecursing) {
     EXPECT_THROW(Issue::fatal(), Issue::Exception);
     EXPECT_THAT(message(), ::testing::HasSubstr("PP01"));
 }
+
+// A default-off code (PP54, -Wundef) prints nothing, counts nothing and
+// throws nothing until enable() is called.
+TEST_F(IssueTest, DefaultOffCodeNeedsEnable) {
+    IssueStateReset reset;
+    Issue::initialize(output());
+    EXPECT_TRUE(Issue::is_default_off(Issue::Code::UNDEFINED_IDENTIFIER));
+    EXPECT_FALSE(Issue::is_default_off(Issue::Code::MACRO_REDEFINED));
+    EXPECT_FALSE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    EXPECT_TRUE(Issue::is_enabled(Issue::Code::MACRO_REDEFINED));
+
+    Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO");
+    EXPECT_TRUE(empty());
+
+    Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+    EXPECT_TRUE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO");
+    EXPECT_THAT(message(), ::testing::HasSubstr(
+        "warning: PP54: 'FOO' is not defined, evaluates to 0"));
+
+    // Without a context the generic text is used.
+    Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER);
+    EXPECT_THAT(message(), ::testing::HasSubstr("warning: PP54: Identifier is not defined, evaluates to 0"));
+}
+
+TEST_F(IssueTest, InitializeResetsEnabled) {
+    IssueStateReset reset;
+    Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+    ASSERT_TRUE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    Issue::initialize(output());
+    EXPECT_FALSE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO");
+    EXPECT_TRUE(empty());
+}
+
+// ensure_location_stack() (setup()) must not reset the enabled set.
+TEST_F(IssueTest, EnsureLocationStackKeepsEnabled) {
+    IssueStateReset reset;
+    Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+    Issue::ensure_location_stack();
+    EXPECT_TRUE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+}

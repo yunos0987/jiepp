@@ -40,6 +40,9 @@ cf::ConstValue to_const_value(const CfValue& v) {
 cf::EvalResult evaluate(const std::string& expr) {
     cf::EvalResult r;
     cf_failure_code = Issue::Code::SUCCESS;
+    // A parse aborted by an exception (PP50, a throwing diagnostic) never
+    // runs the action that lowers the depth; start every evaluation at 0.
+    cf_unevaluated_depth = 0;
     bool all_ws = true;
     for (char ch : expr) {
         if (!std::isspace(static_cast<unsigned char>(ch))) { all_ws = false; break; }

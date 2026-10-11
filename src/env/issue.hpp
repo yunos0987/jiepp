@@ -119,6 +119,14 @@ public:
     static void remove_blocking(Code code);
     static bool is_blocked(Code code);
 
+    // ---- Off-by-default codes ----
+    // A default-off code (today only UNDEFINED_IDENTIFIER, PP54, -Wundef)
+    // is dropped by happen() -- no output, no count, no throw -- until
+    // enable() is called. initialize() clears the enabled set.
+    static bool is_default_off(Code c) { return c == Code::UNDEFINED_IDENTIFIER; }
+    static void enable(Code c) { enabled_.insert(c); }
+    static bool is_enabled(Code c) { return !is_default_off(c) || enabled_.count(c) != 0; }
+
     // ---- Issue a diagnostic ----
     static void happen(Code code, std::string context = "", std::source_location loc = std::source_location::current());
     [[noreturn]] static void fatal(std::string context = "", std::source_location loc = std::source_location::current());
@@ -127,6 +135,7 @@ public:
     static std::vector<Issue::LocationEntry> loc_stack_;
     static std::set<Code> ignorings_;
     static std::set<Code> blockings_;
+    static std::set<Code> enabled_;  // default-off codes switched on by enable()
     static bool silent_;
     static bool suppress_warnings_;
     static bool werror_;

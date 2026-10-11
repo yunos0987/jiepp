@@ -111,15 +111,15 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - 上限値: `max_include_depth`, `max_expansion_depth`, `max_expansion_steps`(`--max-expansion-steps`、展開の仕事量の上限・`PP64`・ディレクティブなし), `max_if_nesting`, `max_blank_lines`, `recursion_limit`
 - 依存関係: `dep_mode`(`-M`/`-MM`), `dep_file`(`-MF`), `dep_target`(`-MT`), `MD`/`MMD`(`-MD`/`-MMD`)
 - 出力形式: `pp_output_pragma_style`, `no_line_markers`(`-P`), `dM`(`-dM`), `dD`(`-dD`), `remove_comments`(`-nC`)
-- 診断: `silent`, `suppress_warnings`(`-w`), `werror`(`-Werror`)
+- 診断: `silent`, `suppress_warnings`(`-w`), `werror`(`-Werror`), `warn_undef`(`-Wundef`。`jiepp_command()` が `-D`/`-U` を処理する前に `Issue::enable(UNDEFINED_IDENTIFIER)` を呼ぶ)
 
 ### constfold/ の内部構成
 
 - `constfold.hpp` — 公開 API: `eval_const_expr()`（`#if` 式文字列を評価して真偽を 0/1 で返す）と `eval_const_value()`（型付きの値 `cf::ConstValue` と、失敗した最初の診断のコードを返す。`__assert` と `__counter_set` が使う）
 - `constfold.cpp` — 両 API が共有する評価の実装。生成された parser/scanner の定義をヘッダ経由で利用。`eval_const_expr()` は `{#if}` 向けの従来の結果（構文エラー・型エラー・空の式は 0、それ以外は値の真偽）を変えない
-- `constfold_internal.hpp` — 型定義（`ValueKind`, `BitKind`, `CfValue`, `bit_mask`）と失敗コードの記録 `cf_failure_code`/`cf_note_failure()`。失敗は、スキャナやグラマーのアクションの中で出る診断（不正な基数・桁、リテラルの桁あふれ、浮動小数点値の整数範囲外）でも、その `ISSUE()` の直前に記録する（構文解析そのものは成功するため、戻り値だけでは分からない）。0 による除算・剰余は失敗にしない
-- `constfold.l` — Flex ソース → ビルド時に `constfold_scanner.cpp` を生成
-- `constfold.y` — Bison ソース → ビルド時に `constfold_parser.cpp` を生成
+- `constfold_internal.hpp` — 型定義（`ValueKind`, `BitKind`, `CfValue`, `bit_mask`）と失敗コードの記録 `cf_failure_code`/`cf_note_failure()`。失敗は、スキャナやグラマーのアクションの中で出る診断（不正な基数・桁、リテラルの桁あふれ、浮動小数点値の整数範囲外）でも、その `ISSUE()` の直前に記録する（構文解析そのものは成功するため、戻り値だけでは分からない）。0 による除算・剰余は失敗にしない。評価されない被演算子の深さ `cf_unevaluated_depth`（`constfold.y` で定義、`evaluate()` が評価ごとに 0 へ戻す）と、値に依存する診断を出す関数 `cf_value_diag(code, ctx, failure, loc)`（深さが 0 より大きければ何もせず、失敗の記録もしない。`std::source_location` を `Issue::happen()` へ渡すので Debug の `@file:line` は呼び出し側のアクションを指す）。今は `PP54` だけがこれを使う
+- `constfold.l` — Flex ソース → ビルド時に `constfold_scanner.cpp` を生成。型キーワード（`BOOL` など）は `yytext` の綴りのまま `cflval.text` に持つ（`-Wundef` が書いたとおりの綴りを示すため）。`constfold.y` のキャストは大文字にした複製と比較する
+- `constfold.y` — Bison ソース → ビルド時に `constfold_parser.cpp` を生成。`\and\` / `\or\` の規則は、演算子と右の被演算子の間に型付きの途中アクション（`<bool>{ … }`）を置く。左の被演算子は右の最初のトークンより前に完全に簡約されるので、そのアクションが左の値から「右は評価されない」を決めて `cf_unevaluated_depth` を上げ、最後の簡約で下げる。投げないので、実数の左（真偽値にできない）は評価される側として扱い、最後の簡約が従来どおり `PP50` を出す。`%expect 0` は変わらない。`CF_IDENT` と、`#` を伴わない `CF_TYPE_KW` が `0` になる箇所で `PP54` を出す
 
 対応する演算子・優先順位は [`SPECIFICATION.md` §6.2](SPECIFICATION.md#62-演算子の優先順位--operator-precedence)、型規則は [§6.3](SPECIFICATION.md#63-型の規則--type-rules) を参照。生成された `constfold_scanner.cpp`/`constfold_parser.cpp` はリポジトリに存在せず、CMakeLists.txt の `FLEX_TARGET`/`BISON_TARGET` がビルド時に生成し `JIEPP_SOURCES` に別の翻訳単位として追加する。
 
@@ -134,6 +134,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - 診断は `Issue::happen(code, context)` で発生させる。`ISSUE(CODE, ...)` は `Issue::happen(Issue::Code::CODE, ...)` の短縮形で、呼び出し位置の `std::source_location` を自動で渡す（Debug ビルドは末尾に `@file:line` を付ける。`issue_message.cpp` の `#ifndef NDEBUG` 分岐）。`[[noreturn]]` な `Issue::fatal()`／`FATAL()` は `happen(Code::FATAL, ...)` の後 `throw std::logic_error("unreachable")` する
 - サンドボックスビルド（`JIEPP_SANDBOX`）では、`happen()` が `IssueMessage::message()` に渡す直前に、context とファイルパスから制御文字を取り除き（`Util::strip_control_chars()`、`util/text.hpp`）、続けてファイルパスと、メッセージ系コード（`PP90`〜`PP93`）以外の context の LF・CR を空白に置き換える（`Util::line_breaks_to_spaces()`。規則は [SPECIFICATION.md §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode)）。Windows ではパスが ANSI コードページで届くため、位置のファイルパスと `PP10`/`PP11`/`PP12`/`PP14` の context は C1 の組を残すモード（`C1Pairs::Keep`）で取り除く。メッセージ系（`report_message()`）もオペランドの診断も同じ 1 か所を通る。通常ビルドでは取り除かない
 - 例外送出の有無は `continue_mode_` フラグで 2 通り。既定（`false`、`preprocess()`/`expand()` 等が依存）は `SEVERE` と `blockings_`（既定で全 `ERROR`/`SEVERE`）内の `ERROR`、`-Werror` 格上げの `WARNING` で常に `Issue::Exception` を送出する。継続モード（`true`。`Issue::ContinueMode` RAII ガード、`jiepp_command()` のみ使用）は中断コード（`SEVERE` + `continue_abort_codes_`。`jiepp_command()` は PP10〜14, 60, 61 を渡す）だけが例外を送出し、他は `error_count_` を加算して続行する。件数・`--silent`/`{#ignore}`・終了コードと出し分けは [SPECIFICATION.md §16](SPECIFICATION.md#16-エラーコード一覧--issue-code-reference) を参照
+- 既定で無効のコード: `Issue::is_default_off(code)`（今は `UNDEFINED_IDENTIFIER`＝`PP54` だけ）に当たるコードは、`Issue::enable(code)` が `enabled_` に入れるまで、`happen()` が `{#ignore}` の判定の直後に何もせず戻る（表示も `error_count_` への加算も例外もない）。`initialize()` は `enabled_` を空にし、`ensure_location_stack()`（`setup()` から呼ぶ）は触らない。`Issue::is_enabled(code)` が問い合わせ。`PP54` の文面は `issue_message.cpp` の `PlainTextMessage::message()` の特別扱いで、補足情報を先頭に置く（`'FOO' is not defined, evaluates to 0`）。`-Werror` による昇格は有効なコードにだけ効く
 - `Issue::CliMode` という別の RAII ガードは、ソースファイルがまだスタックに積まれていない CLI 段階（`main()`／`parse_args()`／`jiepp_command()` 冒頭）の診断を `Issue::CLI_LOCATION`（`"jiepp"`）で「`jiepp: error: PPxx: message`」形式（`line.column` なし）に出す。文字列入力 API の `"<unknown location>:N.0"` 形式とは別物で両者は独立して共存する
 - ファイル処理に入る際の `Issue::loc_stack_`／`FileContext` の include スタックへの push/pop は、`Issue::LineGuard` と `FileContext::FileScope` の 2 つの RAII ガードで対になっている（`core/expand.cpp` の `expand()` ファイルインクルード版・`jiepp/jiepp.cpp` の標準入力分岐）。処理中に例外（ライブラリモードで `Issue::Exception` が送出される場合）が飛んでも両スタックは必ず呼び出し前の深さに戻る
 

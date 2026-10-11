@@ -528,3 +528,13 @@ TEST_F(OptionTest, ParseArgsUnknownOptionMessageFormat) {
     ASSERT_EQ(1u, msgs.size());
     EXPECT_EQ("jiepp: error: PP70: Unknown command-line option; '--foo'", msgs[0]);
 }
+
+TEST_F(OptionTest, ParsesWundef) {
+    char* plain[] = {const_cast<char*>("jiepp")};
+    EXPECT_FALSE(parse_args(1, plain).warn_undef);
+
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Wundef")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.warn_undef);
+    EXPECT_FALSE(opts.werror);
+}

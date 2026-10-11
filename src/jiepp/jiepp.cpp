@@ -247,6 +247,10 @@ int jiepp_command(const JieppOptions& opts)
             Issue::suppress_warnings_ = true;
         if (opts.werror)
             Issue::werror_ = true;
+        // -Wundef (PP54) is off by default; enabled here, before -D/-U, like
+        // the options above.
+        if (opts.warn_undef)
+            Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
 
         std::vector<std::pair<std::string,std::string>> predefine_macros;
         for (const auto& dm : opts.define_macros)

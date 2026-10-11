@@ -600,7 +600,18 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 
 ### 5.3 未定義の識別子 / Undefined Identifiers
 
-`{#if}` 式内で未定義の識別子は `0` に評価される（C プリプロセッサと同じセマンティクス）。
+`{#if}` 式内で未定義の識別子は `0` に評価される（C プリプロセッサと同じセマンティクス）。`{#if}` / `{#elif}` のほか、`__assert` の条件式（§12.9）と `__counter_set` の値（§12.10）でも同じである。
+
+`-Wundef` を付けると、`0` に評価した識別子ごとに `UNDEFINED_IDENTIFIER` (`PP54`) の警告を出す（clang の `-Wundef` と同じ）。既定では出さない。出力は clang と同じ文面で、`file:1.0: warning: PP54: 'FOO' is not defined, evaluates to 0` の形になる。
+
+- 対象は、評価で `0` になるすべての識別子: マクロ展開の後に残った名前（`{#define A B}` の後の `{#if A}` は `B`）、`(` を伴わない関数マクロ名、展開中の自己参照で展開を止めた名前、`True`・`False` のような大文字小文字の混ざった綴り、型キーワードだけの `BOOL`・`BYTE`・`WORD`・`DWORD`・`LWORD`（大文字小文字は問わず、書いたとおりの綴りで示す）。C の `#if` ではキーワードも普通の識別子なので、clang・gcc の `-Wundef` も `'int' is not defined` と警告する。jiepp の型キーワードだけの式も識別子と同じく `0` になる
+- 対象外: `defined` / `__has_include` / `__has_builtin` の被演算子（評価の前に処理される）、`TRUE`・`true`・`FALSE`・`false`、演算子（`not`・`and`・`or`・`xor`・`mod`）、型付きリテラル（`BYTE#16#FF`）
+- 1 つの識別子の出現ごとに 1 件、式の左から順に出す。識別子の直後が構文エラーなら、`PP54`、続いて `PP51` / `PP52` の順になる
+- `\and\` の左が偽（`0`）のときの右の被演算子と、`\or\` の左が真（`0` 以外）のときの右の被演算子では出さない（評価されないため。§6.4）
+- `{#ignore PP54}` で抑制でき（§10）、`-w` と `--silent` で非表示にできる。`-Werror` は `-Wundef` が有効なときだけ `PP54` をエラーにする（`-Werror` だけでは `PP54` は有効にならない。clang と同じ）
+- `defined` / `__has_builtin` の被演算子の誤りで条件の評価が打ち切られた場合は、式を評価しないので `PP54` も出ない
+- `PP54` は評価の失敗ではない。`__assert` と `__counter_set` は `0` として評価を続ける（§12.9・§12.10）
+- ライブラリでは、`setup()` / `preprocess()` の前に `Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER)` を呼ぶ。`Issue::initialize()` までは有効なまま
 
 ---
 
@@ -680,6 +691,17 @@ N進数リテラルの `N` は 2〜36。符号 `+`/`-` を基数の直後（通�
 浮動小数点が使えるのは単項 `+`/`-`、浮動小数点どうしの比較、式全体の最終値としての真偽判定（0 以外なら真）だけ。加減乗除・剰余・シフト・ビット演算・整数との混在（`1.0 + 1` 等）はいずれも `PP50`。整数から浮動小数点への自動昇格は行わない。
 
 整数の加減乗算（`+`, `-`, `*`, 単項 `-`）は 64 ビットの 2 の補数で折り返す（診断は出ない）。除算・剰余は `INT64_MIN / -1` を `INT64_MIN`、`INT64_MIN mod -1` を `0` として扱う（数学的にはハードウェアの `idiv` 命令が桁あふれする組み合わせだが jiepp は異常終了しない）。除数が `0` の場合は `INVALID_EXPRESSION` (`PP52`, "division by zero" / "modulo by zero") を発行し、その除算・剰余だけを `0` とみなして評価を続ける（`PP50` の型エラーと異なり式全体は偽にならない。例: `1 / 0 + 5` は `0 + 5` として真になる）。シフト量が `0` 未満または `64` 以上のとき（診断は出ない）: `<<` は Int・Bitstring とも常に `0`。Int の `>>` は 63 ビットシフトしたのと同じ結果になる（左オペランドが負なら `-1`、それ以外は `0`）。これは clang と同じ（gcc は負のシフト量のとき符号を反転してシフトする点が異なる）。Bitstring の `>>` は幅によらず常に `0`（bitstring は C に対応する型がないため、jiepp 独自の規則。clang は最上位ビットが立った符号なし値なら `1` になる）。
+
+### 6.4 評価されない被演算子 / Unevaluated Operands
+
+`\and\` の左の被演算子が偽（`0`）のとき、`\or\` の左の被演算子が真（`0` 以外）のとき、右の被演算子は評価されない（C の `&&`・`||` の短絡評価と同じ。clang はその部分の評価に伴う診断を出さない）。評価されない被演算子の中では、評価の値に依存する診断のうち、下記の `PP54` だけを出さない（ゼロ除算・剰余と実数の整数範囲外はまだ出す）。左の被演算子は常に評価される。
+
+- 評価されない被演算子の中で出さないのは、今のところ `PP54`（`-Wundef`、§5.3）だけである。除数が `0` の除算・剰余（`PP52`、§6.3）と実数の整数範囲外（`PP52`）も値に依存するが、今のところ評価されない被演算子の中でも出る。`FALSE \and\ FOO` と `TRUE \or\ FOO` は `FOO` を警告しないが、`TRUE \and\ FOO`・`FALSE \or\ FOO`・`FOO \and\ BAR`（`FOO` だけ）・`FOO \or\ BAR`（両方）は警告する
+- 入れ子でも同じ規則で、評価されない被演算子の中のさらに右の被演算子も評価されない（`FALSE \and\ (X \or\ Y)` は何も警告しない）。`(FALSE \and\ X) \or\ Y` は左の括弧の中が評価されない被演算子なので `X` は警告せず、`\or\` の左が偽なので `Y` は評価されて警告する
+- 実数の左の被演算子（`1.5 \and\ FOO`）は真偽値にできないので、評価される側とみなす。右の被演算子は評価され、最後に `PP50` になる
+- 短絡評価は `\and\` と `\or\` だけである。`\xor\`・`\not\`・エスケープなしの `and`・`or`・`xor`・`&`・比較は両辺を評価する
+- 評価されない被演算子の中でも、マクロは評価の前に展開されているので、展開で起きること（`__COUNTER__` の増加、`__assert` の `PP91`、名前付きカウンタの更新）は起きる。`{#if FALSE \and\ __COUNTER__ = 5}` でも `__COUNTER__` は進む（`FALSE \and\ __assert(0, m)` は `PP91` を出し、`__assert` が空に展開されるので式は不完全になって `PP51` も出る）。評価の値に依存しない診断（構文エラー `PP51`・`PP52`、型エラー `PP50`）も、評価されない被演算子の中で変わらず出る
+- 評価の状態は 1 回の式の評価ごとに初期化する。式の途中で `PP50` などにより評価が打ち切られても、次の式には影響しない
 
 ---
 
@@ -913,6 +935,8 @@ L 3;
 
 SEVERE のコード（例: `PP63`・`PP64`）は `{#ignore}` を書いても抑制されない（§16「重大度」）。
 
+`{#ignore PP54}` は `-Wundef` の警告（§5.3）を抑制する。`PP54` は既定で無効なので、`-Wundef` を付けていなければ書く必要はない。
+
 `{#ignore}` の効果はファイル単位ではなく全体に及ぶ。インクルードされたヘッダで `{#ignore PP91}` を書くと、そのディレクティブより後に処理する、インクルードした側の `__assert`・`__error`・`{#error}`（§8・§12.9）の `PP91` も抑制される。指定は処理の先頭から順に有効になり（さきに処理した診断には効かない）、解除する構文はない。jiepp コマンドでは 1 回の実行が終わるまで残る。ライブラリ利用では `preprocess()` を呼ぶたびにはリセットされず、`Issue::initialize()` を呼ぶと空に戻る。
 
 `PP40`・`PP50`・`PP51`・`PP52` を抑制しても、`__assert`（§12.9）の壊れた条件式は通らない。評価に失敗した診断が抑制されていた場合、`__assert` は代わりに `PP91` を出す。`__counter_set`（§12.10）の値も同じで、評価に失敗した診断（または実数の値の `PP50`）が抑制されていた場合は `PP39` を出し、カウンタは変えない。
@@ -1108,7 +1132,7 @@ __error(unsupported target);   (* → ; PP91 'unsupported target' *)
 
 **条件式（`__assert`）**:
 
-- `{#if}` と同じ規則（§6）で評価する。条件式のトークンは事前展開せず、評価の中で展開する。マクロは評価中に展開し、`defined`・`__has_include`・`__has_builtin` を使え、未定義の識別子は `0`、コメントは空白。評価はトークンのまま行うため、展開済みのマクロの印（§3.7）が保たれ、`{#define N __assert(N, self)}N` は内側の `N` を未定義の識別子（`0`）として扱い、`PP91 'self'` を 1 回出す（`PP60` にならない）
+- `{#if}` と同じ規則（§6）で評価する。条件式のトークンは事前展開せず、評価の中で展開する。マクロは評価中に展開し、`defined`・`__has_include`・`__has_builtin` を使え、未定義の識別子は `0`（`-Wundef` なら `PP54` の警告。評価の失敗ではなく、`__assert` は `0` として続ける。§5.3）、コメントは空白。評価はトークンのまま行うため、展開済みのマクロの印（§3.7）が保たれ、`{#define N __assert(N, self)}N` は内側の `N` を未定義の識別子（`0`）として扱い、`PP91 'self'` を 1 回出す（`PP60` にならない）
 - 外側のマクロのパラメータは、`__assert` が動く前に置換済み（事前展開済みの実引数。`__VA_ARGC__` も数値になっている）
 - `defined` を直接書けば働く（`__assert(defined(X), m)`）。評価中に展開されたマクロが生んだ `defined` も、`{#if}` と同じく演算子として認識する（`{#define D defined(X)}__assert(D, m)`。clang も同じ）。外側のマクロのパラメータを通した被演算子は置換の時点で事前展開されるため、`{#define REQ(n) __assert(defined(n), m)}{#define X 1}REQ(X)` は `defined(1)` になり `PP40` になる（C の規則と同じ。`{#define D(n) defined(n)}` と `{#if D(X)}` も同じ）
 - 評価できない式は、その式の診断だけを出し、`PP91` は重ねない（clang の `static_assert` と同じ）。対象は、空または不完全な式（`1 +`、`PP51`）、余分なトークン（`1 x`、`PP52`）、不正な基数・桁・リテラルの桁あふれ（`2#102`・`99999999999999999999`、`PP52`）、型エラー（`TRUE + 1`、`PP50`）、`defined` の被演算子の誤り（`PP40`、`)` がなければ `PP52`）、`__has_builtin` の被演算子の誤り（`PP39`、`(` や `)` がなければ `PP52`。§5.2）、サンドボックスでの `__has_include`（`PP62`）。この診断を `{#ignore}` で抑制した場合は、壊れた条件で通らないよう `PP91`（メッセージ、または上記の既定の文面）を出す（§10）。最初の診断を抑制し、その後の別の診断が表示された場合は、両方（その診断と `PP91`）が出ることがある
@@ -1175,7 +1199,7 @@ CAT_X(edge_, __counter(e))              (* → edge_0（@@ の被演算子は展
 **値（`__counter_set`）**:
 
 - 名前の検査、値の評価、設定の順に行う。`__counter_set(a, __counter(a) + 10)` の後の値は `10`
-- 値は `{#if}` と同じ規則（§6）で評価する定数式。評価の中でマクロを展開し、`defined` を使え、未定義の識別子は `0`。真偽ではなく値そのものを使う。整数はその値、ブール値は `0` / `1`、ビット列は符号なしのビットパターン（`BYTE#16#FF` は `255`）
+- 値は `{#if}` と同じ規則（§6）で評価する定数式。評価の中でマクロを展開し、`defined` を使え、未定義の識別子は `0`（`-Wundef` なら `PP54` の警告。評価の失敗ではなく値は `0` のまま設定する。§5.3）。真偽ではなく値そのものを使う。整数はその値、ブール値は `0` / `1`、ビット列は符号なしのビットパターン（`BYTE#16#FF` は `255`）
 - 実数は `EXPR_TYPE_ERROR` (`PP50`、補足情報 `__counter_set: value must be an integer: TEXT`)。暗黙に整数へ変換しない（§6.3 は整数と実数を相互に変換しない）
 - 0〜2147483647（`__COUNTER__` と同じ範囲）の外は `PP39`（`__counter_set: value out of range 0..2147483647: V`）。負の数、2147483648 以上の整数、パターンが 2147483647 を超えるビット列（`LWORD#16#FFFFFFFFFFFFFFFF`）が該当する
 - 評価できない値（`PP40`、`__has_builtin` の被演算子の誤りの `PP39`、`PP50`、空・不完全な式の `PP51`、構文エラー・不正な基数や桁・リテラルの桁あふれの `PP52`、サンドボックスでの `__has_include` の `PP62`）は、その診断だけを出す
@@ -1231,6 +1255,7 @@ jiepp [filepath] [options]
 | `-P` | 行マーカー出力を抑制（`(*{#:...}*)` / `{#:...}` を出さない）。連続空行もすべて除去 | off |
 | `-w` | 警告メッセージの抑制（エラーは出力） | off |
 | `-Werror` | 警告をエラーに昇格 | off |
+| `-Wundef` | 条件式で `0` に評価した未定義の識別子ごとに `UNDEFINED_IDENTIFIER` (`PP54`) の警告を出す（§5.3）。`\and\` / `\or\` の評価されない被演算子の中では出さない（§6.4）。`-D` / `-U` より前に有効になる | off |
 | `-M` | Makefile 依存関係ルールを出力（全インクルード）。**プリプロセス結果は出力しない**。`-MF` がなければ出力先は `-o`（未指定時は stdout）。詳細は後述 | off |
 | `-MM` | `-M` と同様だがシステムインクルードを除外。**プリプロセス結果は出力しない** | off |
 | `-MD` | プリプロセス出力と同時に依存関係ファイル（`.d`）を自動生成（`-M`/`-MM` と異なりプリプロセス結果も出力） | off |
@@ -1311,6 +1336,9 @@ jiepp -w input.iec
 
 # 警告をエラーに昇格
 jiepp -Werror input.iec
+
+# 条件式で 0 に評価した未定義の識別子を警告（PP54）
+jiepp -Wundef input.iec
 
 # Makefile 依存関係ルールを生成
 jiepp -M -MF deps.d input.iec
@@ -1473,6 +1501,8 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | WARNING | 警告。処理を続行する。`-Werror` 指定時はエラーに昇格し、以後は ERROR と同じ扱いになる |
 | INFO | 情報メッセージ。処理に影響しない |
 
+`PP54`（`UNDEFINED_IDENTIFIER`）は既定で無効な警告で、`-Wundef`（ライブラリでは `Issue::enable()`）を指定するまで、表示も件数加算も中断もしない。指定すると通常の WARNING として扱う（`-w`・`--silent` で非表示、`{#ignore PP54}` で抑制、`-Werror` で昇格）。`-Werror` だけでは有効にならない。
+
 **jiepp コマンドラインでの継続モード**: jiepp コマンド（`jiepp_command()`。CLI 本体）は、ライブラリの既定動作と別に、gcc と同じ「エラーが出ても最後まで処理を続ける」モードで動く。
 
 - 中断するのは SEVERE（`PP63`・`PP64` など）と `PP10`（`FILE_ERROR`）・`PP11`（`FILE_NOT_FOUND`）・`PP12`（`MAX_INCLUDE_DEPTH_EXCEEDED`）・`PP13`（`INVALID_COMMAND`）・`PP14`（`INCLUDE_TARGET_IS_DIRECTORY`）・`PP60`（`MAX_EXPANSION_DEPTH_EXCEEDED`）・`PP61`（`MAX_IF_NESTING_EXCEEDED`）だけ。gcc がまだ中断しない場合でも jiepp は中断する（例: インクルード深度超過を許すと処理量が指数的に増えかねないため）
@@ -1539,6 +1569,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP51 | `MISSING_EXPRESSION` | ERROR | Missing expression | `{#if}` に式がない |
 | PP52 | `INVALID_EXPRESSION` | ERROR | Invalid expression | 不正な式 |
 | PP53 | `COUNTER_OVERFLOW` | ERROR | Counter value exceeds 2147483647 | `__COUNTER__` または名前付きカウンタ（§12.10）の値が上限を超過（2147483647 で止まる）。補足情報はカウンタ（`__COUNTER__`・`__counter(NAME)`・`__counter_peek(NAME)`） |
+| PP54 | `UNDEFINED_IDENTIFIER` | WARNING | Identifier is not defined, evaluates to 0 | 条件式（`{#if}`・`{#elif}`・`__assert` の条件式・`__counter_set` の値）で、識別子が未定義のため `0` に評価された（§5.3）。**既定で無効**（`-Wundef`）。出力は clang と同じ文面で、補足情報の識別子を先頭に置く（`'FOO' is not defined, evaluates to 0`）。`\and\` / `\or\` の評価されない被演算子の中では出さない（§6.4） |
 | PP60 | `MAX_EXPANSION_DEPTH_EXCEEDED` | ERROR | Maximum expansion depth exceeded | マクロ展開深度上限超過 |
 | PP61 | `MAX_IF_NESTING_EXCEEDED` | ERROR | Maximum conditional nesting depth exceeded | 条件分岐ネスト深度上限超過 |
 | PP62 | `SANDBOX_RESTRICTED_DIRECTIVE` | ERROR | Directive is restricted in sandbox mode | サンドボックスモードで禁止されたディレクティブ |
@@ -1596,7 +1627,8 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | `defined(NAME)` | `defined(NAME)` | 同等 |
 | `__has_include(...)` | `__has_include(...)` | 同等 |
 | `__has_builtin(NAME)` | `__has_builtin(NAME)` | 条件式で使う点と形は同じ。clang はコンパイラの組み込み関数を調べ、マクロの定義・解除に影響されないが、jiepp は jiepp のビルトインマクロと演算子（§3.5 の範囲）を調べ、`NAME` の解除と再定義を反映する（`{#undef __assert}` の後は `0`）。`defined` を使えない場所（条件式の外）では、ただの識別子（§5.2） |
-| `&&`, `\|\|`, `!` | `\and\`, `\or\`, `\not\` | IEC 61131-3 論理演算子形式 |
+| `&&`, `\|\|`, `!` | `\and\`, `\or\`, `\not\` | IEC 61131-3 論理演算子形式。`&&` / `\|\|` と同じく右の被演算子が評価されない場合があり、その中では `PP54` を出さない（ほかの値に依存する診断は今のところ出す。§6.4）。`\xor\` は両辺を評価する |
+| `-Wundef` | `-Wundef` | 同等（`#if` で未定義の識別子が `0` になるとき警告する）。警告の文面と既定の無効は clang と同じ。clang の `-Wundef` が `true` に出す特別な文面は持たず、jiepp の `True`・型キーワードだけの式は通常の `PP54` になる（§5.3）。`-Wno-undef`・`-Werror=undef` はない（`PP70`） |
 | — | `{#info}` / `{#severe}` | Jiepp 拡張 |
 | — | `{#ignore CODE}` | Jiepp 拡張 |
 | — | `{#nop}` | Jiepp 拡張 |

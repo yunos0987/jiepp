@@ -35,6 +35,7 @@ std::ostream* Issue::stream_ = &std::cerr;
 std::vector<Issue::LocationEntry> Issue::loc_stack_;
 std::set<Issue::Code> Issue::ignorings_;
 std::set<Issue::Code> Issue::blockings_ = make_default_blockings();
+std::set<Issue::Code> Issue::enabled_;
 bool Issue::silent_ = false;
 bool Issue::suppress_warnings_ = false;
 bool Issue::werror_ = false;
@@ -78,6 +79,7 @@ void Issue::initialize(std::ostream& stream) {
     stream_ = &stream;
     ignorings_.clear();
     blockings_ = make_default_blockings();
+    enabled_.clear();
     loc_stack_.clear();
     loc_stack_.push_back({1, "<unknown location>"}); // dummy entry to avoid empty stack checks in filepath()/lineno()
     silent_ = false;
@@ -171,6 +173,10 @@ bool Issue::is_blocked(Code code) {
 void Issue::happen(Code code, std::string context, std::source_location loc) {
     // ignore list has no effect, but SEVERE always proceeds.
     if (is_ignored(code) && !is_severe(code))
+        return;
+
+    // Default-off code that was not enabled: nothing at all happens.
+    if (!is_enabled(code))
         return;
 
     Severity severity = severity_of(code);

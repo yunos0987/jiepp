@@ -158,11 +158,11 @@ ALPHA   [A-Za-z_]
 [oO][rR]                                      { return cf::CfParser::token::CF_OR; }
 [xX][oO][rR]                                  { return cf::CfParser::token::CF_XOR; }
 [mM][oO][dD]                                  { return cf::CfParser::token::CF_MOD; }
-[bB][oO][oO][lL]                              { cflval.text = "BOOL";  return cf::CfParser::token::CF_TYPE_KW; }
-[bB][yY][tT][eE]                              { cflval.text = "BYTE";  return cf::CfParser::token::CF_TYPE_KW; }
-[dD][wW][oO][rR][dD]                          { cflval.text = "DWORD"; return cf::CfParser::token::CF_TYPE_KW; }
-[wW][oO][rR][dD]                              { cflval.text = "WORD";  return cf::CfParser::token::CF_TYPE_KW; }
-[lL][wW][oO][rR][dD]                          { cflval.text = "LWORD"; return cf::CfParser::token::CF_TYPE_KW; }
+[bB][oO][oO][lL]                              { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
+[bB][yY][tT][eE]                              { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
+[dD][wW][oO][rR][dD]                          { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
+[wW][oO][rR][dD]                              { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
+[lL][wW][oO][rR][dD]                          { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
 
 [A-Za-z_][A-Za-z0-9_]*  {
     cflval = CfValue::int_value(0);

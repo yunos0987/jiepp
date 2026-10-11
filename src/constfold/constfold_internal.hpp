@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 
 #include "../env/issue.hpp"
 
@@ -14,6 +15,29 @@ extern Issue::Code cf_failure_code;
 inline void cf_note_failure(Issue::Code code) {
     if (cf_failure_code == Issue::Code::SUCCESS)
         cf_failure_code = code;
+}
+
+// Depth of dead (unevaluated) operands the parser is currently inside: the
+// right operand of \and\ whose left side is false/0, or of \or\ whose left
+// side is true/non-zero (SPEC 6.4). Raised and lowered by actions in
+// constfold.y's and_expr/or_expr, reset by evaluate() (constfold.cpp) because
+// a parse aborted by an exception never runs the lowering action. Defined in
+// constfold.y.
+extern int cf_unevaluated_depth;
+
+// Report a value-dependent diagnostic of the grammar: nothing is reported
+// (and no failure is recorded) inside an unevaluated operand. `failure` says
+// whether it counts as an evaluation failure (cf_note_failure() is called
+// right before the report, as at every other failure site). `loc` is the
+// caller's source location, so the debug "@file:line" suffix names the
+// grammar action and not this helper.
+inline void cf_value_diag(Issue::Code code, std::string ctx, bool failure,
+                          std::source_location loc = std::source_location::current()) {
+    if (cf_unevaluated_depth > 0)
+        return;
+    if (failure)
+        cf_note_failure(code);
+    Issue::happen(code, std::move(ctx), loc);
 }
 
 enum class ValueKind {

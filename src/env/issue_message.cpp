@@ -75,7 +75,12 @@ void PlainTextMessage::message(std::ostream& output, Issue::Severity severity, I
 
 	if ((code == Issue::Code::SEVERE_MESSAGE) || (code == Issue::Code::ERROR_MESSAGE) || (code == Issue::Code::WARNING_MESSAGE) || (code == Issue::Code::INFO_MESSAGE)) {
 		output << loc << ": " << severity_text(severity) << ": " << pp_code(code) << ": '" << context << "'";
-    } else {
+    } else if (code == Issue::Code::UNDEFINED_IDENTIFIER && !context.empty()) {
+		// clang's -Wundef wording: the identifier is the subject of the
+		// sentence ("'FOO' is not defined, evaluates to 0"), not a suffix.
+		output << loc << ": " << severity_text(severity) << ": " << pp_code(code)
+		       << ": '" << context << "' is not defined, evaluates to 0";
+	} else {
 		output << loc << ": " << severity_text(severity) << ": " << pp_code(code) << ": " << std::string(message_for(code));
 		if (!context.empty())
 			output << "; '" << context << "'";

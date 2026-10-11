@@ -30,6 +30,28 @@ bool cf_expr_complete = false;  // set true when a complete expr is reduced
 Issue::Code cf_error_code = Issue::Code::MISSING_EXPRESSION;
 // See cf_note_failure() (constfold_internal.hpp) and eval_const_value().
 Issue::Code cf_failure_code = Issue::Code::SUCCESS;
+// See cf_value_diag() (constfold_internal.hpp); lowered by the actions in
+// and_expr/or_expr, reset by evaluate().
+int cf_unevaluated_depth = 0;
+
+// The lexer keeps the spelling of a type keyword (for the -Wundef message);
+// the cast rule compares an upper-cased copy.
+static std::string ascii_upper(std::string s) {
+    for (char& ch : s) {
+        if (ch >= 'a' && ch <= 'z')
+            ch = static_cast<char>(ch - 'a' + 'A');
+    }
+    return s;
+}
+
+// PP54 (-Wundef): an identifier (or a bare type keyword) that the evaluator
+// turns into 0. Off unless Issue::enable() was called; the enabled check
+// comes first so the default run copies no text.
+static void warn_undefined(const std::string& name,
+                           std::source_location loc = std::source_location::current()) {
+    if (Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER))
+        cf_value_diag(Issue::Code::UNDEFINED_IDENTIFIER, name, false, loc);
+}
 
 extern int cflex(void);
 
@@ -240,16 +262,30 @@ expr: or_expr { cf_expr_complete = true; $$ = $1; }
 
 or_expr:
     and_expr                          { $$ = $1; }
-  | or_expr CF_LOR and_expr           {
-        CfValue lb = cast_to_bool($1), rb = cast_to_bool($3);
+  // The left operand is completely reduced before the first token of the
+  // right one is shifted, so the mid-rule action below knows whether the
+  // right operand is evaluated (SPEC 6.4). It must not throw: a Float left
+  // operand counts as live and the final reduction reports PP50 as before.
+  // The action's value is "the right operand is dead"; the final action
+  // lowers the depth again before the unchanged cast_to_bool code.
+  | or_expr CF_LOR <bool>{
+        $$ = $1.kind != ValueKind::Float && $1.truthy();
+        if ($$) ++cf_unevaluated_depth;
+    } and_expr                        {
+        if ($3) --cf_unevaluated_depth;
+        CfValue lb = cast_to_bool($1), rb = cast_to_bool($4);
         $$ = CfValue::bool_value(lb.bval || rb.bval);
     }
   ;
 
 and_expr:
     xor_expr                          { $$ = $1; }
-  | and_expr CF_LAND xor_expr         {
-        CfValue lb = cast_to_bool($1), rb = cast_to_bool($3);
+  | and_expr CF_LAND <bool>{
+        $$ = $1.kind != ValueKind::Float && !$1.truthy();
+        if ($$) ++cf_unevaluated_depth;
+    } xor_expr                        {
+        if ($3) --cf_unevaluated_depth;
+        CfValue lb = cast_to_bool($1), rb = cast_to_bool($4);
         $$ = CfValue::bool_value(lb.bval && rb.bval);
     }
   ;
@@ -463,10 +499,10 @@ primary:
   | CF_FLOAT                          { $$ = $1; }
   | CF_TRUE                           { $$ = CfValue::bool_value(true); }
   | CF_FALSE                          { $$ = CfValue::bool_value(false); }
-  | CF_IDENT                          { $$ = CfValue::int_value(0); }
+  | CF_IDENT                          { warn_undefined($1.text); $$ = CfValue::int_value(0); }
   | CF_LPAREN expr CF_RPAREN          { $$ = $2; }
   | CF_TYPE_KW CF_HASH cast_value     {
-        const std::string& kw = $1.text;
+        const std::string kw = ascii_upper($1.text);
         if (kw == "BOOL")        $$ = cast_to_bool($3);
         else if (kw == "BYTE")   $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::BYTE);
         else if (kw == "WORD")   $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::WORD);
@@ -474,7 +510,7 @@ primary:
         else if (kw == "LWORD")  $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::LWORD);
         else                     $$ = CfValue::int_value(cast_scalar_to_int($3));
     }
-  | CF_TYPE_KW                        { $$ = CfValue::int_value(0); }
+  | CF_TYPE_KW                        { warn_undefined($1.text); $$ = CfValue::int_value(0); }
   ;
 
 cast_value:

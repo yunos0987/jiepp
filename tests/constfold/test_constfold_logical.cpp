@@ -131,3 +131,23 @@ TEST_F(ConstfoldTest, ExprComplex) {
     EXPECT_TRUE(empty());
 }
 
+// An exception thrown out of the parser inside a dead operand never runs the
+// action that lowers cf_unevaluated_depth; evaluate() resets it, so the next
+// evaluation is not wrongly treated as unevaluated.
+TEST_F(ConstfoldTest, DepthResetAfterAbort) {
+    IssueStateReset reset;
+    Issue::initialize(output());
+    Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+    Issue::ContinueMode guard({});
+
+    // PP50 inside the dead right operand of \or\ (a Float operand is a type
+    // error even when it is not evaluated: SPEC 6.4).
+    EXPECT_EQ(0LL, eval_const_expr("TRUE \\or\\ (1.5 + 1)"));  // type error: 0
+    EXPECT_EQ(Issue::Code::EXPR_TYPE_ERROR, code());
+
+    EXPECT_EQ(0LL, eval_const_expr("FOO"));
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_THAT(msgs[0], ::testing::HasSubstr("PP54: 'FOO' is not defined, evaluates to 0"));
+}
+
