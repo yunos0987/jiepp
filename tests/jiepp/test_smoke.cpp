@@ -959,3 +959,218 @@ TEST_F(SmokeTest, IgnoredPP12CannotHideIncludeDepthExceeded) {
     EXPECT_NE(r.err.find("PP12"), std::string::npos) << "stderr: " << r.err;
 }
 #endif
+
+// ---- Windows: UTF-8 application manifest (activeCodePage) ----
+//
+// jiepp.exe embeds a manifest with activeCodePage=UTF-8, so on Windows 10
+// 1903+ its narrow strings (argv, std::filesystem paths, ifstream names) are
+// UTF-8 instead of the ANSI code page. These tests spawn jiepp.exe with
+// CreateProcessW so the command line can carry characters the ANSI code page
+// of jiepp_test itself (932 locally, 1252 on CI) cannot represent. File names
+// are built from UTF-8 literals with universal-character-names so that
+// neither this source nor jiepp_test's own ACP matters.
+//
+// CI note: .github/workflows/ci.yml has no Windows sandbox job, so the
+// sandbox builds of these tests are only exercised locally.
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+namespace {
+
+struct WinRunResult {
+    int exit_code = -1;
+    bool timed_out = false;
+    std::string out;
+    std::string err;
+};
+
+std::string u8_to_string(const std::u8string& s) {
+    return std::string(reinterpret_cast<const char*>(s.data()), s.size());
+}
+
+std::string slurp_file(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return {std::istreambuf_iterator<char>(f), {}};
+}
+
+// Runs `exe` through CreateProcessW. `args` is the command line after the
+// quoted executable path (the caller quotes arguments); it is copied into a
+// writable std::wstring because CreateProcessW may modify its buffer. `cwd`
+// (when not empty) becomes lpCurrentDirectory. stdout and stderr go to files
+// under `scratch` through inheritable handles (two pipes read one after the
+// other could deadlock); stdin is NUL. After 30 seconds the process is
+// terminated and timed_out is set.
+WinRunResult run_w(const fs::path& exe, const std::wstring& args,
+                   const fs::path& cwd, const fs::path& scratch) {
+    WinRunResult res;
+    fs::path out_f = scratch / "run_w_stdout.txt";
+    fs::path err_f = scratch / "run_w_stderr.txt";
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE h_in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE h_out = CreateFileW(out_f.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE h_err = CreateFileW(err_f.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h_in == INVALID_HANDLE_VALUE || h_out == INVALID_HANDLE_VALUE ||
+        h_err == INVALID_HANDLE_VALUE) {
+        for (HANDLE h : {h_in, h_out, h_err})
+            if (h != INVALID_HANDLE_VALUE)
+                CloseHandle(h);
+        res.err = "run_w: cannot open the redirection handles";
+        return res;
+    }
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = h_in;
+    si.hStdOutput = h_out;
+    si.hStdError = h_err;
+    PROCESS_INFORMATION pi{};
+
+    std::wstring cmd = L"\"" + exe.wstring() + L"\" " + args;
+    BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, 0, nullptr,
+                             cwd.empty() ? nullptr : cwd.c_str(), &si, &pi);
+    // The child holds its own copies of the handles.
+    CloseHandle(h_in);
+    CloseHandle(h_out);
+    CloseHandle(h_err);
+    if (!ok) {
+        res.err = "run_w: CreateProcessW failed, error " + std::to_string(GetLastError());
+        return res;
+    }
+
+    if (WaitForSingleObject(pi.hProcess, 30000) == WAIT_TIMEOUT) {
+        res.timed_out = true;
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 5000);
+    }
+    DWORD code = 0;
+    if (GetExitCodeProcess(pi.hProcess, &code))
+        res.exit_code = static_cast<int>(code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    res.out = slurp_file(out_f);
+    res.err = slurp_file(err_f);
+    return res;
+}
+
+} // namespace
+
+TEST_F(RobustnessTestSmoke, WindowsManifestActiveCodePageUtf8) {
+    HMODULE h = LoadLibraryExW(exe_.c_str(), nullptr,
+                               LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    ASSERT_NE(h, nullptr) << "LoadLibraryExW failed, error " << GetLastError();
+    std::string manifest;
+    // RT_MANIFEST (24) is an ANSI-typed macro in a non-UNICODE build.
+    HRSRC rsrc = FindResourceW(h, MAKEINTRESOURCEW(1), MAKEINTRESOURCEW(24));
+    if (rsrc != nullptr) {
+        HGLOBAL g = LoadResource(h, rsrc);
+        const DWORD size = SizeofResource(h, rsrc);
+        if (g != nullptr)
+            manifest.assign(static_cast<const char*>(LockResource(g)), size);
+    }
+    FreeLibrary(h);
+
+    ASSERT_FALSE(manifest.empty()) << "no RT_MANIFEST resource with ID 1 in " << exe_;
+    EXPECT_NE(manifest.find("activeCodePage"), std::string::npos) << manifest;
+    EXPECT_NE(manifest.find(">UTF-8</activeCodePage>"), std::string::npos) << manifest;
+    // Windows silently ignores a setting in a wrong namespace.
+    EXPECT_NE(manifest.find("http://schemas.microsoft.com/SMI/2019/WindowsSettings"),
+              std::string::npos)
+        << manifest;
+}
+
+TEST_F(RobustnessTestSmoke, WindowsArgvNonAnsiPath) {
+    // Hangul and an emoji: neither exists in CP932 or CP1252.
+    const std::u8string name8 = u8"한\U0001F600.iec";
+    const std::string name = u8_to_string(name8);
+    write_file(tmp_dir_ / fs::path(name8), "F __FILE__\n");
+
+    // 1. -P: __FILE__ is the argv bytes, as UTF-8.
+    auto r = run_w(exe_, L"-P \"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_FALSE(r.timed_out);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "F '" + name + "'\n") << "stderr: " << r.err;
+
+    // 2. Without -P the line marker carries the UTF-8 name.
+    r = run_w(exe_, L"\"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("'" + name + "'"), std::string::npos) << r.out;
+
+    // 3. -D values are UTF-8 too (a CP932 value could contain a '{' byte).
+    write_file(tmp_dir_ / "v.iec", "V\n");
+    r = run_w(exe_, L"-P \"-DV=한\" v.iec", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, u8_to_string(u8"한") + "\n") << "stderr: " << r.err;
+
+    // 4. -o with a non-ANSI name creates that file.
+    const std::u8string out8 = u8"out_한.txt";
+    r = run_w(exe_, L"-P -o \"" + fs::path(out8).wstring() + L"\" v.iec", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_TRUE(fs::exists(tmp_dir_ / fs::path(out8)));
+    EXPECT_EQ(slurp_file(tmp_dir_ / fs::path(out8)), "V\n");
+}
+
+TEST_F(RobustnessTestSmoke, WindowsArgvNoBestFit) {
+    // Guard on code page 1252 (every character below exists there, so it
+    // passes before and after the manifest); it fails on code page 932,
+    // where the ANSI conversion of argv replaced the characters.
+    write_file(tmp_dir_ / "u.iec", "DECOY\n");
+    const std::u8string uuml8 = u8"ü.iec";
+    write_file(tmp_dir_ / fs::path(uuml8), "REAL\n");
+    auto r = run_w(exe_, L"-P \"" + fs::path(uuml8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "REAL\n") << "stderr: " << r.err;
+
+    // A yen sign must stay a character: best-fit conversion to a backslash
+    // would turn this into the path sub\..\a.iec, which resolves to a.iec.
+    write_file(tmp_dir_ / "a.iec", "A\n");
+    r = run_w(exe_, L"-P \"sub¥..¥" L"a.iec\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 1) << "stdout: " << r.out;
+    EXPECT_NE(r.err.find("PP11"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.out.find('A'), std::string::npos) << "stdout: " << r.out;
+}
+
+#ifndef JIEPP_SANDBOX
+TEST_F(SmokeTest, WindowsSourceIncludeNonAsciiName) {
+    // The file name comes from the source text (UTF-8), not from argv.
+    const std::u8string inc8 = u8"日本語.inc";
+    const std::string inc = u8_to_string(inc8);
+    write_file(tmp_dir_ / fs::path(inc8), "JP_INC\n");
+    write_file(tmp_dir_ / "main.iec",
+               "{#include '" + inc + "'}\n"
+               "{#if __has_include('" + inc + "')}HAS{#endif}\n");
+    auto r = run_w(exe_, L"-P main.iec", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "JP_INC\nHAS\n") << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, WindowsCwdNonAsciiDir) {
+    // fs::current_path() converts through the ANSI code page: a working
+    // directory the code page cannot represent made the run fail with PP01.
+    const std::u8string dir8 = u8"cwd_한";
+    const std::u8string sub8 = u8"sub_한";
+    const std::string sub = u8_to_string(sub8);
+    fs::path cwd = tmp_dir_ / fs::path(dir8);
+    fs::create_directories(cwd / fs::path(sub8));
+    write_file(cwd / fs::path(sub8) / "x.inc", "X_INC\n");
+    write_file(cwd / "main.iec", "{#include '" + sub + "/x.inc'}\nM\n");
+    auto r = run_w(exe_, L"-P main.iec", cwd, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "X_INC\nM\n") << "stderr: " << r.err;
+}
+#endif
+
+#endif // _WIN32

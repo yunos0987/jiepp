@@ -120,6 +120,10 @@ VSCode CMake Tools 拡張を使用している場合、`CMakePresets.json` で�
 
 Windows でビルドした `jiepp.exe` を実行する場合、以下が必要になる場合があります：
 
+- **Windows 10 version 1903 以降（Windows Server 2022 以降）、x64**  
+  `jiepp.exe` はアプリケーションマニフェスト（`activeCodePage=UTF-8`）で、コマンドライン引数とファイルパスを UTF-8 で扱います。1903 未満（Windows Server 2019 を含む）ではマニフェストが無視され、警告もなく ANSI コードページ（日本語版では CP932）で扱われます。そのため、ANSI で表せない文字を含むパスは開けず、`ü` → `u` のような近い文字への置き換えも起こります（0.8.0 と同じ）。  
+  出力と診断は UTF-8 です。コンソールのコードページが CP932 のままだと日本語は文字化けして見えるので、`chcp 65001` で切り替えてください（パイプやファイルに出したバイト列は正しい）。
+
 - **Microsoft Visual C++ Redistributable 2015-2022 (x64)**  
   Windows 10 以降では UCRT（Universal C Runtime）がOS に統合済みのため、個別インストール不要な場合がほとんどです。ただし、古い環境や一部カスタム設定では Redistributable が必要になることがあります。  
   不足している場合は、[Microsoft の公式ページ](https://support.microsoft.com/en-us/help/2977003/) から 2015-2022 版をダウンロード・インストールしてください。
