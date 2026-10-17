@@ -16,7 +16,7 @@
 // macro copied its body.
 //
 // The output/diagnostic tests below pin the output and diagnostics of the
-// pre-fix build (6475900) and pass both before and after the fix.
+// pre-fix build (e644f7d) and pass both before and after the fix.
 // VaArgsEmptyAgreesWithSelectArg calls the new va_args_empty() helper, so it
 // (and this file) does not build against the pre-fix code; it was added
 // after the RED run. NestedVaOptPP37IsCharged guards the step charge for
@@ -292,7 +292,7 @@ TEST_F(SubstCostTest, VariadicBracketedArgumentIsOneArgument_Guard) {
 //
 // Release-only, like HideSetChainTest.H7_TimingGuard: a Debug build is not
 // representative of real performance. Pre-fix times are for the in-process
-// pp() on the 6475900 Release build; each was RED (> 3 s).
+// pp() on the e644f7d Release build; each was RED (> 3 s).
 #ifdef NDEBUG
 namespace {
 
