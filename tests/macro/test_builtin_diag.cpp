@@ -180,7 +180,7 @@ TEST_F(BuiltinDiagTest, AssertDeadOperandNotFailure) {
     Issue::ContinueMode guard({});
     // The dead operand would be a float-range failure; the condition is
     // decided by the live left side (false), so exactly PP91 is reported.
-    EXPECT_EQ(";", pp("__assert(FALSE \\and\\ (1 << 1.0e30) = 0, m);"));
+    EXPECT_EQ(";", pp("__assert(FALSE \\and\\ BYTE#1.0e30 = BYTE#0, m);"));
     EXPECT_EQ(Strings({"PP91: 'm'"}), diags());
     EXPECT_EQ(";", pp("__assert(TRUE \\or\\ 1/0 = 1, m);"));
     EXPECT_EQ(Strings(), diags());

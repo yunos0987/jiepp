@@ -172,8 +172,9 @@ TEST_F(ConstfoldTest, ModuloByZeroInDeadOrOperand) {
 
 TEST_F(ConstfoldTest, FloatRangeInDeadOperand) {
     Issue::ContinueMode guard({});
-    for (const char* expr : {"FALSE \\and\\ (1 << 1.0e30) = 0",
-                             "FALSE \\and\\ BYTE#1.0e30 = BYTE#0"}) {
+    // (A Float shift count is a type error, PP50, reported even here; it is
+    // covered by ShiftTest.ShiftCountTypeErrorInUnevaluatedOperand.)
+    for (const char* expr : {"FALSE \\and\\ BYTE#1.0e30 = BYTE#0"}) {
         auto r = eval_const_value(expr);
         EXPECT_EQ(Issue::Code::SUCCESS, r.failure) << expr;
         EXPECT_TRUE(empty()) << expr;

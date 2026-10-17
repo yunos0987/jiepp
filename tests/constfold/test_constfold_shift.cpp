@@ -132,3 +132,32 @@ TEST_F(ShiftTest, TypeError) {
     EXPECT_THROW(eval_const_expr("1.0 >> 2"), Issue::Exception);
     EXPECT_EQ(Issue::Code::EXPR_TYPE_ERROR, code());
 }
+
+// SPEC 6.3: the shift count is an Int or a Bitstring (read as a signed 64-bit
+// pattern). A Bool or a Float is a type error (PP50), like everywhere else
+// in the type rules; it used to be converted silently ((1 << 1.9) = 2).
+TEST_F(ShiftTest, ShiftCountBoolAndFloatAreTypeErrors) {
+    Issue::Blocking guard({});
+    for (const char* expr : {"1 << TRUE", "1 >> FALSE", "1 << 1.0",
+                             "BYTE#1 << 2.5", "1 << 1.0e30",
+                             "BYTE#16#80 >> 7.0"}) {
+        eval_const_expr(expr);
+        EXPECT_EQ(Issue::Code::EXPR_TYPE_ERROR, code()) << expr;
+    }
+}
+
+TEST_F(ShiftTest, ShiftCountIntAndBitstringStillAccepted) {
+    EXPECT_NE(0LL, eval_const_expr("(1 << BYTE#2) = 4"));
+    EXPECT_NE(0LL, eval_const_expr("(BYTE#16#80 >> BYTE#7) = BYTE#1"));
+    // The bit pattern is read as -1, which is out of range: << gives 0.
+    EXPECT_NE(0LL, eval_const_expr("(1 << LWORD#16#FFFFFFFFFFFFFFFF) = 0"));
+    EXPECT_TRUE(empty());
+}
+
+// The type error does not depend on the value, so it is also reported in an
+// operand that is not evaluated (SPEC 6.4).
+TEST_F(ShiftTest, ShiftCountTypeErrorInUnevaluatedOperand) {
+    Issue::Blocking guard({});
+    eval_const_expr("FALSE \\and\\ (1 << 1.0) = 0");
+    EXPECT_EQ(Issue::Code::EXPR_TYPE_ERROR, code());
+}

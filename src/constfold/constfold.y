@@ -178,6 +178,15 @@ static int64_t cast_scalar_to_int(const CfValue& v) {
     return 0;
 }
 
+// The shift count of '<<' / '>>' (SPEC 6.3): an Int, or a Bitstring read as a
+// signed 64-bit pattern. A Bool or a Float is a type error (PP50), unlike
+// cast_scalar_to_int(), which type casts and unary minus still use.
+static int64_t shift_count(const CfValue& v) {
+    if (v.kind == ValueKind::Int) return v.ival;
+    if (v.kind == ValueKind::Bitstring) return static_cast<int64_t>(v.bits);
+    type_error();
+}
+
 static CfValue compare_eq(const CfValue& lhs, const CfValue& rhs, bool equal) {
     if (lhs.kind == ValueKind::Bool && rhs.kind == ValueKind::Bool)
         return CfValue::bool_value(equal ? (lhs.bval == rhs.bval) : (lhs.bval != rhs.bval));
@@ -323,7 +332,7 @@ shift_expr:
     add_expr                          { $$ = $1; }
   | shift_expr CF_SHL add_expr        {
         CfValue l = $1;
-        int64_t n = cast_scalar_to_int($3);
+        int64_t n = shift_count($3);
         if (l.kind == ValueKind::Int) {
             $$ = CfValue::int_value(shift_int(l.ival, n, true));
         } else if (l.kind == ValueKind::Bitstring) {
@@ -337,7 +346,7 @@ shift_expr:
     }
   | shift_expr CF_SHR add_expr        {
         CfValue l = $1;
-        int64_t n = cast_scalar_to_int($3);
+        int64_t n = shift_count($3);
         if (l.kind == ValueKind::Int) {
             $$ = CfValue::int_value(shift_int(l.ival, n, false));
         } else if (l.kind == ValueKind::Bitstring) {

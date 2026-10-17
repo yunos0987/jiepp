@@ -312,7 +312,7 @@ TEST_F(NamedCounterTest, SetDeadOperandNotFailure) {
     // A Boolean value is stored as 0 / 1 (SPEC 12.10).
     EXPECT_EQ("1", pp("__counter_set(a, TRUE \\or\\ 10 / 0 = 1)__counter_peek(a)"));
     EXPECT_EQ(Strings(), diags());
-    EXPECT_EQ("0", pp("__counter_set(b, FALSE \\and\\ (1 << 1.0e30) = 0)__counter_peek(b)"));
+    EXPECT_EQ("0", pp("__counter_set(b, FALSE \\and\\ BYTE#1.0e30 = BYTE#0)__counter_peek(b)"));
     EXPECT_EQ(Strings(), diags());
 }
 
