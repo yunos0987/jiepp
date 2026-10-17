@@ -524,7 +524,9 @@ void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ot
     std::string raw_path = iec3_blank_out_comments(expand_operand_text(raw_arg, env), /*header_name=*/true);
     std::string syspath;
     bool _;
-    if (strip_path(raw_path, syspath, _)) {
+    // A9: a NUL (decoded from $00) would end the path early in the C-string
+    // filesystem calls, so it is an invalid path, like a malformed operand.
+    if (strip_path(raw_path, syspath, _) && syspath.find('\0') == std::string::npos) {
         env.add_syspath(resolve_syspath_base(syspath, env));
         ots.push_back(Token::pragma("syspath", Util::encode_iec_string(syspath, '\''), env.is_standard_pragma_style()));
         return;
@@ -544,7 +546,9 @@ void handle_include(const std::string& raw_arg,
     std::string raw_path = iec3_blank_out_comments(expand_operand_text(raw_arg, env), /*header_name=*/true);
     std::string include_path;
     bool syspath_only_path;
-    if (strip_path(raw_path, include_path, syspath_only_path)) {
+    // A9: same NUL rule as {#syspath} above.
+    if (strip_path(raw_path, include_path, syspath_only_path)
+        && include_path.find('\0') == std::string::npos) {
         auto disp_path = fs::path(include_path).generic_string();
 
         Loader::LoadType loadtype = (syspath_only || syspath_only_path) ? Loader::LoadType::SINCLUDE : Loader::LoadType::INCLUDE;

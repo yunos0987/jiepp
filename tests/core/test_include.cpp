@@ -368,3 +368,51 @@ TEST_F(IncludeTest, SyspathPragmaReemittedAsWritten) {
         << "pragma must not be rewritten to an absolute path; got:\n" << o;
     EXPECT_TRUE(empty());
 }
+
+#ifndef JIEPP_SANDBOX
+// A9: a path with a NUL ($00 decoded in the directive operand) used to be
+// truncated at the NUL by the C-string filesystem calls, so
+// `'a.iec$00x'` included a.iec. It is PP47 now (the sandbox has no file
+// access directives, hence no sandbox build of these tests).
+TEST_F(IncludeTest, IncludePathWithNulIsPP47) {
+    fs::current_path(jiepp_root_dir());
+    Issue::ContinueMode guard({});
+    for (const char* src : {"{#include 'tests/core/test_include/a.iec$00x'}",
+                            "{#include <tests/core/test_include/a.iec$00x>}",
+                            "{#sinclude 'tests/core/test_include/a.iec$00x'}"}) {
+        std::string o;
+        EXPECT_NO_THROW({ o = pp(src); }) << src;
+        EXPECT_EQ(std::string::npos, o.find("a.iec begin")) << src << "\n" << o;
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size()) << src;
+        EXPECT_EQ(Issue::Code::INVALID_PATH, PlainTextMessage::parse_code(msgs[0])) << src;
+        // The context shows the NUL as $00, not as a raw byte.
+        EXPECT_NE(std::string::npos, msgs[0].find("a.iec$00x")) << msgs[0];
+        EXPECT_EQ(std::string::npos, msgs[0].find('\0'));
+    }
+}
+
+TEST_F(IncludeTest, SyspathWithNulIsPP47) {
+    fs::current_path(jiepp_root_dir());
+    Issue::ContinueMode guard({});
+    std::string o;
+    EXPECT_NO_THROW({ o = pp("{#syspath 'tests/core/test_include/shadow_syspath1$00x'}"); });
+    EXPECT_EQ(std::string::npos, o.find("syspath")) << o;
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_PATH, cs[0]);
+}
+
+TEST_F(IncludeTest, HasIncludeWithNulIsFalse) {
+    fs::current_path(jiepp_root_dir());
+    Issue::ContinueMode guard({});
+    // Control: the same path without the NUL exists.
+    std::string o = pp("{#if __has_include('tests/core/test_include/a.iec')}HAS{#else}NO{#endif}");
+    EXPECT_NE(std::string::npos, o.find("HAS")) << o;
+    EXPECT_TRUE(empty());
+    o = pp("{#if __has_include('tests/core/test_include/a.iec$00x')}HAS{#else}NO{#endif}");
+    EXPECT_EQ(std::string::npos, o.find("HAS")) << o;
+    EXPECT_NE(std::string::npos, o.find("NO")) << o;
+    EXPECT_TRUE(empty());
+}
+#endif
