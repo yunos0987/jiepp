@@ -103,9 +103,11 @@ TEST_F(DiagnosticEscapeTest, PathC1RuleFollowsNarrowPathEncoding) {
         ms.push_back(PlainTextMessage::strip_source_location(line));
     ASSERT_EQ(2u, ms.size()) << own.str();
     const bool utf8_paths = Util::narrow_paths_are_utf8();
-    const std::string path = utf8_paths ? "d$01ir/\xC2\x82\xA0$7F$C2$9B.iec"
+    // With UTF-8 paths C2 82 is itself a C1 pair ($C2$82); in an ANSI code
+    // page it is ordinary text (CP932 U+FF82 U+3042 = C2 82 A0) and stays.
+    const std::string path = utf8_paths ? "d$01ir/$C2$82\xA0$7F$C2$9B.iec"
                                         : "d$01ir/\xC2\x82\xA0$7F\xC2\x9B.iec";
-    const std::string file_ctx = utf8_paths ? "\xC2\x82\xA0$1B$C2$9B.iec"
+    const std::string file_ctx = utf8_paths ? "$C2$82\xA0$1B$C2$9B.iec"
                                             : "\xC2\x82\xA0$1B\xC2\x9B.iec";
     // The context of PP52 is input text and uses the full rule everywhere.
     EXPECT_EQ(path + ":3.0: error: PP52: Invalid expression; '$C2$9B" "e'", ms[0]);
