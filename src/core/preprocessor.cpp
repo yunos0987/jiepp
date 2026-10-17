@@ -143,7 +143,7 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     env.define("__INCLUDE_LEVEL__",     std::make_unique<IncludeLevelMacro>());
     env.define("__BASE_FILE__",         std::make_unique<BaseFileMacro>());
     env.define("__FILE_NAME__",         std::make_unique<FileNameMacro>());
-    // Built-in function-like macros (SPEC 12.9, 12.10): ordinary symbol-table
+    // Built-in function-like macros (SPEC 12.9-12.11): ordinary symbol-table
     // entries like __COUNTER__, so {#ifdef} sees them and {#undef} removes
     // them (with a PP35 warning); -dM does not list them. The named-counter
     // values live in the Env (Param), not in these objects.
@@ -152,6 +152,7 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     env.define("__counter",             std::make_unique<CounterBuiltin>(CounterBuiltin::Kind::next));
     env.define("__counter_peek",        std::make_unique<CounterBuiltin>(CounterBuiltin::Kind::peek));
     env.define("__counter_set",         std::make_unique<CounterSetBuiltin>());
+    env.define("__nosplit",             std::make_unique<NosplitBuiltin>());
     // NOTE: "defined" is NOT installed permanently; it is installed temporarily
     // by eval_cond_str during #if/#elif condition evaluation only.
 

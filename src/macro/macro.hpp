@@ -244,7 +244,8 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Built-in function-like macros (__error, __assert; named counters below)
+// Built-in function-like macros (__error, __assert; named counters and
+// __nosplit below)
 // ---------------------------------------------------------------------------
 
 // Called like a function macro (needs an opening parenthesis, PP34 on an
@@ -346,9 +347,26 @@ public:
                               Env& env) const override;
 };
 
+// __nosplit(args...): the arguments joined like __VA_ARGS__ and
+// macro-expanded once; every comma of the result outside (...)/[...]
+// becomes an ANY token, so it no longer separates the arguments of a
+// later function-macro call and is not counted by __VA_ARGC__ (SPEC 12.11).
+class NosplitBuiltin : public BuiltinFunctionMacro {
+public:
+    bool equal(const Macro& other) const override {
+        return dynamic_cast<const NosplitBuiltin*>(&other) != nullptr;
+    }
+    std::string str() const override { return "__nosplit"; }
+    int min_args() const override { return 0; }
+    int max_args() const override { return FunctionMacro::NUM_OF_MAX_ARGS; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+};
+
 // A built-in macro: a symbol-table entry whose replacement jiepp computes
 // (__COUNTER__, __LINE__, __FILE__, __DATE__, ..., __error, __assert, the
-// named counters) -- anything that is neither a value macro
+// named counters, __nosplit) -- anything that is neither a value macro
 // (UserDefinedObjectMacro: user definitions, -D, and the predefined values
 // such as __INT_MAX__ or _JIEPP_VER) nor a FunctionMacro, nor the transient
 // 'defined' operator. Undefining or redefining one warns PP35, like clang

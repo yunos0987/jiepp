@@ -2726,6 +2726,7 @@ TEST_F(JieppCommandTest, DMExcludesBuiltinFunctionMacros) {
     EXPECT_EQ(std::string::npos, out.find("__counter")) << out;
     EXPECT_EQ(std::string::npos, out.find("__counter_peek")) << out;
     EXPECT_EQ(std::string::npos, out.find("__counter_set")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__nosplit")) << out;
     EXPECT_TRUE(empty());
 }
 

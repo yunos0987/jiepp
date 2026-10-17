@@ -1,7 +1,8 @@
 // builtin_function_macros.cpp -- invoke() of the built-in function-like
 // macros __error(msg...) and __assert(expr, msg...) (SPEC 12.9) and the
 // named counters __counter(name), __counter_peek(name) and
-// __counter_set(name, value) (SPEC 12.10) (macro.hpp). They are called from
+// __counter_set(name, value) (SPEC 12.10) and __nosplit(args...)
+// (SPEC 12.11) (macro.hpp). They are called from
 // expand()'s function-macro call branch (expand.cpp) with the collected,
 // flattened, NOT pre-expanded arguments.
 
@@ -255,4 +256,27 @@ std::vector<Token> CounterSetBuiltin::invoke(std::vector<std::vector<Token>>& ar
     }
     env.counter_slot(*name) = static_cast<std::uint32_t>(v);
     return {};
+}
+
+std::vector<Token> NosplitBuiltin::invoke(std::vector<std::vector<Token>>& args,
+                                          const std::vector<ArgWs>& ws,
+                                          Env& env) const {
+    // Joined like __VA_ARGS__ (empty for an empty call) and expanded once.
+    // 'defined' is NOT suspended (unlike expand_message()): the result is
+    // part of an {#if} expression, like a function-macro argument.
+    std::vector<Token> joined = select_arg(0, args, /*is_va=*/true, &ws, VaJoin::plain);
+    std::vector<Token> out;
+    expand(joined, out, env);
+    // Same depth rule as the argument collector in expand.cpp: only a comma
+    // outside (...)/[...] would separate arguments, so only those change.
+    int depth = 0;
+    for (auto& t : out) {
+        if (t.type == Token::LP || t.type == Token::LB)
+            ++depth;
+        else if ((t.type == Token::RP || t.type == Token::RB) && depth > 0)
+            --depth;
+        else if (t.type == Token::SEP && depth == 0)
+            t.type = Token::ANY;
+    }
+    return out;
 }

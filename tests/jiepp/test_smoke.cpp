@@ -816,6 +816,39 @@ TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsPP63NotCrash) {
     EXPECT_EQ(r.out.find("after_m"), std::string::npos);
 }
 
+// __nosplit (SPEC 12.11) nested 1000 deep: each level is one expand() call
+// (invoke() expands the joined arguments), so the stack guard reports PP63
+// instead of the process crashing. Nothing is reported before PP63, so no
+// --silent: the single stderr line must be the PP63 one (not PP60/PP64 or an
+// option error, which would also give rc=1). --max-expansion-depth and
+// --max-expansion-steps are CLI options, accepted in sandbox builds too.
+// PP63 fires at a depth of about 170 (Debug) to 400 (Release) here; every
+// level re-collects the rest of the input, so 1000 levels keep the margin
+// without the quadratic cost of a deeper input.
+TEST_F(RobustnessTestSmoke, NestedNosplitReportsPP63NotCrash) {
+    const int k = 1000;
+    std::string src;
+    for (int i = 0; i < k; ++i)
+        src += "__nosplit(";
+    src += "x";
+    src += std::string(static_cast<std::size_t>(k), ')');
+    src += " after_n\n";
+    fs::path input = tmp_dir_ / "nested_nosplit.iec";
+    write_file(input, src);
+
+    auto r = run("--recursion-limit 128 --max-expansion-depth 100000 --max-expansion-steps 0 \"" +
+                 input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    // The depth figure counts expand() nesting only, so it is not pinned.
+    EXPECT_NE(r.err.find("PP63: Stack nearly exhausted; 'expansion depth "), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.err.find("retry with --recursion-limit greater than 128'"), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.err.find("PP60"), std::string::npos) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.out.find("after_n"), std::string::npos);
+}
+
 // ---- U1: re-lex diagnostics are reported at the file and line of the
 // directive or pragma being processed ----
 

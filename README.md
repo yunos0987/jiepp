@@ -70,6 +70,7 @@ echo '{#define X 42} VAR x : INT := X; END_VAR' | .\build\windows-clang-ninja-de
 | `__has_builtin(NAME)` | `NAME` がビルトインなら 1（条件式内。`-D __assert=` で無効にした `__assert` の検出に使える） / 1 if `NAME` is a built-in (in conditions; detects a disabled `__assert`) |
 | `__error(...)` / `__assert(expr, ...)` | マクロ展開中に `PP91` を出す（`__assert` は条件が偽のとき） / Report PP91 during macro expansion (`__assert`: when the condition is false) |
 | `__counter(name)` / `__counter_peek(name)` / `__counter_set(name, value)` | 名前ごとに独立したカウンタ / Named counters, independent per name |
+| `__nosplit(...)` | 結果のカンマが後のマクロ呼び出しの引数を区切らない / Commas in the result do not separate macro arguments later |
 | `_JIEPP` | jiepp 識別マクロ / jiepp identification |
 | `__VA_ARGS__` | 可変長引数 / Variadic macro arguments |
 
