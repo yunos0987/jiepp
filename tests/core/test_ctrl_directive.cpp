@@ -296,6 +296,35 @@ TEST_F(CtrlDirectiveTest, MacroDefinedMinMagAfterUnaryMinusUsableInIf) {
     EXPECT_TRUE(empty());
 }
 
+// A7: a NUL in the expression (decoded from $00 in a directive operand, or a
+// raw byte) used to cut the expression at that point (the scanner read it as
+// a C string), so `1$00garbage(((` was evaluated as `1`. It is now PP52 and
+// the whole expression is false. The diagnostic shows the NUL as $00.
+TEST_F(CtrlDirectiveTest, ConditionalNulExpression) {
+    Issue::ContinueMode guard({});
+    auto check = [&](const std::string& src, const char* expected_out) {
+        EXPECT_EQ(expected_out, strip(pp(src))) << src;
+        auto cs = codes();
+        ASSERT_EQ(1u, cs.size()) << src;
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, cs[0]) << src;
+    };
+    check("{#if 1$00garbage(((}T{#else}F{#endif}", "F");
+    check("{#if 0$00 or 1}T{#else}F{#endif}", "F");
+    check("{#if $00}T{#else}F{#endif}", "F");
+    // Raw NUL bytes (a $00 in plain text is not decoded, so the escape form
+    // above does not cover them).
+    check(std::string("{#if 1\0garbage(((}T{#else}F{#endif}", 35), "F");
+}
+
+TEST_F(CtrlDirectiveTest, ConditionalNulExpressionMessageShowsEscape) {
+    Issue::ContinueMode guard({});
+    pp(std::string("{#if 1\0x}T{#endif}", 18));
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find("1$00x")) << msgs[0];
+    EXPECT_EQ(std::string::npos, msgs[0].find('\0'));
+}
+
 // SPEC 6.4: division by zero in an unevaluated operand is not reported.
 TEST_F(CtrlDirectiveTest, IfDeadDivisionSilent) {
     EXPECT_EQ("n", strip(pp("{#if FALSE \\and\\ 1/0 = 1}y{#else}n{#endif}")));

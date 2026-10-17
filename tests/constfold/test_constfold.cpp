@@ -155,6 +155,20 @@ TEST_F(ConstfoldTest, FloatCastRangeUnevaluatedSilent_Guard) {
     EXPECT_TRUE(empty());
 }
 
+// A7: a NUL used to end the expression early (the scanner read a C string),
+// so `1\0garbage(((` was just `1`. It is PP52 now, and the diagnostic shows
+// the NUL as $00.
+TEST_F(ConstfoldTest, NulInExpressionIsPP52) {
+    Issue::Blocking guard({});
+    for (const std::string& expr : {std::string("1\0garbage(((", 12),
+                                    std::string("1\0", 2)}) {
+        EXPECT_EQ(0LL, eval_const_expr(expr));
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+    }
+    eval_const_expr(std::string("1\0x", 3));
+    EXPECT_NE(std::string::npos, message().find("null character in expression: 1$00x"));
+}
+
 TEST_F(ConstfoldTest, BaseNInvalidDigit) {
     EXPECT_THROW(eval_const_expr("2#9"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());

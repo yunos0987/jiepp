@@ -5,13 +5,15 @@
 #include "../util/text.hpp"
 
 #include <cctype>
+#include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
 // flex-generated scanner API (forward declarations)
 struct yy_buffer_state;
 typedef struct yy_buffer_state *YY_BUFFER_STATE;
-extern YY_BUFFER_STATE cf_scan_string(const char*);
+extern YY_BUFFER_STATE cf_scan_expr(const char*, std::size_t);  // constfold.l
 extern void cf_delete_buffer(YY_BUFFER_STATE);
 extern bool cf_expr_complete;  // set by bison grammar when expr is fully reduced
 // C1: code chosen by cf::CfParser::error() (constfold.y) from cf_expr_complete
@@ -58,7 +60,26 @@ cf::EvalResult evaluate(const std::string& expr) {
         return r;
     }
 
-    YY_BUFFER_STATE buf = cf_scan_string(expr.c_str());
+    // A7: scan by length. The scanner buffer length is an int (flex adds two
+    // terminating NULs), so a longer expression cannot be scanned at all;
+    // and a NUL inside the expression is not a valid expression character.
+    // As above, cf_note_failure() comes first so __assert / __counter_set
+    // see the failure.
+    if (expr.size() > static_cast<std::size_t>(INT_MAX) - 2) {
+        cf_note_failure(Issue::Code::INVALID_EXPRESSION);
+        ISSUE(INVALID_EXPRESSION, "expression too long");
+        r.failure = cf_failure_code;
+        return r;
+    }
+    if (expr.find('\0') != std::string::npos) {
+        cf_note_failure(Issue::Code::INVALID_EXPRESSION);
+        ISSUE(INVALID_EXPRESSION,
+              "null character in expression: " + Util::escape_line_breaks(expr));
+        r.failure = cf_failure_code;
+        return r;
+    }
+
+    YY_BUFFER_STATE buf = cf_scan_expr(expr.data(), expr.size());
     int rc = 0;
     CfValue result;
     try {

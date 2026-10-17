@@ -94,6 +94,16 @@ TEST_F(UtilTest, strip_control_chars_keep_c1_pairs) {
     EXPECT_EQ("a\tb\nc\rd", strip_control_chars("a\x1B\tb\nc\rd\x7F", C1Pairs::Keep));
 }
 
+// A7: a NUL is shown as $00 too, so a diagnostic never carries a raw 0x00.
+TEST_F(UtilTest, EscapeLineBreaksAlsoEscapesNul) {
+    using Util::escape_line_breaks;
+    EXPECT_EQ("", escape_line_breaks(""));
+    EXPECT_EQ("a$00b", escape_line_breaks(std::string_view("a\0b", 3)));
+    EXPECT_EQ("$00", escape_line_breaks(std::string_view("\0", 1)));
+    EXPECT_EQ("a$nb$rc$00", escape_line_breaks(std::string_view("a\nb\rc\0", 6)));
+    EXPECT_EQ("plain text", escape_line_breaks("plain text"));
+}
+
 TEST_F(UtilTest, line_breaks_to_spaces) {
     using Util::line_breaks_to_spaces;
     EXPECT_EQ("", line_breaks_to_spaces(""));

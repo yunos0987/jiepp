@@ -165,6 +165,18 @@ TEST_F(BuiltinDiagTest, AssertInvalidExpressionReportsOnlyEvaluatorDiag) {
     only("__assert(defined(X Y), m)", Issue::Code::INVALID_EXPRESSION);
 }
 
+// A7: a raw NUL in the condition is PP52 (once, no PP91). Before the fix the
+// expression was cut at the NUL, so `1\0x` was evaluated as `1` and the
+// assert passed silently. (A `$00` typed in plain text is not decoded, so it
+// would never reach the evaluator as a NUL; the input is a raw byte.)
+TEST_F(BuiltinDiagTest, AssertNulConditionIsReportedOnce) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("", pp(std::string("__assert(1\0x, m)", 16)));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, cs[0]);
+}
+
 // E10: division by zero is PP52 and evaluation continues with 0.
 TEST_F(BuiltinDiagTest, AssertDivisionByZeroDecidedByValue) {
     Issue::ContinueMode guard({});

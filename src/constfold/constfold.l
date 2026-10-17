@@ -192,3 +192,11 @@ ALPHA   [A-Za-z_]
 .   { return cf::CfParser::token::CF_UNKNOWN; }
 
 %%
+
+// A7: scan an expression by its length instead of as a NUL-terminated C
+// string (yy_scan_string), which would silently end the expression at the
+// first NUL byte. evaluate() in constfold.cpp checks n <= INT_MAX - 2 and
+// rejects a NUL in the expression before calling this.
+YY_BUFFER_STATE cf_scan_expr(const char* d, std::size_t n) {
+    return yy_scan_bytes(d, static_cast<int>(n));
+}

@@ -13,7 +13,9 @@ std::string_view trim_view(std::string_view s);
 // Re-escapes a real newline/carriage-return (e.g. one decoded from a $n/$r
 // source escape) back to the literal two-character "$n"/"$r" sequence, so
 // text that may contain either can still be embedded in a single-line
-// diagnostic message without splitting it.
+// diagnostic message without splitting it. A NUL byte (e.g. decoded from
+// $00) is likewise written as the three characters "$00", so a diagnostic
+// never carries a raw 0x00.
 std::string escape_line_breaks(std::string_view s);
 
 // Longest prefix of s that is at most max_bytes long and does not end inside

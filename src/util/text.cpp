@@ -90,6 +90,8 @@ std::string Util::escape_line_breaks(std::string_view s) {
             r += "$n";
         else if (c == '\r')
             r += "$r";
+        else if (c == '\0')
+            r += "$00";
         else
             r += c;
     }
