@@ -960,6 +960,65 @@ TEST_F(SmokeTest, IgnoredPP12CannotHideIncludeDepthExceeded) {
 }
 #endif
 
+// ---- P2-3: control characters in diagnostics (normal builds) ----
+
+#ifndef JIEPP_SANDBOX
+namespace {
+
+// True when s holds a byte a diagnostic must not carry: a C0 control other
+// than TAB and LF (a CR is allowed: the Windows CRT writes CR LF to stderr),
+// DEL, or the UTF-8 C1 pair C2 80 - C2 9F.
+bool has_forbidden_diagnostic_byte(const std::string& s) {
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        if ((c < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == 0x7F)
+            return true;
+        if (c == 0xC2 && i + 1 < s.size()) {
+            const auto n = static_cast<unsigned char>(s[i + 1]);
+            if (n >= 0x80 && n <= 0x9F)
+                return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+// Before the fix the raw ESC, DEL, C2 9B and the LF of the unclosed comment
+// reached stderr as they were.
+TEST_F(SmokeTest, DiagnosticsHaveNoControlBytes) {
+    fs::path input = tmp_dir_ / "ctl_bytes.iec";
+    write_file(input, "{#line a\x1B[31mX}\n"
+                      "{#define A\x7F" "b 1}\n"
+                      "{#line a\xC2\x9B" "b}\n"
+                      "{#error m\x1B" "x}\n"
+                      "(* unclosed\nmore\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_FALSE(has_forbidden_diagnostic_byte(r.err)) << "stderr: " << r.err;
+    // One diagnostic per line: PP20, PP41, PP38, PP41, PP91.
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 5) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP20: Unclosed comment; '(* unclosed$nmore$n'"), std::string::npos)
+        << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("'a$1B[31mX'"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("'A$7Fb 1'"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("'a$C2$9Bb'"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP91: 'm$1Bx'"), std::string::npos) << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, DiagnosticsPathLineBreakEscaped) {
+    fs::path input = tmp_dir_ / "ctl_path.iec";
+    write_file(input, "{#include 'no$nsuch.iec'}\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP11: No such file or directory; 'no$nsuch.iec'"), std::string::npos)
+        << "stderr: " << r.err;
+}
+#endif
+
 // ---- Windows: UTF-8 application manifest (activeCodePage) ----
 //
 // jiepp.exe embeds a manifest with activeCodePage=UTF-8, so on Windows 10
@@ -1170,6 +1229,20 @@ TEST_F(SmokeTest, WindowsCwdNonAsciiDir) {
     auto r = run_w(exe_, L"-P main.iec", cwd, tmp_dir_);
     EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
     EXPECT_EQ(r.out, "X_INC\nM\n") << "stderr: " << r.err;
+}
+
+// P2-3 (review O3): the jiepp.exe manifest makes the narrow path UTF-8, so
+// the C1 rule applies to the file name too: the U+009B (CSI) in it must not
+// reach stderr and is shown as $C2$9B. (The in-process tests run in an ANSI
+// code page and take the other branch, so only this CLI test covers it.)
+TEST_F(SmokeTest, WindowsDiagnosticPathC1Escaped) {
+    const std::u8string name8 = u8"x\u009By.iec";
+    write_file(tmp_dir_ / fs::path(name8), "{#line abc}\n");
+    auto r = run_w(exe_, L"-P \"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("x$C2$9By.iec:"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP41"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("\xC2\x9B"), std::string::npos) << "stderr: " << r.err;
 }
 #endif
 

@@ -63,4 +63,22 @@ std::string strip_control_chars(std::string_view s, C1Pairs c1_pairs = C1Pairs::
 // preserved. Defined in every build; only sandbox builds call it.
 std::string line_breaks_to_spaces(std::string_view s);
 
+// Diagnostic text for normal (non-sandbox) builds, called from
+// Issue::happen(): the bytes strip_control_chars() would remove are written
+// as visible ASCII instead, so one diagnostic stays one line and nothing is
+// lost. Each C0 control other than TAB (0x00-0x1F) becomes "$XX" (two
+// uppercase hex digits, the same form as a source escape), LF becomes "$n"
+// and CR becomes "$r" unless keep_line_breaks is true (message text,
+// PP90-PP93, whose own $n is meant to make a second line), DEL becomes
+// "$7F", and the UTF-8 C1 control pair C2 80 - C2 9F becomes "$C2$XX" (both
+// bytes written out). '$' itself is not escaped, so text without control
+// characters is returned unchanged.
+//
+// c1_pairs has the same meaning as for strip_control_chars(): Remove (here
+// read as "treat the pair as a control character") applies the C1 rule, Keep
+// skips it for a path in an ANSI code page. The pair is judged on the input;
+// what is inserted is printable ASCII only, so an escape cannot form a new
+// pair, and a C2 that is not followed by 0x80-0x9F stays as it is.
+std::string escape_control_chars(std::string_view s, C1Pairs c1_pairs, bool keep_line_breaks);
+
 } // namespace Util

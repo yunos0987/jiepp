@@ -62,6 +62,38 @@ std::string Util::line_breaks_to_spaces(std::string_view s) {
     return out;
 }
 
+std::string Util::escape_control_chars(std::string_view s, C1Pairs c1_pairs, bool keep_line_breaks) {
+    static const char HEX[] = "0123456789ABCDEF";
+    const bool escape_c1 = c1_pairs == C1Pairs::Remove;
+    auto append_hex = [](std::string& out, unsigned char c) {
+        out.push_back('$');
+        out.push_back(HEX[c >> 4]);
+        out.push_back(HEX[c & 0x0F]);
+    };
+    std::string out;
+    out.reserve(s.size());
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        if (c == '\n' || c == '\r') {
+            if (keep_line_breaks)
+                out.push_back(static_cast<char>(c));
+            else
+                out += (c == '\n') ? "$n" : "$r";
+        } else if ((c < 0x20 && c != '\t') || c == 0x7F) {
+            append_hex(out, c);
+        } else if (escape_c1 && c == 0xC2 && i + 1 < s.size() &&
+                   static_cast<unsigned char>(s[i + 1]) >= 0x80 &&
+                   static_cast<unsigned char>(s[i + 1]) <= 0x9F) {
+            append_hex(out, c);
+            append_hex(out, static_cast<unsigned char>(s[i + 1]));
+            ++i;
+        } else {
+            out.push_back(static_cast<char>(c));
+        }
+    }
+    return out;
+}
+
 std::string_view Util::utf8_head(std::string_view s, std::size_t max_bytes) {
     if (s.size() <= max_bytes)
         return s;

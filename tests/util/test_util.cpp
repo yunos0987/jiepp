@@ -4,6 +4,7 @@
 #include "util/path.hpp"
 
 #include <clocale>
+#include <cstdio>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -153,4 +154,95 @@ TEST_F(UtilTest, line_breaks_to_spaces) {
     EXPECT_EQ("a\tb\xC2\x9B", line_breaks_to_spaces("a\tb\xC2\x9B"));
     // As Issue::happen() combines them: strip first, then replace.
     EXPECT_EQ("a  b", line_breaks_to_spaces(Util::strip_control_chars("a\x01\r\n\x7F" "b")));
+}
+
+// P2-3: escape_control_chars() is what normal-build diagnostics use instead
+// of strip_control_chars(): the same bytes are targeted but shown as $XX.
+TEST_F(UtilTest, EscapeControlCharsC0AndDel) {
+    using Util::escape_control_chars;
+    using Util::C1Pairs;
+    EXPECT_EQ("", escape_control_chars("", C1Pairs::Remove, false));
+    EXPECT_EQ("abc", escape_control_chars("abc", C1Pairs::Remove, false));
+    // Every C0 value except TAB, LF, CR becomes $XX (uppercase hex).
+    for (int c = 0; c < 0x20; ++c) {
+        if (c == '\t' || c == '\n' || c == '\r')
+            continue;
+        SCOPED_TRACE(c);
+        char hex[8];
+        std::snprintf(hex, sizeof hex, "$%02X", c);
+        const std::string in = std::string("a") + static_cast<char>(c) + "b";
+        EXPECT_EQ(std::string("a") + hex + "b", escape_control_chars(in, C1Pairs::Remove, false));
+        EXPECT_EQ(std::string("a") + hex + "b", escape_control_chars(in, C1Pairs::Remove, true));
+    }
+    EXPECT_EQ("a$00b", escape_control_chars(std::string_view("a\0b", 3), C1Pairs::Remove, false));
+    EXPECT_EQ("$1B[31mX", escape_control_chars("\x1B[31mX", C1Pairs::Remove, false));
+    EXPECT_EQ("a$7Fb", escape_control_chars("a\x7F" "b", C1Pairs::Remove, false));
+    // TAB is kept.
+    EXPECT_EQ("a\tb", escape_control_chars("a\tb", C1Pairs::Remove, false));
+}
+
+TEST_F(UtilTest, EscapeControlCharsLineBreaks) {
+    using Util::escape_control_chars;
+    using Util::C1Pairs;
+    EXPECT_EQ("a$nb$rc$r$nd", escape_control_chars("a\nb\rc\r\nd", C1Pairs::Remove, false));
+    EXPECT_EQ("a\nb\rc\r\nd", escape_control_chars("a\nb\rc\r\nd", C1Pairs::Remove, true));
+    // keep_line_breaks keeps LF/CR only; the other controls are still escaped.
+    EXPECT_EQ("a$1Bb\nc", escape_control_chars("a\x1B" "b\nc", C1Pairs::Remove, true));
+}
+
+TEST_F(UtilTest, EscapeControlCharsC1Pairs) {
+    using Util::escape_control_chars;
+    using Util::C1Pairs;
+    EXPECT_EQ("$C2$9B[31m", escape_control_chars("\xC2\x9B[31m", C1Pairs::Remove, false));
+    EXPECT_EQ("x$C2$80y$C2$9Fz",
+              escape_control_chars("x\xC2\x80" "y\xC2\x9F" "z", C1Pairs::Remove, false));
+    // Other UTF-8 characters stay: U+00A0 (C2 A0), U+0100 (C4 80), U+3042.
+    EXPECT_EQ("\xC2\xA0", escape_control_chars("\xC2\xA0", C1Pairs::Remove, false));
+    EXPECT_EQ("\xC4\x80", escape_control_chars("\xC4\x80", C1Pairs::Remove, false));
+    EXPECT_EQ("\xE3\x81\x82", escape_control_chars("\xE3\x81\x82", C1Pairs::Remove, false));
+    // A leading C2 that is not itself part of a pair stays raw.
+    EXPECT_EQ("\xC2$C2$9B", escape_control_chars("\xC2\xC2\x9B", C1Pairs::Remove, false));
+    // A C0 control between C2 and 0x9B separates them: no pair is formed.
+    EXPECT_EQ("\xC2$01\x9B", escape_control_chars("\xC2\x01\x9B", C1Pairs::Remove, false));
+    // Invalid UTF-8: a lone 0x9B and a trailing C2 stay.
+    EXPECT_EQ("a\x9B" "b", escape_control_chars("a\x9B" "b", C1Pairs::Remove, false));
+    EXPECT_EQ("a\xC2", escape_control_chars("a\xC2", C1Pairs::Remove, false));
+    // C1Pairs::Keep skips the pair rule (a path in an ANSI code page) but
+    // still escapes C0 and DEL.
+    EXPECT_EQ("\xC2\x82\xA0.iec", escape_control_chars("\xC2\x82\xA0.iec", C1Pairs::Keep, false));
+    EXPECT_EQ("\xC2\x9B$01$7F", escape_control_chars("\xC2\x9B\x01\x7F", C1Pairs::Keep, false));
+}
+
+// Property: for every sequence of 1-3 bytes from a set that contains the
+// bytes of every rule, the output has no C0 control (except TAB, and LF/CR
+// when kept), no DEL and no C2 80 - C2 9F pair.
+TEST_F(UtilTest, EscapeControlCharsPropertyNoForbiddenBytes) {
+    using Util::escape_control_chars;
+    using Util::C1Pairs;
+    const std::string alphabet("a\x00\x09\x0A\x0D\x1B\x7F\xC2\x80\x9B\xA0", 11);
+    auto check = [&](const std::string& in) {
+        for (bool keep : {false, true}) {
+            const std::string out = escape_control_chars(in, C1Pairs::Remove, keep);
+            for (std::size_t i = 0; i < out.size(); ++i) {
+                const auto c = static_cast<unsigned char>(out[i]);
+                if (c < 0x20 && c != '\t' && !(keep && (c == '\n' || c == '\r')))
+                    ADD_FAILURE() << "C0 byte in output for input of " << in.size() << " bytes";
+                if (c == 0x7F)
+                    ADD_FAILURE() << "DEL in output";
+                if (c == 0xC2 && i + 1 < out.size()) {
+                    const auto n = static_cast<unsigned char>(out[i + 1]);
+                    if (n >= 0x80 && n <= 0x9F)
+                        ADD_FAILURE() << "C1 pair in output";
+                }
+            }
+        }
+    };
+    for (char a : alphabet) {
+        check(std::string(1, a));
+        for (char b : alphabet) {
+            check(std::string{a, b});
+            for (char c : alphabet)
+                check(std::string{a, b, c});
+        }
+    }
 }

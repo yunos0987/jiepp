@@ -12,10 +12,8 @@
 
 #include "issue_message.hpp"
 #include "env.hpp"
-#ifdef JIEPP_SANDBOX
 #include "../util/text.hpp"
 #include "../util/path.hpp"
-#endif
 
 // ---------------------------------------------------------------------------
 // Static state
@@ -252,6 +250,20 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
                         filepath() == loc_stack_.front().second)) ? CLI_LOCATION : filepath();
             loc_line = lineno();
         }
+        // Shared by the sandbox strip and the normal-build escape below.
+        // path_c1: whether the UTF-8 C1 rule (C2 80 - C2 9F) applies to a
+        // file path; it is evaluated at every diagnostic because the CRT
+        // locale can change at run time (see the sandbox notes below).
+        const Util::C1Pairs path_c1 = Util::narrow_paths_are_utf8()
+            ? Util::C1Pairs::Remove : Util::C1Pairs::Keep;
+        const bool message_code = code == Code::SEVERE_MESSAGE
+            || code == Code::ERROR_MESSAGE
+            || code == Code::WARNING_MESSAGE
+            || code == Code::INFO_MESSAGE;
+        const bool path_code = code == Code::FILE_ERROR
+            || code == Code::FILE_NOT_FOUND
+            || code == Code::MAX_INCLUDE_DEPTH_EXCEEDED
+            || code == Code::INCLUDE_TARGET_IS_DIRECTORY;
 #ifdef JIEPP_SANDBOX
         // Sandbox: strip control characters to prevent log injection (SPEC
         // 14) from both user-derived fields of every diagnostic -- the
@@ -286,22 +298,29 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // {#line}'s file name is ignored, so both come only from the command
         // line (input file, --disppath, -include, -o, -MF) or from a library
         // caller. Other contexts are input text (UTF-8, SPEC 1) and keep the
-        // full rule on every platform. The predicate is evaluated here, at
-        // every diagnostic, because the CRT locale can change at run time.
-        const Util::C1Pairs path_c1 = Util::narrow_paths_are_utf8()
-            ? Util::C1Pairs::Remove : Util::C1Pairs::Keep;
-        const bool message_code = code == Code::SEVERE_MESSAGE
-            || code == Code::ERROR_MESSAGE
-            || code == Code::WARNING_MESSAGE
-            || code == Code::INFO_MESSAGE;
-        const bool path_code = code == Code::FILE_ERROR
-            || code == Code::FILE_NOT_FOUND
-            || code == Code::MAX_INCLUDE_DEPTH_EXCEEDED
-            || code == Code::INCLUDE_TARGET_IS_DIRECTORY;
+        // full rule on every platform. The predicate (path_c1, above) is
+        // evaluated at every diagnostic, because the CRT locale can change at
+        // run time.
         context = Util::strip_control_chars(context, path_code ? path_c1 : Util::C1Pairs::Remove);
         if (!message_code)
             context = Util::line_breaks_to_spaces(context);
         loc_file = Util::line_breaks_to_spaces(Util::strip_control_chars(loc_file, path_c1));
+#else
+        // Normal build (P2-3, SPEC 16): nothing is removed; every control
+        // character of the context and of the file path is shown as $XX
+        // (LF as $n, CR as $r), so one diagnostic is one line and a quoted
+        // operand or path cannot forge a second diagnostic or carry an
+        // escape sequence to the terminal. The message codes PP90-PP93 keep
+        // the LF/CR of the user's own message ($n there is meant to make a
+        // second line); every other control character in them is escaped.
+        // The same file-path rule as the sandbox strip above decides whether
+        // the C1 pair is escaped (path_c1, path_code); other contexts are
+        // input text and use the full rule. Issue::set_output() streams get
+        // the escaped text too. The fixed placeholders contain no control
+        // characters and are unchanged.
+        context = Util::escape_control_chars(context, path_code ? path_c1 : Util::C1Pairs::Remove,
+                                             /*keep_line_breaks=*/message_code);
+        loc_file = Util::escape_control_chars(loc_file, path_c1, /*keep_line_breaks=*/false);
 #endif
         message_.message(*stream_, severity, code, context, loc_file, loc_line, 0, loc);
         *stream_ << '\n';
