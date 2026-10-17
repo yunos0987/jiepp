@@ -6,7 +6,6 @@
 #include "env/issue.hpp"
 extern CfValue cflval;  // defined in constfold_parser.cpp (bison %code section)
 #include <cctype>
-#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
