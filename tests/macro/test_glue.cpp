@@ -188,30 +188,154 @@ TEST_F(GlueTest, PasteLines) {
 
 // ---- bounded PP32 diagnostics ----
 
-// Repeated invalid pastes keep concatenating, so echoing the accumulated left
-// operand made the diagnostics quadratic in the input. Each message now echoes
-// at most a fixed-size piece of each operand.
+// A failed paste keeps both operands, so the left operand does not grow with
+// the number of failures: each of the n failing pastes below has the same
+// large identifier on the left (x) and a string on the right (y). Each
+// message still echoes at most a fixed-size piece of each operand, so the
+// total size is linear in n.
 TEST_F(GlueTest, InvalidPasteDiagnosticsAreLinear) {
     constexpr int n = 2000;
-    std::string body = "@x";
-    for (int i = 0; i < n; ++i)
-        body += "@@y";
+    const std::string big(1000, 'q');
+    std::string body = "x@@y";
+    for (int i = 1; i < n; ++i)
+        body += " x@@y";
     const std::string def = "{#define A(x,y) " + body + "}\n";
     {
         Issue::ContinueMode guard({});
         auto env = setup();
-        pp(def + "A(a,bcdefghij)\n", env);
+        pp(def + "A(" + big + ",'')\n", env);
     }
     auto msgs = messages();
-    EXPECT_GE(msgs.size(), static_cast<std::size_t>(n) / 2);
+    // Every one of the n pastes fails.
+    EXPECT_GE(msgs.size(), static_cast<std::size_t>(n));
     std::size_t total = 0;
     for (const auto& m : msgs) {
         EXPECT_EQ(Issue::Code::INVALID_TOKEN_PASTING, PlainTextMessage::parse_code(m));
         total += m.size();
+        // The 1000-byte left operand is cut to 64 bytes plus "...".
         EXPECT_LT(m.size(), 400u);
     }
-    // A quadratic echo would be on the order of n*n*9/2 = 18 MB here.
+    // An echo of the whole left operand would be about n*1000 = 2 MB here.
     EXPECT_LT(total, static_cast<std::size_t>(n) * 400u);
+}
+
+// ---- a failed paste keeps both operands as separate tokens ----
+//
+// C leaves the result of an invalid paste undefined; gcc and clang report an
+// error and keep the two tokens apart, and so does jiepp: the left operand is
+// not changed and the right operand is pushed after it. A paste is valid only
+// when both operands have the same token type and that type is not a
+// structural token ( ) , [ ].
+
+namespace {
+
+// Runs `src` as the jiepp command does (continue mode: PP32 and PP34 are
+// counted, processing goes on) and returns the output; the diagnostics are
+// left for messages().
+std::string pp_continue(const std::string& src) {
+    Issue::ContinueMode guard({});
+    auto env = setup();
+    return pp(src, env);
+}
+
+const std::string kPasteDefs = "{#define ID(a, b) a b}{#define G(a, b) <a|b>}";
+
+std::string paste_diag(const std::string& context) {
+    return "<unknown location>:1.0: error: PP32: Invalid token pasting (@@); '" + context + "'";
+}
+
+} // namespace
+
+TEST_F(GlueTest, FailedPasteKeepsRightOperandAfterClosingParen) {
+    // Row 1: ID(a, b) @@ y -- ')' @@ 'y' used to become one RP and eat 'y'.
+    EXPECT_EQ("a by", pp_continue(kPasteDefs + "{#define Q ID(a, b) @@ y}Q"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag(") @@ y")}, messages());
+}
+
+TEST_F(GlueTest, FailedPasteIdentifierThenParenStillCallsMacro) {
+    // Row 2: G @@ ( -- G stays an identifier, so G(1, 2) is called on rescan.
+    EXPECT_EQ("<1|2>", pp_continue(kPasteDefs + "{#define T(m) m @@ (1, 2)}T(G)"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag("G @@ (")}, messages());
+}
+
+TEST_F(GlueTest, FailedPasteClosingParenThenOpenParen) {
+    // Row 3: ')' @@ '(' -- both kept, the '(' is not eaten.
+    EXPECT_EQ("a b(q)", pp_continue(kPasteDefs + "{#define Q ID(a, b) @@ (q)}Q"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag(") @@ (")}, messages());
+}
+
+TEST_F(GlueTest, FailedPasteOpenParenThenMacroCall) {
+    // Row 4: '(' @@ ID(a, b) -- ID is still called.
+    EXPECT_EQ("(a b)", pp_continue(kPasteDefs + "{#define Q ( @@ ID(a, b))}Q"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag("( @@ ID")}, messages());
+}
+
+TEST_F(GlueTest, FailedPasteCommaVaArgsKeepsArgument) {
+    // Row 5: `, @@ __VA_ARGS__` with a non-empty __VA_ARGS__ is PP32 (unlike
+    // the GNU extension in gcc/clang, which gives no diagnostic; intended
+    // difference, SPEC 4.3) and now keeps the argument.
+    EXPECT_EQ("<x|y>", pp_continue(kPasteDefs + "{#define LOG(fmt, ...) G(fmt, @@ __VA_ARGS__)}LOG(x, y)"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag(", @@ y")}, messages());
+}
+
+TEST_F(GlueTest, FailedPasteClosingParenThenClosingParenIsNowPP32) {
+    // Row 6: ')' @@ ')' used to be one RP without a diagnostic (a ')' vanished).
+    EXPECT_EQ("a b) tail", pp_continue(kPasteDefs + "{#define Q ID(a, b) @@ ) tail}Q"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag(") @@ )")}, messages());
+}
+
+TEST_F(GlueTest, FailedPasteCommaThenCommaMakesThreeArguments) {
+    // Row 7: ',' @@ ',' used to be one SEP without a diagnostic (a comma vanished).
+    // Now the call has three arguments: PP32, then PP34, and ID is not expanded.
+    EXPECT_EQ("ID\ntail", pp_continue(kPasteDefs + "{#define Q ID(a , @@ , b)}Q\ntail"));
+    EXPECT_EQ((std::vector<std::string>{
+                  paste_diag(", @@ ,"),
+                  "<unknown location>:1.0: error: PP34: Argument count mismatch; 'ID: expected 2, got 3'"}),
+              messages());
+}
+
+TEST_F(GlueTest, FailedPasteOpenParenThenOpenParenUnclosedCall) {
+    // Row 8: '(' @@ '(' used to be one LP without a diagnostic. Now the call
+    // `ID ( ( a, b)` is not closed: PP32, then PP34 (missing closing
+    // parenthesis); the rest of the file ("tail") is consumed by the search
+    // for the ')' and is not output (only the line break remains).
+    EXPECT_EQ("\n", pp_continue(kPasteDefs + "{#define Q ID ( @@ ( a, b)}Q\ntail"));
+    EXPECT_EQ((std::vector<std::string>{
+                  paste_diag("( @@ ("),
+                  "<unknown location>:1.0: error: PP34: Argument count mismatch; 'ID: missing closing parenthesis'"}),
+              messages());
+}
+
+TEST_F(GlueTest, StructuralTokenPastesAreAllPP32) {
+    // Same-type pastes of the five structural tokens are not valid pastes.
+    // The macro body is `L @@ R` with L and R being the same token; both stay.
+    struct Case { const char* tok; const char* name; };
+    for (const Case& c : {Case{"(", "("}, Case{")", ")"}, Case{",", ","},
+                          Case{"[", "["}, Case{"]", "]"}}) {
+        const std::string ctx = std::string(c.tok) + " @@ " + c.tok;
+        const std::string src = std::string("{#define Q a ") + c.tok + " @@ " + c.tok + " b}Q";
+        // Output is a, the two kept tokens, b (spacing as in the body).
+        std::string out = pp_continue(src);
+        EXPECT_NE(std::string::npos, out.find(std::string(c.tok) + c.tok)) << c.name << ": " << out;
+        auto msgs = messages();
+        ASSERT_FALSE(msgs.empty()) << c.name;
+        EXPECT_EQ(Issue::Code::INVALID_TOKEN_PASTING, PlainTextMessage::parse_code(msgs.front()))
+            << c.name;
+        EXPECT_NE(std::string::npos, msgs.front().find("'" + ctx + "'")) << c.name << ": " << msgs.front();
+    }
+}
+
+TEST_F(GlueTest, IgnoredPP32StillKeepsBothOperands) {
+    // {#ignore PP32}: no diagnostic, and the operands are still not merged.
+    EXPECT_EQ("a by", pp_continue(kPasteDefs + "{#ignore PP32}{#define Q ID(a, b) @@ y}Q"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(GlueTest, ValidPastesAreUnchanged) {
+    // Same non-structural types still merge (ANY @@ ANY, STRING @@ STRING).
+    EXPECT_EQ("xy", pp_continue("{#define Q x @@ y}Q"));
+    EXPECT_EQ("'a''b'", pp_continue("{#define Q 'a' @@ 'b'}Q"));
+    EXPECT_TRUE(empty());
 }
 
 TEST_F(GlueTest, InvalidPasteDiagnosticsBoundLargeOperands) {

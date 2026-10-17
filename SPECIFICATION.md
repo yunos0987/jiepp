@@ -501,7 +501,7 @@ s := {#wstring   a   b  }; (* → "a b" *)
 
 ### 4.3 トークン連結演算子 `@@` / Token Paste Operator
 
-関数マクロ本体内で `@@` を使うと隣接トークンを連結する。C の `##` に相当する。
+マクロ本体（オブジェクトマクロ・関数マクロ）で `@@` を使うと隣接トークンを連結する。C の `##` に相当する。
 
 ```
 {#define VAR_NAME(prefix, n) prefix@@_@@n}
@@ -509,6 +509,21 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 ```
 
 `@@` をマクロ本体の先頭または末尾に置くことはできない（`{#define A @@ b}`・`{#define F(x) x @@}` など）。その場合は `INVALID_TOKEN_PASTING` (`PP32`) エラーになり、その `{#define}` は無視される（gcc/clang と同じ）。
+
+#### 連結に失敗したとき / Failed Paste
+
+連結が成り立つのは、両辺のトークンの種類が同じで、しかも構造のトークン（`(` `)` `,` `[` `]`）でない場合に限る。それ以外は `INVALID_TOKEN_PASTING` (`PP32`) エラーを出し、両辺を連結せずに別々のトークンとして残す（gcc/clang も不正な連結をエラーにして 2 つのトークンを残す）。左辺は変わらず、右辺は左辺の直後に置かれ、後続の再走査はそのまま続く。トークンの間に空白は入れない。
+
+```
+{#define ID(a, b) a b}
+{#define Q ID(a, b) @@ y}   Q            (* → PP32、出力は「a by」（右辺の y は消えない） *)
+{#define G(a, b) <a|b>}
+{#define T(m) m @@ (1, 2)}  T(G)         (* → PP32、出力は「<1|2>」（G は識別子のまま残り、再走査で G(1, 2) が呼ばれる） *)
+```
+
+構造のトークンどうしの連結（`) @@ )`、`, @@ ,` など）も PP32 になり、2 つのトークンが別々に残る（0.8.0 までは診断なしで 1 個のトークンにまとめていた）。たとえば `ID(a , @@ , b)` はカンマが 2 個残るので引数が 3 個になり、`PP34` になる。`{#ignore PP32}` を書いた場合も、診断が出ないだけで両辺は別々に残る。
+
+引数が空でないときの `, @@ __VA_ARGS__`（`{#define LOG(fmt, ...) G(fmt, @@ __VA_ARGS__)}`）は、gcc/clang が GNU 拡張として診断なしで扱うのに対し、jiepp は `,` と引数の連結なので PP32 になる。意図した違いである。引数が空のときはプレースマーカー規則（下記）によりカンマが残り、診断は出ない。
 
 #### プレースマーカー規則 / Placemarker Rule
 
@@ -1623,7 +1638,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP29 | `UNTERMINATED_STRING_LITERAL` | WARNING | Missing terminating quote character | 文字列リテラルが閉じる引用符の前に改行か入力の終わりに達した（§2「閉じていない文字列リテラル」。出力は変わらない。無効なグループと `{#error}` などのメッセージでは出さない） |
 | PP30 | `INVALID_DEFINE_SYNTAX` | ERROR | Invalid define syntax | `{#define}` / `{#undef}` / `-D` / `-U` の構文エラー（マクロ名がない、識別子でない、パラメータリストが不正など。§3） |
 | PP31 | `INVALID_STRINGIZING` | ERROR | Invalid stringizing (@) | 不正な文字列化演算子 |
-| PP32 | `INVALID_TOKEN_PASTING` | ERROR | Invalid token pasting (@@) | 不正なトークン連結演算子、または `@@` がマクロ本体の先頭・末尾にある（§4.3） |
+| PP32 | `INVALID_TOKEN_PASTING` | ERROR | Invalid token pasting (@@) | 不正なトークン連結演算子（連結の結果が 1 個のトークンにならない。両辺を別々のトークンとして残す）、または `@@` がマクロ本体の先頭・末尾にある（§4.3） |
 | PP33 | `INVALID_VARIADIC_PLACEMENT` | ERROR | '...' must be the last parameter | 可変長引数（`...` または `args...`）が最後のパラメータでない |
 | PP34 | `ARGUMENT_COUNT_MISMATCH` | ERROR | Argument count mismatch | 関数マクロ（ビルトイン関数マクロを含む）の引数数不一致。補足情報は `NAME: expected N[-M], got K` または `NAME: missing closing parenthesis` |
 | PP35 | `MACRO_REDEFINED` | WARNING | Macro redefined | マクロの再定義警告。ビルトインマクロの解除・再定義でも出す（補足情報 `NAME: undefining built-in macro` / `NAME: redefining built-in macro`、§3.5・§3.6） |

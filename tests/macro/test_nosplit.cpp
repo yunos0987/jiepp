@@ -93,9 +93,9 @@ TEST_F(NosplitTest, Stringize) {
 // T5: @@ does not pre-expand its operands; through a relay (XCAT) the
 // result is pasted. A protected comma at the edge is an ANY token, so
 // pasting it to an identifier is not PP32 (it would be for an ordinary
-// comma). The case `__nosplit(a, b) @@ y` is not tested here: pasting to
-// the ')' gives PP32 and then loses 'y' for any macro (an existing
-// behaviour unrelated to __nosplit).
+// comma). `__nosplit(a, b) @@ y` pastes the closing ')' to 'y', which is
+// PP32 for any macro; the failed paste keeps both operands, so 'y' is not
+// lost (PasteToClosingParenKeepsBothOperands below).
 TEST_F(NosplitTest, PasteAdjacency) {
     const std::string cat = "{#define CAT(p, q) p @@ q}{#define XCAT(p, q) CAT(p, q)}";
     EXPECT_EQ("x__nosplit(a, b)", pp("{#define P1() x @@ __nosplit(a, b)}P1()"));
@@ -109,6 +109,14 @@ TEST_F(NosplitTest, PasteAdjacency) {
         EXPECT_EQ("CAT", pp(cat + kId + "XCAT(x, ID(a, b))"));
         EXPECT_EQ(Strings({"PP34: Argument count mismatch; 'CAT: expected 2, got 3'"}), diags());
     }
+}
+
+// The closing ')' of __nosplit(...) pasted to 'y' is PP32 (a structural
+// token cannot be pasted); both operands stay, so 'y' is kept.
+TEST_F(NosplitTest, PasteToClosingParenKeepsBothOperands) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("a, by", pp("{#define P2() __nosplit(a, b) @@ y}P2()"));
+    EXPECT_EQ(Strings({"PP32: Invalid token pasting (@@); ') @@ y'"}), diags());
 }
 
 // T6: commas inside (...)/[...] are left as they are. (d) fails with PP34

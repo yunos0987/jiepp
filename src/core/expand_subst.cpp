@@ -72,11 +72,13 @@ std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts) {
 
 // ── §glue — paste last of left side with first of right side ──────
 
-// A failed paste still concatenates, so repeated bad pastes in one body make
-// the left operand grow, and echoing it whole in every PP32 message is
-// quadratic in the input (clang echoes only the pair formed by each paste and
-// stops after -ferror-limit errors; jiepp has no such limit). Bound each
-// echoed operand instead: keep at most kPasteEchoMax bytes and mark the cut
+// A failed paste (PP32) keeps both operands as separate tokens, like gcc and
+// clang, so it does not make the left operand grow. A successful paste does:
+// repeated good pastes in one body make the left operand large, and a later
+// failing paste then echoes it in PP32; echoing it whole in every message
+// would be quadratic in the input (clang echoes only the pair formed by each
+// paste and stops after -ferror-limit errors; jiepp has no such limit). Bound
+// each echoed operand: keep at most kPasteEchoMax bytes and mark the cut
 // with "...". The cut is moved to a UTF-8 character boundary so a multibyte
 // character is never split. The code and severity of the diagnostic are
 // unchanged.
@@ -88,6 +90,18 @@ static std::string paste_echo_head(const std::string& s) {
 
 static std::string paste_echo_tail(const std::string& s) {
     return s.size() <= kPasteEchoMax ? s : "..." + std::string(Util::utf8_tail(s, kPasteEchoMax));
+}
+
+// The structural tokens ( ) , [ ]: pasting to one never forms a valid token.
+static bool is_structural_token(int type) {
+    return type == Token::LP || type == Token::RP || type == Token::SEP ||
+           type == Token::LB || type == Token::RB;
+}
+
+// True iff `prev @@ next` forms one token: both have the same type and the
+// type is not a structural token.
+static bool paste_is_valid(const Token& prev, const Token& next) {
+    return prev.type == next.type && !is_structural_token(prev.type);
 }
 
 void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
@@ -102,10 +116,17 @@ void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
     auto& prev = src.back();
     auto& next = item.front();
 
-    if (prev.type != Token::ANY || next.type != Token::ANY)
-        if (prev.type != next.type)
-            ISSUE(INVALID_TOKEN_PASTING,
-                  paste_echo_tail(prev.text) + " @@ " + paste_echo_head(next.text));
+    if (!paste_is_valid(prev, next)) {
+        // Report, then keep both operands as separate tokens (gcc/clang).
+        // Nothing of prev (text, hide set) changes. ISSUE runs before the
+        // push so a thrown Issue::Exception leaves src untouched, and `prev`
+        // is not used after the push (it may dangle).
+        ISSUE(INVALID_TOKEN_PASTING,
+              paste_echo_tail(prev.text) + " @@ " + paste_echo_head(next.text));
+        for (auto& t : item)
+            src.push_back(std::move(t));
+        return;
+    }
 
     prev.hs = Token::HideSet::intersect(prev.hs, next.hs);
     prev.text += next.text;
@@ -540,12 +561,18 @@ std::vector<Token> subst(
                     result.push_back(std::move(tk));
                 pending_placemarker = item.empty();
             } else {
-                // Work budget (PP64): every token merged by @@ is charged
-                // before it is merged (a merge grows result.back() in place,
-                // which charge_new() above cannot see).
+                // Work budget (PP64): the one token merged by @@ (item[0]
+                // into result.back()) is charged before it is merged (a merge
+                // grows result.back() in place, which charge_new() above
+                // cannot see). Every token that is pushed to result instead
+                // -- item[1..] of a valid paste, the whole of item when the
+                // paste fails (PP32) or result is empty -- is charged once,
+                // by the next charge_new(); charging it here as well would
+                // count it twice.
                 std::uint64_t merge_cost = 0;
-                for (const auto& it : item)
-                    merge_cost += step_cost(it);
+                if (!result.empty() && !item.empty() &&
+                    paste_is_valid(result.back(), item.front()))
+                    merge_cost = step_cost(item.front());
                 env.charge_expansion_steps(merge_cost);
                 glue_tokens(result, item);
                 pending_placemarker = false;
