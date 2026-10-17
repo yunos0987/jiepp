@@ -53,6 +53,22 @@ public:
             raise_expansion_steps_exceeded();
     }
 
+    // ---- Include count budget (PP66; 0 = no limit) ----
+    // Counts executed {#include}/{#sinclude} directives (a {#pragma once}
+    // skip included: the path is resolved either way), per
+    // preprocess()/preprocess_text() call (reset on entry); -include files,
+    // __has_include and the main input are not counted. Like the step budget
+    // there is no in-source directive, so input cannot raise its own limit.
+    void count_include() {
+        if (max_include_count_ != 0 &&
+            ++include_count_ > static_cast<std::uint64_t>(max_include_count_)) [[unlikely]]
+            raise_include_count_exceeded();
+    }
+    void          set_max_include_count(int n) { max_include_count_ = n; }
+    int           get_max_include_count() const { return max_include_count_; }
+    std::uint64_t include_count() const { return include_count_; }
+    void          reset_include_count() { include_count_ = 0; }
+
     // ---- Conditional nesting limit ----
     int  get_max_if_nesting() const { return max_if_nesting_; }
     bool set_max_if_nesting(int n);
@@ -99,6 +115,10 @@ public:
 
 private:
     [[noreturn]] void raise_expansion_steps_exceeded() const;
+    [[noreturn]] void raise_include_count_exceeded() const;
+
+    std::uint64_t include_count_         = 0;
+    int           max_include_count_     = DEFAULT_MAX_INCLUDE_COUNT;
 
     std::uint64_t expansion_steps_       = 0;
     std::uint64_t max_expansion_steps_   = DEFAULT_MAX_EXPANSION_STEPS;

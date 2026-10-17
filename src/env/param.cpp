@@ -98,6 +98,19 @@ bool Param::fix_max_expansion_depth(int depth) {
 }
 
 // ---------------------------------------------------------------------------
+// Include count budget
+// ---------------------------------------------------------------------------
+
+void Param::raise_include_count_exceeded() const {
+    ISSUE(MAX_INCLUDE_COUNT_EXCEEDED,
+          "limit " + std::to_string(max_include_count_) +
+          "; use --max-include-count N to raise it (0 = no limit)");
+    // SEVERE: happen() always throws; this keeps the [[noreturn]] contract
+    // honest, like raise_expansion_steps_exceeded() below.
+    throw Issue::Exception(Issue::Code::MAX_INCLUDE_COUNT_EXCEEDED);
+}
+
+// ---------------------------------------------------------------------------
 // Expansion work budget
 // ---------------------------------------------------------------------------
 

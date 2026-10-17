@@ -21,6 +21,8 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     // One expansion-step budget (PP64) per call; a previous call's count,
     // including one that stopped at the limit, does not carry over.
     env.reset_expansion_steps();
+    // Same for the executed-include count (PP66).
+    env.reset_include_count();
     auto its = iec3_tokens(input, env.get_remove_comments(), 1);
     std::vector<Token> ots;
     // No leading line marker here (unlike the jiepp command line), so tell

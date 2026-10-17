@@ -109,7 +109,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 - 入出力: `input_filepaths`, `output_filepath`, `disppath`（表示用パス。既定値・stdin 時の挙動は [SPECIFICATION.md §13](SPECIFICATION.md#13-cli-リファレンス--cli-reference)）
 - マクロ: `define_macros`(`-D`), `undef_macros`(`-U`), `include_filepaths`(`-include`), `syspaths`(`-I`)
-- 上限値: `max_include_depth`, `max_expansion_depth`, `max_expansion_steps`(`--max-expansion-steps`、展開の仕事量の上限・`PP64`・ディレクティブなし), `error_limit`(`--error-limit`、エラー件数の上限・`PP65`・ディレクティブなし。`Issue::error_limit_` に設定する), `max_if_nesting`, `max_blank_lines`, `recursion_limit`
+- 上限値: `max_include_depth`, `max_expansion_depth`, `max_expansion_steps`(`--max-expansion-steps`、展開の仕事量の上限・`PP64`・ディレクティブなし), `max_include_count`(`--max-include-count`、実行した `{#include}`/`{#sinclude}` の回数の上限・`PP66`・ディレクティブなし。`Param::count_include()` を `handle_include()` が strip_path と NUL 検査の後、`expand()` の前に 1 回呼ぶ。`{#pragma once}` で飛ばすものも数える。カウンタは `preprocess()` ごとに `reset_include_count()`。CLI は Env 1 個で全体を数え、`-include` と `__has_include` は数えない), `error_limit`(`--error-limit`、エラー件数の上限・`PP65`・ディレクティブなし。`Issue::error_limit_` に設定する), `max_if_nesting`, `max_blank_lines`, `recursion_limit`
 - 依存関係: `dep_mode`(`-M`/`-MM`), `dep_file`(`-MF`), `dep_target`(`-MT`), `MD`/`MMD`(`-MD`/`-MMD`)
 - 出力形式: `pp_output_pragma_style`, `no_line_markers`(`-P`), `dM`(`-dM`), `dD`(`-dD`), `remove_comments`(`-nC`)
 - 診断: `silent`, `suppress_warnings`(`-w`), `werror`(`-Werror`), `warn_undef`(`-Wundef`。`jiepp_command()` が `-D`/`-U` を処理する前に `Issue::enable(UNDEFINED_IDENTIFIER)` を呼ぶ), `werror_undef`(`-Werror=undef`。同じ位置で `Issue::add_werror(UNDEFINED_IDENTIFIER)` を呼ぶ。`-Werror=` に続けられるのは `undef` だけ)

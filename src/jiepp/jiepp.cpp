@@ -279,6 +279,8 @@ int jiepp_command(const JieppOptions& opts)
             env.fix_max_expansion_depth(*opts.max_expansion_depth);
         if (opts.max_expansion_steps)
             env.set_max_expansion_steps(static_cast<std::uint64_t>(*opts.max_expansion_steps));
+        if (opts.max_include_count)
+            env.set_max_include_count(*opts.max_include_count);
         if (opts.max_if_nesting)
             env.fix_max_if_nesting(*opts.max_if_nesting);
         if (opts.max_blank_lines)

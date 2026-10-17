@@ -163,6 +163,7 @@ cat input.iec | jiepp -
 | `-nC` | コメント除去 | off |
 | `-dM` | マクロ一覧出力 | off |
 | `--max-expansion-steps N` | マクロ展開の仕事量の上限（`0` で無制限。超えると `PP64` で中断） | 16777216 |
+| `--max-include-count N` / `--max_include_count N` | 実行した `{#include}` / `{#sinclude}` の回数の上限（`0` で無制限。超えると `PP66` で中断） | 10000 |
 | `--error-limit N` / `--error_limit N` | エラー件数の上限（`0` で無制限。N 件に達した後の次のエラーは出さずに `PP65` で中断） | 1000（サンドボックスビルドは 100） |
 | `--` | オプション終端 | — |
 | `--help` / `-h` | ヘルプ表示 | — |

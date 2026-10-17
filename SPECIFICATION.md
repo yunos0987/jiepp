@@ -849,7 +849,27 @@ VAR CONSTANT MAX_SIZE : INT := 100; END_VAR
 
 デフォルト: **100**。`--max-include-depth N` / `{#max_include_depth N}` で変更可能。超過すると `MAX_INCLUDE_DEPTH_EXCEEDED` エラー。
 
-> **注意**: Jiepp は循環インクルードを直接検出しない。深度制限到達時に `PP12` エラーで停止することで間接的に無限ループを防止する。
+> **注意**: Jiepp は循環インクルードを直接検出しない。深度制限到達時に `PP12` エラーで停止することで間接的に無限ループを防止する。深度を抑えたまま同じファイルを何度もインクルードする入力（扇状のインクルード）は深度制限では止まらない。実行したインクルードの回数は §7.10 の上限で抑える。
+
+### 7.10 インクルード回数の上限 / Include Count Limit
+
+実行した `{#include}` / `{#sinclude}` の回数には上限があり、既定は **10000** である（`PP66`、`MAX_INCLUDE_COUNT_EXCEEDED`、SEVERE）。`--max-include-count N` / `--max_include_count N` で変更できる（0〜2147483647 の整数。`0` で無制限。負数・数字以外・範囲外は `PP71`、値なしは `PP72`）。ディレクティブ形式はない（入力が自分で上限を引き上げられないようにするため。§11）。
+
+- 数えるのは、実行した `{#include}` / `{#sinclude}` ディレクティブの回数である。パスの構文が正しく（不正なら `PP47`）、ファイルの解決に進んだものを 1 回と数える。`{#pragma once}` で読み込みを飛ばしたものも数える（パスの解決にかかる仕事は飛ばすときも同じなので）。主入力、`-include`、`__has_include` は数えない。ファイルが見つからなくても（`PP11`）数える
+- 数える範囲は jiepp コマンド 1 回、またはライブラリの `preprocess()` / `preprocess_text()` 1 回ごとで、呼び出しごとに 0 から数え直す
+- 上限を超える `N+1` 回目のディレクティブで `PP66`（補足情報は `limit N; use --max-include-count N to raise it (0 = no limit)`、位置はそのディレクティブ）を出して処理を中断する。SEVERE なので `{#ignore PP66}`・`-w`・`--silent` でも止まり、終了コードは `1`、出力は `PP64` と同じ規則に従う（§16）
+- サンドボックスビルドでは `{#include}` が `PP62` なので、実質的な効果はない。オプションは受け付ける
+
+深度の判定（`{#if __INCLUDE_LEVEL__ < N}`）で再帰を抑えた次の入力は、深度制限（`--max-include-depth`）には掛からないまま、実行するインクルードが約 2^19 回に増える。回数の上限が止める。
+
+```
+{#if __INCLUDE_LEVEL__ < 18}
+{#include 'fan.iec'}
+{#include 'fan.iec'}
+{#endif}
+```
+
+（このファイルが `fan.iec` の場合。既定では 10001 回目で `PP66` になる。）
 
 ### 7.9 相対パスの基準 / Relative Path Base
 
@@ -990,12 +1010,14 @@ SEVERE のコード（例: `PP63`・`PP64`）は `{#ignore}` を書いても抑�
 | `{#max_expansion_depth N}` | `--max-expansion-depth N` | 256 | マクロ展開深度上限 |
 | `{#max_if_nesting N}` | `--max-if-nesting N` | 256 | 条件分岐ネスト深度上限 |
 | （ディレクティブなし） | `--max-expansion-steps N` | 16777216（2^24） | マクロ展開の仕事量の上限（ステップ数）。`0` で無制限。下記「展開ステップ数の上限」参照 |
+| （ディレクティブなし） | `--max-include-count N` | 10000 | 実行した `{#include}` / `{#sinclude}` の回数の上限。`0` で無制限。§7.10 参照 |
+| （ディレクティブなし） | `--error-limit N` | 1000（サンドボックスビルドは 100） | エラー件数の上限。`0` で無制限。§16「jiepp コマンドラインでの継続モード」参照 |
 | `{#max_blank_lines N}` / `{#max-blank-lines N}` | `--max-blank-lines N` | 7 | 連続空行の圧縮閾値（`0` で圧縮を無効化、§1・§9） |
 | `{#pp_output_pragma_style STYLE}` | `--pp-output-pragma-style STYLE` | `annotated` | プラグマ出力スタイル |
 
 CLI オプションで設定した値はソースコード内のディレクティブで上書きできない（ロックされる）。
 
-**例外**: `--max-expansion-steps` にはディレクティブ形式がない。入力ソースが自分で上限を引き上げられないようにするためである（上のほかの制限はすべてディレクティブ形式を持つ）。
+**例外**: `--max-expansion-steps`・`--max-include-count`・`--error-limit` にはディレクティブ形式がない。入力ソースが自分で上限を引き上げられないようにするためである（上のほかの制限はすべてディレクティブ形式を持つ）。
 
 `{#max_*}` のオペランドは 10 進整数 1 個で、前後のコメントは空白として扱う。整数の後ろに余分な文字やトークンがある場合（`2x`・`2 3`・`2.9` など）は `INVALID_LIMIT_OPERAND` (`PP43`) エラーになり、値は変わらない。
 
@@ -1356,6 +1378,7 @@ jiepp [filepath] [options]
 | `--max-include-depth N` | インクルード深度上限 | 100 |
 | `--max-expansion-depth N` | マクロ展開深度上限 | 256 |
 | `--max-expansion-steps N` | マクロ展開の仕事量の上限（ステップ数、§11）。`0` で無制限。0〜2147483647 の整数で、負数・数字以外・範囲外は `INVALID_OPTION_VALUE` (`PP71`)、値なしは `MISSING_OPTION_VALUE` (`PP72`)。深度系オプションの上限 2^24（`PP04`）は適用されない。ディレクティブ形式はない | 16777216 |
+| `--max-include-count N` / `--max_include_count N` | 実行した `{#include}` / `{#sinclude}` の回数の上限（§7.10）。`0` で無制限。超えると `MAX_INCLUDE_COUNT_EXCEEDED`（`PP66`、SEVERE）で中断する。0〜2147483647 の整数で、負数・数字以外・範囲外は `INVALID_OPTION_VALUE` (`PP71`)、値なしは `MISSING_OPTION_VALUE` (`PP72`)。ディレクティブ形式はない | 10000 |
 | `--error-limit N` / `--error_limit N` | エラー件数の上限（§16「jiepp コマンドラインでの継続モード」）。数えたエラーが `N` 件に達した後で次にエラーが起きると、そのエラーは出さずに `TOO_MANY_ERRORS`（`PP65`、SEVERE）で中断する。`0` で無制限。0〜2147483647 の整数で、負数・数字以外・範囲外は `INVALID_OPTION_VALUE` (`PP71`)、値なしは `MISSING_OPTION_VALUE` (`PP72`)。深度系オプションの上限 2^24（`PP04`）は適用されない。ディレクティブ形式はない | 1000（サンドボックスビルドは 100） |
 | `--max-if-nesting N` | 条件分岐ネスト深度上限 | 256 |
 | `--max-blank-lines N` | 圧縮せず出力する連続空行の最大数（`0` で圧縮を無効化） | 7 |
@@ -1613,7 +1636,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 
 **jiepp コマンドラインでの継続モード**: jiepp コマンド（`jiepp_command()`。CLI 本体）は、ライブラリの既定動作と別に、gcc と同じ「エラーが出ても最後まで処理を続ける」モードで動く。
 
-- 中断するのは SEVERE（`PP63`・`PP64`・`PP65` など）と `PP10`（`FILE_ERROR`）・`PP11`（`FILE_NOT_FOUND`）・`PP12`（`MAX_INCLUDE_DEPTH_EXCEEDED`）・`PP13`（`INVALID_COMMAND`）・`PP14`（`INCLUDE_TARGET_IS_DIRECTORY`）・`PP60`（`MAX_EXPANSION_DEPTH_EXCEEDED`）・`PP61`（`MAX_IF_NESTING_EXCEEDED`）だけ。gcc がまだ中断しない場合でも jiepp は中断する（例: インクルード深度超過を許すと処理量が指数的に増えかねないため）
+- 中断するのは SEVERE（`PP63`・`PP64`・`PP65`・`PP66` など）と `PP10`（`FILE_ERROR`）・`PP11`（`FILE_NOT_FOUND`）・`PP12`（`MAX_INCLUDE_DEPTH_EXCEEDED`）・`PP13`（`INVALID_COMMAND`）・`PP14`（`INCLUDE_TARGET_IS_DIRECTORY`）・`PP60`（`MAX_EXPANSION_DEPTH_EXCEEDED`）・`PP61`（`MAX_IF_NESTING_EXCEEDED`）だけ。gcc がまだ中断しない場合でも jiepp は中断する（例: インクルード深度超過を許すと処理量が指数的に増えかねないため）
 - 上記以外の ERROR（`{#error}` を含む）はメッセージを出してエラー件数を 1 増やし処理を続ける。`-Werror` や `-Werror=undef` で昇格した WARNING も、元のコードが中断コードでなければ同様に件数へ加算するだけ
 - エラー件数は `--error-limit N`（既定 1000、サンドボックスビルドは 100、`0` で無制限）で制限される。数えたエラーがちょうど `N` 件に達した後で、次に数えるべき ERROR が起きると、その ERROR は出さずに `PP65`（`TOO_MANY_ERRORS`、SEVERE。`Too many errors emitted, stopping now`、補足情報は `limit N; use --error-limit N to raise it (0 = no limit)`）を出して中断する。`PP65` の位置は、出さなかったそのエラーの位置（処理を止めた場所）である。エラーがちょうど `N` 件なら `PP65` は出ない。数えるのは上の件数と同じエラーだけで、WARNING・INFO と `{#ignore}` で抑制した診断は数えず、`-Werror` で昇格した警告は数える。上の中断コード（`PP10`〜`PP14`、`PP60`、`PP61`、SEVERE）は件数が `N` に達していても自分のコードで中断する。`PP65` は SEVERE なので `{#ignore PP65}`・`-w`・`--silent` でも止まり、終了コードは `1`、出力は `PP64` と同じ規則に従う。この上限は継続モードの jiepp コマンドだけに効く。ライブラリとして使う場合の `Issue::error_limit_` は既定 0（無制限）で、`Issue::ContinueMode` なしで設定しても何も起きない
 - `--silent`/`-w` は表示だけを抑制し件数には影響しない。`{#ignore}` で抑制した診断は表示も件数加算も行わない
@@ -1685,6 +1708,7 @@ jiepp: error: PP70: Unknown command-line option; '--foo'
 | PP63 | `STACK_EXHAUSTED` | SEVERE | Stack nearly exhausted | マクロ展開の入れ子、または入れ子の `__VA_OPT__` が深く、スタックの残りが 256 KiB を下回った。処理を中断する（クラッシュはしない）。`--recursion-limit` でスタックを大きくできる（§11・§13）。jiepp コマンドだけが発行する |
 | PP64 | `MAX_EXPANSION_STEPS_EXCEEDED` | SEVERE | Maximum expansion steps exceeded | マクロ展開の仕事量（ステップ数）が上限を超えた。処理を中断する。`--max-expansion-steps N` で上限を変えられる（`0` で無制限、§11・§13） |
 | PP65 | `TOO_MANY_ERRORS` | SEVERE | Too many errors emitted, stopping now | エラー件数が `--error-limit N` を超えた。上限に達した後の次のエラーの位置で、そのエラーは出さずに処理を中断する（既定 1000、サンドボックスビルドは 100、`0` で無制限。§13・§16） |
+| PP66 | `MAX_INCLUDE_COUNT_EXCEEDED` | SEVERE | Maximum include count exceeded | 実行した `{#include}` / `{#sinclude}` の回数が上限を超えた。処理を中断する。`--max-include-count N` で上限を変えられる（既定 10000、`0` で無制限、§7.10・§13） |
 | PP70 | `UNKNOWN_OPTION` | ERROR | Unknown command-line option | 未知のコマンドラインオプション |
 | PP71 | `INVALID_OPTION_VALUE` | ERROR | Invalid option value | オプション値が不正（正の整数でない等） |
 | PP72 | `MISSING_OPTION_VALUE` | ERROR | Option requires a value | オプションに値が指定されていない |

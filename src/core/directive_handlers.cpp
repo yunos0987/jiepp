@@ -551,6 +551,11 @@ void handle_include(const std::string& raw_arg,
         && include_path.find('\0') == std::string::npos) {
         auto disp_path = fs::path(include_path).generic_string();
 
+        // PP66: count the executed directive (valid path, about to resolve
+        // and include; a {#pragma once} skip is counted too, since the path
+        // is resolved either way) before any file system work.
+        env.count_include();
+
         Loader::LoadType loadtype = (syspath_only || syspath_only_path) ? Loader::LoadType::SINCLUDE : Loader::LoadType::INCLUDE;
         expand(include_path, loadtype, ots, env, disp_path);
         return;

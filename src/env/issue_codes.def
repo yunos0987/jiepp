@@ -77,6 +77,7 @@ JIEPP_ISSUE_CODE(SANDBOX_RESTRICTED_DIRECTIVE, 62, ERROR,   "Directive is restri
 JIEPP_ISSUE_CODE(STACK_EXHAUSTED,              63, SEVERE,  "Stack nearly exhausted")
 JIEPP_ISSUE_CODE(MAX_EXPANSION_STEPS_EXCEEDED, 64, SEVERE,  "Maximum expansion steps exceeded")
 JIEPP_ISSUE_CODE(TOO_MANY_ERRORS,              65, SEVERE,  "Too many errors emitted, stopping now")
+JIEPP_ISSUE_CODE(MAX_INCLUDE_COUNT_EXCEEDED,   66, SEVERE,  "Maximum include count exceeded")
 
 // --- CLI/Option (70-79) ---
 JIEPP_ISSUE_CODE(UNKNOWN_OPTION,               70, ERROR,   "Unknown command-line option")

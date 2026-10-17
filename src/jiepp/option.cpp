@@ -87,6 +87,7 @@ void display_help_and_exit(int exit_code = 0) {
         "  --max-include-depth N    Maximum include depth (default: 100)\n"
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
         "  --max-expansion-steps N  Maximum macro expansion work in steps (default: 16777216; 0 = no limit)\n"
+        "  --max-include-count N    Maximum number of executed {#include} directives (default: 10000; 0 = no limit)\n"
 #ifdef JIEPP_SANDBOX
         "  --error-limit N          Stop after N errors (default: 100; 0 = no limit)\n"
 #else
@@ -292,6 +293,12 @@ JieppOptions parse_args(int argc, char* argv[]) {
         if (arg == "--max-expansion-steps" || arg == "--max_expansion_steps") {
             require_value(i, argc, arg);
             opts.max_expansion_steps = parse_nonnegative_int(argv[++i], arg);
+            ++i; continue;
+        }
+
+        if (arg == "--max-include-count" || arg == "--max_include_count") {
+            require_value(i, argc, arg);
+            opts.max_include_count = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 

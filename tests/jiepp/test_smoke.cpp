@@ -959,6 +959,98 @@ TEST_F(RobustnessTestSmoke, ErrorLimitDefault) {
     EXPECT_EQ(count_lines_with(r.err, ": PP65:"), 1u);
 }
 
+// ---- --max-include-count (PP66) ----
+//
+// `{#include}` does not exist in sandbox builds (PP62), so these are normal
+// build tests.
+
+#ifndef JIEPP_SANDBOX
+namespace {
+
+// A self-include that fans out: every level includes the file twice until
+// __INCLUDE_LEVEL__ reaches 18, so about 2^19 includes. No {#ignore}: PP12
+// cannot be suppressed. Before PP66 this took 95 s on the development machine
+// (Release) and ended in PP64 (expansion steps); D=14 took 3.2 s and rc 0.
+const char* const FAN_OUT_SOURCE =
+    "{#if __INCLUDE_LEVEL__ < 18}\n"
+    "{#include 'fan2.iec'}\n"
+    "{#include 'fan2.iec'}\n"
+    "{#endif}\n";
+
+}  // namespace
+
+// The default (10000) stops the fan-out with exactly one PP66.
+TEST_F(SmokeTest, IncludeFanOutStopsAtDefaultCount) {
+    fs::path input = tmp_dir_ / "fan2.iec";
+    write_file(input, FAN_OUT_SOURCE);
+
+    auto r = run("-P --max-include-depth 100 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(count_lines_with(r.err, ": PP66: Maximum include count exceeded"), 1u)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.err.find("limit 10000; use --max-include-count N to raise it (0 = no limit)"),
+              std::string::npos) << "stderr: " << r.err.substr(0, 2000);
+}
+
+#ifdef NDEBUG
+// Timing guard. Without the option this input takes 95 s, but before
+// --max-include-count existed the option itself was PP70 and the run ended at
+// once, so "under 3 s" alone would pass before the fix: the RED is that no
+// PP66 appears, hence rc 1 and exactly one PP66 are required as well. After
+// the fix 1000 includes take well under a second.
+TEST_F(SmokeTest, IncludeFanOut_TimingGuard) {
+    fs::path input = tmp_dir_ / "fan2.iec";
+    write_file(input, FAN_OUT_SOURCE);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    auto r = run("-P --max-include-count 1000 \"" + input.generic_string() + "\"");
+    const double secs =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(count_lines_with(r.err, ": PP66:"), 1u) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_LT(secs, 3.0) << "took " << secs << " s";
+}
+#endif
+
+TEST_F(SmokeTest, MaxIncludeCountOption) {
+    write_file(tmp_dir_ / "inc.iec", "X\n");
+    fs::path input = tmp_dir_ / "three.iec";
+    write_file(input, "{#include 'inc.iec'}\n{#include 'inc.iec'}\n{#include 'inc.iec'}\n");
+
+    for (const char* spelling : {"--max-include-count", "--max_include_count"}) {
+        SCOPED_TRACE(spelling);
+        auto r = run(std::string("-P ") + spelling + " 2 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+        EXPECT_EQ(count_lines_with(r.err, ": PP66:"), 1u) << "stderr: " << r.err;
+        // The PP66 is reported at the third directive (line 3).
+        EXPECT_NE(r.err.find("three.iec:3.0: error: PP66:"), std::string::npos) << "stderr: " << r.err;
+
+        r = run(std::string("-P ") + spelling + " 3 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+        EXPECT_EQ(r.out, "X\nX\nX\n");
+
+        r = run(std::string("-P ") + spelling + " 0 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    }
+}
+
+// -include files are not counted, only executed {#include} directives.
+TEST_F(SmokeTest, MaxIncludeCountIgnoresCommandLineInclude) {
+    write_file(tmp_dir_ / "inc.iec", "X\n");
+    write_file(tmp_dir_ / "pre1.iec", "P1\n");
+    write_file(tmp_dir_ / "pre2.iec", "P2\n");
+    fs::path input = tmp_dir_ / "one.iec";
+    write_file(input, "{#include 'inc.iec'}\n");
+
+    auto r = run("-P --max-include-count 1 -include \"" + (tmp_dir_ / "pre1.iec").generic_string() +
+                 "\" -include \"" + (tmp_dir_ / "pre2.iec").generic_string() + "\" \"" +
+                 input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "P1\nP2\nX\n");
+}
+#endif
+
 // ---- U1: re-lex diagnostics are reported at the file and line of the
 // directive or pragma being processed ----
 

@@ -25,6 +25,11 @@ inline constexpr int         DEFAULT_MAX_BLANK_LINES        = 7;
 // count, not a depth, so MAX_PARAMETER_VALUE below does not apply to it.
 inline constexpr std::uint64_t DEFAULT_MAX_EXPANSION_STEPS  = 1ull << 24; // 16,777,216
 
+// Cap on executed {#include}/{#sinclude} directives (PP66), used in every
+// build. 0 means no limit. Like DEFAULT_MAX_EXPANSION_STEPS this is a count of
+// work, not a depth, so MAX_PARAMETER_VALUE below does not apply to it.
+inline constexpr int         DEFAULT_MAX_INCLUDE_COUNT      = 10000;
+
 // Default for --error-limit (PP65): the number of errors counted before the
 // next one stops processing. 0 means no limit. The CLI sets this default; the
 // library's Issue::error_limit_ stays 0 unless the caller sets it. A sandbox
