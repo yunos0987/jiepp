@@ -1,6 +1,6 @@
 # セキュリティポリシー / Security Policy
 
-**English summary:** Please report security vulnerabilities privately through GitHub's private vulnerability reporting (the "Report a vulnerability" button in the repository's Security tab). Do not open a public issue for a vulnerability. Security fixes are made for the latest release and for the `develop` branch. The rest of this document is in Japanese.
+**English summary:** Please report security vulnerabilities privately through GitHub's private vulnerability reporting (the "Report a vulnerability" button in the repository's Security tab). Do not open a public issue for a vulnerability. Security fixes are made for the latest release and for the `develop` branch, and are released as patch versions (e.g. 1.0.1). The rest of this document is in Japanese.
 
 ## 脆弱性の報告方法
 
@@ -14,7 +14,7 @@
 
 ## 対象バージョン
 
-セキュリティ修正の対象は、最新のリリースと `develop` ブランチです。古いリリースへの修正の取り込み（バックポート）は予定していません。現在のバージョンは [`VERSION`](VERSION) と [`vcpkg.json`](vcpkg.json) の `version`（現時点では 0.8.0）で確認できます。
+セキュリティ修正の対象は、最新のリリース（1.0.x の最新版）と `develop` ブランチです。修正はパッチ版（例: 1.0.1）として出します。古いリリースへの修正の取り込み（バックポート）は予定していません。現在のバージョンは [`VERSION`](VERSION) と [`vcpkg.json`](vcpkg.json) の `version` で確認できます。
 
 ## 報告に含めてほしい内容
 
@@ -69,6 +69,21 @@ C1 制御文字の除去は UTF-8 を前提にしています。ANSI コード�
 `--error-limit` が抑えるのは診断の件数で、バイト数ではありません。エラーの件数は N+1 件（N 件と、止めたことを知らせる `PP65`）までですが、1 件の診断は入力の大きさに比例する長さのテキストを引用することがあり、メッセージの本文の LF（`$n`）は残すので複数行にもなります（「エラー行は N+1 行」ではありません）。警告・情報は数えないため、警告の量は上の展開ステップの上限で抑えます（既知の制限）。
 
 名前付きカウンタ（`__counter` / `__counter_peek` / `__counter_set`）は、異なる名前 1 個につき 1 項目のメモリを使います。名前の数は入力サイズでは抑えられず（名前をマクロ展開で作れるため、短い入力でも多数の名前を作れます）、展開ステップの上限（`--max-expansion-steps`）でのみ抑えられます。上の 2 つ目の対策で上限を下げてください（[`SPECIFICATION.md` §12.10・§14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode)）。
+
+### 既知の制限（1.0.0）
+
+1.0.0 で対応せず、後のバージョンに送った事項です。ここに書いたものは、1.0.x で挙動を変えることがあります。
+
+- CI で ASan/UBSan、ファジング、サンドボックスの CLI テストを回していません（S-07、S-09、S-22）。
+- メモリ使用量の倍率（入力サイズに対する使用量）を下げていません（S-06）。入力サイズの上限を指定するオプション `--max-input-bytes` は 1.0.0 にありません。そのほかに S-14、S-15、S-16 が残っています。
+- `linux-portable-release` は non-PIE です（S-08）。追加の強化フラグはなく（S-18）、ツールチェーンの固定とビルドの provenance もありません（S-19）。
+- サンドボックスの制限が `#ifdef` に散らばっています（S-17）。S-20 も残っています。
+- `@@` による連結で `//` や `/*` を作れます（I-1）。
+- 行マーカーのパスは `{` `}` `*` と制御バイトをエスケープしません（I-2。`{#line 5 'a$00b'}` で生の NUL が出ます）。
+- 出力（`-o`、標準出力、依存関係ファイル）は、開くのに成功した後の書き込みの失敗を検出しません。終了コードが 0 になることがあります（A8）。
+- Windows 10 version 1903 未満ではマニフェストが効かず、ANSI コードページで動きます。コマンドライン引数の近似変換（best-fit）が残ります（S-21）。
+- 警告・情報は `--error-limit` で数えません。1 個の診断の長さが入力に比例することもあります（「資源の上限についての注意」）。
+- ディレクティブやプラグマの中身を字句解析し直したときの診断は、開始の `{` の行で報告します（D1）。
 
 ### 対象外
 
