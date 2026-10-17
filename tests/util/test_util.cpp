@@ -94,8 +94,8 @@ TEST_F(UtilTest, strip_control_chars) {
     EXPECT_EQ("a\xC2", strip_control_chars("a\xC2"));
 }
 
-// C1Pairs::Keep (the file path rule on Windows, where the path is in the
-// ANSI code page): C0 controls and DEL still go, C2 80 - C2 9F stays.
+// C1Pairs::Keep (the file path rule when narrow paths are not UTF-8, see
+// Util::narrow_paths_are_utf8()): C0 controls and DEL still go, C2 80 - C2 9F stays.
 TEST_F(UtilTest, strip_control_chars_keep_c1_pairs) {
     using Util::strip_control_chars;
     using Util::C1Pairs;
@@ -123,8 +123,12 @@ TEST_F(UtilTest, narrow_paths_are_utf8_follows_process_codepage) {
         if (std::setlocale(LC_ALL, ".UTF8") != nullptr) {
             EXPECT_TRUE(Util::narrow_paths_are_utf8());
             std::setlocale(LC_ALL, saved.c_str());
-            EXPECT_EQ(GetACP() == CP_UTF8 || ___lc_codepage_func() == CP_UTF8,
-                      Util::narrow_paths_are_utf8());
+            // The ACP is not UTF-8 here, so the result is the CRT locale alone.
+            // If the saved locale was not UTF-8 the predicate must be false again.
+            if (___lc_codepage_func() != CP_UTF8)
+                EXPECT_FALSE(Util::narrow_paths_are_utf8());
+            else
+                EXPECT_TRUE(Util::narrow_paths_are_utf8());
         } else {
             std::setlocale(LC_ALL, saved.c_str());
         }
@@ -134,7 +138,8 @@ TEST_F(UtilTest, narrow_paths_are_utf8_follows_process_codepage) {
 #endif
 }
 
-// A7: a NUL is shown as $00 too, so a diagnostic never carries a raw 0x00.
+// A7: a NUL is shown as $00 too, so a diagnostic of a normal build (P2-3) does
+// not carry a raw 0x00 (checked for `{#error a$00b}`, which prints 'a$00b').
 TEST_F(UtilTest, EscapeLineBreaksAlsoEscapesNul) {
     using Util::escape_line_breaks;
     EXPECT_EQ("", escape_line_breaks(""));

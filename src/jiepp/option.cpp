@@ -89,9 +89,9 @@ void display_help_and_exit(int exit_code = 0) {
         "  --max-expansion-steps N  Maximum macro expansion work in steps (default: 16777216; 0 = no limit)\n"
         "  --max-include-count N    Maximum number of executed {#include} directives (default: 10000; 0 = no limit)\n"
 #ifdef JIEPP_SANDBOX
-        "  --error-limit N          Stop after N errors (default: 100; 0 = no limit)\n"
+        "  --error-limit N          Stop at the first error beyond N (default: 100; 0 = no limit)\n"
 #else
-        "  --error-limit N          Stop after N errors (default: 1000; 0 = no limit)\n"
+        "  --error-limit N          Stop at the first error beyond N (default: 1000; 0 = no limit)\n"
 #endif
         "  --max-if-nesting N       Maximum if/elif nesting depth (default: 256)\n"
         "  --max-blank-lines N      Max consecutive blank lines before compaction (default: 7; 0 disables)\n"

@@ -979,6 +979,7 @@ const char* const FAN_OUT_SOURCE =
 
 }  // namespace
 
+#ifdef NDEBUG  // about 37 s in a Debug build
 // The default (10000) stops the fan-out with exactly one PP66.
 TEST_F(SmokeTest, IncludeFanOutStopsAtDefaultCount) {
     fs::path input = tmp_dir_ / "fan2.iec";
@@ -992,9 +993,10 @@ TEST_F(SmokeTest, IncludeFanOutStopsAtDefaultCount) {
     EXPECT_NE(r.err.find("limit 10000; use --max-include-count N to raise it (0 = no limit)"),
               std::string::npos) << "stderr: " << r.err.substr(0, 2000);
 }
+#endif
 
 #ifdef NDEBUG
-// Timing guard. Without the option this input takes 95 s, but before
+// Timing guard. Before PP66 existed this input took 95 s, and before
 // --max-include-count existed the option itself was PP70 and the run ended at
 // once, so "under 3 s" alone would pass before the fix: the RED is that no
 // PP66 appears, hence rc 1 and exactly one PP66 are required as well. After
@@ -1137,12 +1139,17 @@ TEST_F(SmokeTest, IgnoredPP12CannotHideIncludeDepthExceeded) {
 namespace {
 
 // True when s holds a byte a diagnostic must not carry: a C0 control other
-// than TAB and LF (a CR is allowed: the Windows CRT writes CR LF to stderr),
-// DEL, or the UTF-8 C1 pair C2 80 - C2 9F.
+// than TAB and LF (a CR is allowed only right before an LF: the Windows CRT
+// text mode writes CR LF to stderr), DEL, or the UTF-8 C1 pair C2 80 - C2 9F.
 bool has_forbidden_diagnostic_byte(const std::string& s) {
     for (std::size_t i = 0; i < s.size(); ++i) {
         const auto c = static_cast<unsigned char>(s[i]);
-        if ((c < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == 0x7F)
+        if (c == '\r') {
+            if (i + 1 < s.size() && s[i + 1] == '\n')
+                continue;
+            return true;
+        }
+        if ((c < 0x20 && c != '\t' && c != '\n') || c == 0x7F)
             return true;
         if (c == 0xC2 && i + 1 < s.size()) {
             const auto n = static_cast<unsigned char>(s[i + 1]);
@@ -1197,8 +1204,8 @@ TEST_F(SmokeTest, DiagnosticsPathLineBreakEscaped) {
 // UTF-8 instead of the ANSI code page. These tests spawn jiepp.exe with
 // CreateProcessW so the command line can carry characters the ANSI code page
 // of jiepp_test itself (932 locally, 1252 on CI) cannot represent. File names
-// are built from UTF-8 literals with universal-character-names so that
-// neither this source nor jiepp_test's own ACP matters.
+// are built from u8 string literals holding raw UTF-8 characters so that
+// jiepp_test's own ACP does not matter (the source file itself is UTF-8).
 //
 // CI note: .github/workflows/ci.yml has no Windows sandbox job, so the
 // sandbox builds of these tests are only exercised locally.
@@ -1280,7 +1287,15 @@ WinRunResult run_w(const fs::path& exe, const std::wstring& args,
         return res;
     }
 
-    if (WaitForSingleObject(pi.hProcess, 30000) == WAIT_TIMEOUT) {
+    const DWORD waited = WaitForSingleObject(pi.hProcess, 30000);
+    if (waited == WAIT_FAILED) {
+        res.err = "run_w: WaitForSingleObject failed, error " + std::to_string(GetLastError());
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return res;
+    }
+    if (waited == WAIT_TIMEOUT) {
         res.timed_out = true;
         TerminateProcess(pi.hProcess, 1);
         WaitForSingleObject(pi.hProcess, 5000);
@@ -1308,8 +1323,11 @@ TEST_F(RobustnessTestSmoke, WindowsManifestActiveCodePageUtf8) {
     if (rsrc != nullptr) {
         HGLOBAL g = LoadResource(h, rsrc);
         const DWORD size = SizeofResource(h, rsrc);
-        if (g != nullptr)
-            manifest.assign(static_cast<const char*>(LockResource(g)), size);
+        if (g != nullptr) {
+            const void* data = LockResource(g);
+            if (data != nullptr)
+                manifest.assign(static_cast<const char*>(data), size);
+        }
     }
     FreeLibrary(h);
 
@@ -1433,6 +1451,18 @@ TEST_F(SandboxCliUtf8PathC1Test, PathC1PairRemoved) {
     EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
     EXPECT_NE(r.err.find("xy.iec:"), std::string::npos) << "stderr: " << r.err;
     EXPECT_NE(r.err.find("PP41"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("\xC2\x9B"), std::string::npos) << "stderr: " << r.err;
+}
+
+// PP11 quotes the missing input path in its text (a sandbox build has no
+// {#include}, so the missing file comes from the command line), and the
+// diagnostic removes the C1 pair from that text too.
+TEST_F(SandboxCliUtf8PathC1Test, Pp11QuotedTextC1PairRemoved) {
+    const std::u8string name8 = u8"missing\u009B.iec";
+    auto r = run_w(exe_, L"-P \"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP11"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("missing.iec"), std::string::npos) << "stderr: " << r.err;
     EXPECT_EQ(r.err.find("\xC2\x9B"), std::string::npos) << "stderr: " << r.err;
 }
 #endif
