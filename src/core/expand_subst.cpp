@@ -77,7 +77,8 @@ std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts) {
 // repeated good pastes in one body make the left operand large, and a later
 // failing paste then echoes it in PP32; echoing it whole in every message
 // would be quadratic in the input (clang echoes only the pair formed by each
-// paste and stops after -ferror-limit errors; jiepp has no such limit). Bound
+// paste and stops after -ferror-limit errors; jiepp stops after --error-limit
+// errors, default 1000, and also bounds each echo, see below). Bound
 // each echoed operand: keep at most kPasteEchoMax bytes and mark the cut
 // with "...". The cut is moved to a UTF-8 character boundary so a multibyte
 // character is never split. The code and severity of the diagnostic are

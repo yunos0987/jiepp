@@ -172,6 +172,42 @@ TEST_F(OptionTest, ParseArgsMaxExpansionStepsMissingValue) {
     EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
 }
 
+// P2-4: --error-limit N / --error_limit N; 0 (no limit) is valid.
+TEST_F(OptionTest, ParseArgsErrorLimitBothSpellings) {
+    for (const char* spelling : {"--error-limit", "--error_limit"}) {
+        for (const char* value : {"5", "0", "2147483647"}) {
+            char* argv[] = {const_cast<char*>("jiepp"),
+                            const_cast<char*>(spelling), const_cast<char*>(value)};
+            auto opts = parse_args(3, argv);
+            ASSERT_TRUE(opts.error_limit.has_value()) << spelling << " " << value;
+            EXPECT_EQ(*opts.error_limit, std::stoi(value)) << spelling;
+        }
+    }
+    char* argv[] = {const_cast<char*>("jiepp")};
+    EXPECT_FALSE(parse_args(1, argv).error_limit.has_value());
+}
+
+TEST_F(OptionTest, ParseArgsErrorLimitInvalidValues) {
+    for (const char* spelling : {"--error-limit", "--error_limit"}) {
+        for (const char* bad : {"-1", "x", "3x", "2147483648"}) {
+            char* argv[] = {const_cast<char*>("jiepp"),
+                            const_cast<char*>(spelling), const_cast<char*>(bad)};
+            EXPECT_THROW(parse_args(3, argv), Issue::Exception) << spelling << " " << bad;
+            auto msgs = messages();
+            ASSERT_EQ(1u, msgs.size()) << bad;
+            EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << bad << ": " << msgs[0];
+        }
+    }
+}
+
+TEST_F(OptionTest, ParseArgsErrorLimitMissingValue) {
+    for (const char* spelling : {"--error-limit", "--error_limit"}) {
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(spelling)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception) << spelling;
+        EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code()) << spelling;
+    }
+}
+
 TEST_F(OptionTest, ParseArgsSnakeCaseVariants) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("--max_include_depth"), const_cast<char*>("5")};

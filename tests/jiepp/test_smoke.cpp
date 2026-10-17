@@ -713,11 +713,13 @@ std::size_t count_lines_with(const std::string& s, const std::string& needle) {
 // the development machine). Now the source
 // lex and the first re-lex report the raw braces (999 + 998) and every
 // level reports its own unclosed pragma once (257 levels): 2254 lines.
+// --error-limit 0 (P2-4): the default limit of 1000 would stop at PP65 before
+// the 2254 PP22 lines this test counts.
 TEST_F(SmokeTest, NestedBracePragmaDiagnosticsAreLinear) {
     fs::path input = tmp_dir_ / "nested_brace_1000.iec";
     write_file(input, std::string(1000, '{') + "x\n");
 
-    auto r = run("\"" + input.generic_string() + "\"");
+    auto r = run("--error-limit 0 \"" + input.generic_string() + "\"");
     EXPECT_EQ(r.exit_code, 1);
     EXPECT_EQ(count_lines_with(r.err, ": PP22:"), 2254u);
     EXPECT_EQ(count_lines_with(r.err, ": PP60:"), 1u);
@@ -831,16 +833,16 @@ TEST_F(SmokeTest, NestedVaOptIgnoredPP37ReportsPP63NotCrash) {
 // before the stack runs low) off stderr. The RobustnessTest* fixture name
 // matches the sandbox test presets' filter ^(Sandbox|RobustnessTest), so
 // this runs in both normal and sandbox builds.
-// If an error limit is added, raise it here well above the PP37 count so
-// the PP63 path is still exercised (stopping at the limit would also give
-// rc=1, indistinguishable under --silent).
+// --error-limit 0 (P2-4) keeps the PP63 path exercised: with the default
+// limit (100 in a sandbox build) the run would stop at PP65 before the stack
+// runs low, which also gives rc=1 and is indistinguishable under --silent.
 class RobustnessTestSmoke : public SmokeTest {};
 
 TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsPP63NotCrash) {
     fs::path input = tmp_dir_ / "nested_va_opt_continue.iec";
     write_file(input, nested_va_opt_source("", 5000));
 
-    auto r = run("--silent --recursion-limit 128 --max-expansion-steps 0 \"" +
+    auto r = run("--silent --error-limit 0 --recursion-limit 128 --max-expansion-steps 0 \"" +
                  input.generic_string() + "\"");
     EXPECT_EQ(r.exit_code, 1);
     EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err.substr(0, 2000);
@@ -878,6 +880,83 @@ TEST_F(RobustnessTestSmoke, NestedNosplitReportsPP63NotCrash) {
         << "stderr: " << r.err.substr(0, 2000);
     EXPECT_EQ(r.err.find("PP60"), std::string::npos) << "stderr: " << r.err.substr(0, 2000);
     EXPECT_EQ(r.out.find("after_n"), std::string::npos);
+}
+
+// ---- P2-4: --error-limit (PP65) ----
+
+namespace {
+
+std::string repeated_error_source(int n) {
+    std::string src = "A\n";
+    for (int i = 0; i < n; ++i)
+        src += "{#error e}\n";
+    return src;
+}
+
+}  // namespace
+
+// Five errors with a limit of 2: two PP91 lines, then PP65 in place of the
+// third error. The output built so far is still written to stdout.
+TEST_F(SmokeTest, ErrorLimitOption) {
+    fs::path input = tmp_dir_ / "error_limit.iec";
+    write_file(input, repeated_error_source(5));
+
+    for (const char* spelling : {"--error-limit", "--error_limit"}) {
+        SCOPED_TRACE(spelling);
+        auto r = run(std::string("-P ") + spelling + " 2 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+        EXPECT_EQ(count_lines_with(r.err, ": PP91:"), 2u) << "stderr: " << r.err;
+        EXPECT_EQ(count_lines_with(r.err, ": PP65: Too many errors emitted, stopping now"), 1u)
+            << "stderr: " << r.err;
+        EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 3) << "stderr: " << r.err;
+        EXPECT_NE(r.err.find("limit 2; use --error-limit N to raise it (0 = no limit)"),
+                  std::string::npos) << "stderr: " << r.err;
+        // PP65 is reported at the error it stopped at (the third, line 4).
+        EXPECT_NE(r.err.find("error_limit.iec:4.0: error: PP65:"), std::string::npos)
+            << "stderr: " << r.err;
+        EXPECT_NE(r.out.find("A"), std::string::npos) << "stdout: " << r.out;
+    }
+}
+
+TEST_F(SmokeTest, ErrorLimitSilent) {
+    fs::path input = tmp_dir_ / "error_limit_silent.iec";
+    write_file(input, repeated_error_source(5));
+
+    auto r = run("--silent --error-limit 2 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, ErrorLimitZeroAndExactCount) {
+    fs::path input = tmp_dir_ / "error_limit_exact.iec";
+    write_file(input, repeated_error_source(5));
+
+    // Exactly N errors: no PP65.
+    auto r = run("--error-limit 5 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(count_lines_with(r.err, ": PP91:"), 5u) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("PP65"), std::string::npos) << "stderr: " << r.err;
+    // 0 = unlimited.
+    r = run("--error-limit 0 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(count_lines_with(r.err, ": PP91:"), 5u) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("PP65"), std::string::npos) << "stderr: " << r.err;
+}
+
+// The default (1000 in a normal build, 100 in a sandbox build) applies when
+// the option is absent. The RobustnessTest* fixture runs in both builds.
+TEST_F(RobustnessTestSmoke, ErrorLimitDefault) {
+    fs::path input = tmp_dir_ / "error_limit_default.iec";
+    write_file(input, repeated_error_source(1001));
+
+#ifdef JIEPP_SANDBOX
+    const std::size_t expected = 100;
+#else
+    const std::size_t expected = 1000;
+#endif
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(count_lines_with(r.err, ": PP91:"), expected);
+    EXPECT_EQ(count_lines_with(r.err, ": PP65:"), 1u);
 }
 
 // ---- U1: re-lex diagnostics are reported at the file and line of the

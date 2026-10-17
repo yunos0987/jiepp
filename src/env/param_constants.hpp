@@ -25,5 +25,15 @@ inline constexpr int         DEFAULT_MAX_BLANK_LINES        = 7;
 // count, not a depth, so MAX_PARAMETER_VALUE below does not apply to it.
 inline constexpr std::uint64_t DEFAULT_MAX_EXPANSION_STEPS  = 1ull << 24; // 16,777,216
 
+// Default for --error-limit (PP65): the number of errors counted before the
+// next one stops processing. 0 means no limit. The CLI sets this default; the
+// library's Issue::error_limit_ stays 0 unless the caller sets it. A sandbox
+// build uses a smaller default, since its input is untrusted.
+#ifdef JIEPP_SANDBOX
+inline constexpr int         DEFAULT_ERROR_LIMIT            = 100;
+#else
+inline constexpr int         DEFAULT_ERROR_LIMIT            = 1000;
+#endif
+
 // Upper bound for all integer parameters
 inline constexpr int         MAX_PARAMETER_VALUE            = 1 << 24; // 2^24 = 16,777,216

@@ -87,6 +87,11 @@ void display_help_and_exit(int exit_code = 0) {
         "  --max-include-depth N    Maximum include depth (default: 100)\n"
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
         "  --max-expansion-steps N  Maximum macro expansion work in steps (default: 16777216; 0 = no limit)\n"
+#ifdef JIEPP_SANDBOX
+        "  --error-limit N          Stop after N errors (default: 100; 0 = no limit)\n"
+#else
+        "  --error-limit N          Stop after N errors (default: 1000; 0 = no limit)\n"
+#endif
         "  --max-if-nesting N       Maximum if/elif nesting depth (default: 256)\n"
         "  --max-blank-lines N      Max consecutive blank lines before compaction (default: 7; 0 disables)\n"
         "  --recursion-limit N      Stack size: N x 8 KiB, at least 1 MiB (default: 8 MiB)\n"
@@ -287,6 +292,12 @@ JieppOptions parse_args(int argc, char* argv[]) {
         if (arg == "--max-expansion-steps" || arg == "--max_expansion_steps") {
             require_value(i, argc, arg);
             opts.max_expansion_steps = parse_nonnegative_int(argv[++i], arg);
+            ++i; continue;
+        }
+
+        if (arg == "--error-limit" || arg == "--error_limit") {
+            require_value(i, argc, arg);
+            opts.error_limit = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 

@@ -42,6 +42,7 @@ bool Issue::werror_ = false;
 bool Issue::cli_mode_ = false;
 bool Issue::continue_mode_ = false;
 int Issue::error_count_ = 0;
+int Issue::error_limit_ = 0;
 // Inert while continue_mode_ is false; ContinueMode always forces all
 // SEVERE codes in, mirroring make_default_blockings()'s severe-forcing.
 std::set<Issue::Code> Issue::continue_abort_codes_;
@@ -89,6 +90,7 @@ void Issue::initialize(std::ostream& stream) {
     cli_mode_ = false;
     continue_mode_ = false;
     error_count_ = 0;
+    error_limit_ = 0;
     continue_abort_codes_.clear();
     message_ = PlainTextMessage::instance();
 }
@@ -213,6 +215,20 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         promoted = true;
     if (promoted)
         severity = Severity::ERROR;
+
+    // --error-limit (PP65), continue mode only: once error_limit_ errors have
+    // been counted, the next ERROR that would be counted is not printed.
+    // PP65 (SEVERE) is raised at its location instead and stops processing.
+    // The check does not apply to SEVERE or to a code that aborts on its own
+    // (it stops the run with its own, more specific code). PP65 is SEVERE, so
+    // it cannot re-enter this check, and the whole check is O(1).
+    if (continue_mode_ && error_limit_ > 0 && severity == Severity::ERROR && !is_severe(code)
+        && continue_abort_codes_.count(code) == 0 && error_count_ >= error_limit_) {
+        happen(Code::TOO_MANY_ERRORS,
+               "limit " + std::to_string(error_limit_) +
+               "; use --error-limit N to raise it (0 = no limit)", loc);
+        throw Exception(Code::TOO_MANY_ERRORS); // defense in depth
+    }
 
     // -w: suppress warning output (unless promoted by -Werror)
     bool output_suppressed = suppress_warnings_ && is_warning(code) && !promoted;

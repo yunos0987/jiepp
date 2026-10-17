@@ -247,6 +247,9 @@ int jiepp_command(const JieppOptions& opts)
             Issue::suppress_warnings_ = true;
         if (opts.werror)
             Issue::werror_ = true;
+        // --error-limit: the CLI's default (1000, or 100 in a sandbox build)
+        // applies when the option is absent; the library's default is 0.
+        Issue::error_limit_ = opts.error_limit.value_or(DEFAULT_ERROR_LIMIT);
         // -Wundef (PP54) is off by default; enabled here, before -D/-U, like
         // the options above.
         if (opts.warn_undef)

@@ -154,6 +154,10 @@ public:
     // throws -- is unaffected when this is false) ----
     static bool continue_mode_;
     static int error_count_;
+    // --error-limit (PP65): 0 = unlimited. Like the rest of the continue-mode
+    // state it acts only while continue_mode_ is true; a library caller that
+    // sets it without ContinueMode gets no effect. initialize() resets it to 0.
+    static int error_limit_;
     static std::set<Code> continue_abort_codes_;
     static IssueMessage& message_;
 
