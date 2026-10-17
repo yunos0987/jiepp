@@ -1173,4 +1173,24 @@ TEST_F(SmokeTest, WindowsCwdNonAsciiDir) {
 }
 #endif
 
+#ifdef JIEPP_SANDBOX
+// The jiepp.exe manifest makes its paths UTF-8, so a sandbox diagnostic
+// applies the UTF-8 C1 rule to the path: the U+009B (CSI) in the file name
+// below must not reach stderr. (The in-process tests run in an ANSI code
+// page and take the other branch of the rule, so only this CLI test covers
+// it.) The fixture name matches the sandbox presets' ^(Sandbox|RobustnessTest)
+// filter; CI has no Windows sandbox job, so this runs locally only.
+class SandboxCliUtf8PathC1Test : public SmokeTest {};
+
+TEST_F(SandboxCliUtf8PathC1Test, PathC1PairRemoved) {
+    const std::u8string name8 = u8"x\u009By.iec";
+    write_file(tmp_dir_ / fs::path(name8), "{#line abc}\n");
+    auto r = run_w(exe_, L"-P \"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("xy.iec:"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP41"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("\xC2\x9B"), std::string::npos) << "stderr: " << r.err;
+}
+#endif
+
 #endif // _WIN32

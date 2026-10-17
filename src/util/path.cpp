@@ -10,11 +10,20 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <locale.h>  // ___lc_codepage_func(): the CRT locale's code page
 #else
 #include <sys/stat.h>
 #endif
 
 namespace fs = std::filesystem;
+
+bool Util::narrow_paths_are_utf8() {
+#ifdef _WIN32
+    return GetACP() == CP_UTF8 || ___lc_codepage_func() == CP_UTF8;
+#else
+    return true;
+#endif
+}
 
 std::string Util::absolute_path(std::string_view path_text) {
     fs::path p = std::string(path_text);

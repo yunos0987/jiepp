@@ -1,6 +1,19 @@
 #include "test_helper.hpp"
 
 #include "util/text.hpp"
+#include "util/path.hpp"
+
+#include <clocale>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <locale.h>  // ___lc_codepage_func()
+#endif
 
 class UtilTest : public ::testing::Test {};
 
@@ -92,6 +105,32 @@ TEST_F(UtilTest, strip_control_chars_keep_c1_pairs) {
     EXPECT_EQ("\xC2\x9B", strip_control_chars("\xC2\x9B", C1Pairs::Keep));
     EXPECT_EQ("\xC2\x82\xA0", strip_control_chars("\xC2\x01\x82\x7F\xA0", C1Pairs::Keep));
     EXPECT_EQ("a\tb\nc\rd", strip_control_chars("a\x1B\tb\nc\rd\x7F", C1Pairs::Keep));
+}
+
+// narrow_paths_are_utf8(): true when a narrow path string is read as UTF-8.
+// Always true off Windows; on Windows it follows the process ANSI code page
+// or the CRT locale code page, evaluated at every call.
+TEST_F(UtilTest, narrow_paths_are_utf8_follows_process_codepage) {
+#ifdef _WIN32
+    const bool expected = GetACP() == CP_UTF8 || ___lc_codepage_func() == CP_UTF8;
+    EXPECT_EQ(expected, Util::narrow_paths_are_utf8());
+    if (GetACP() != CP_UTF8) {
+        // The predicate is not cached: a UTF-8 CRT locale switches it on and
+        // restoring the previous locale switches it off again.
+        const char* prev = std::setlocale(LC_ALL, nullptr);
+        const std::string saved = prev ? prev : "C";
+        if (std::setlocale(LC_ALL, ".UTF8") != nullptr) {
+            EXPECT_TRUE(Util::narrow_paths_are_utf8());
+            std::setlocale(LC_ALL, saved.c_str());
+            EXPECT_EQ(GetACP() == CP_UTF8 || ___lc_codepage_func() == CP_UTF8,
+                      Util::narrow_paths_are_utf8());
+        } else {
+            std::setlocale(LC_ALL, saved.c_str());
+        }
+    }
+#else
+    EXPECT_TRUE(Util::narrow_paths_are_utf8());
+#endif
 }
 
 // A7: a NUL is shown as $00 too, so a diagnostic never carries a raw 0x00.

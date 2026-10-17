@@ -14,6 +14,7 @@
 #include "env.hpp"
 #ifdef JIEPP_SANDBOX
 #include "../util/text.hpp"
+#include "../util/path.hpp"
 #endif
 
 // ---------------------------------------------------------------------------
@@ -273,21 +274,22 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // extra diagnostic line. Replacing a byte with a space in place
         // removes nothing and a space is neither C2 nor 0x80-0x9F, so the
         // strip's "no forbidden byte or pair" result still holds.
-        // The UTF-8 C1 rule (C2 80 - C2 9F) assumes UTF-8 text. On Windows a
-        // file path arrives in the ANSI code page (argv; CP932 C2 82 A0 is
-        // U+FF82 U+3042), so the path keeps those pairs there and only loses
-        // C0 controls and DEL. That covers the location path and the context
-        // of the file codes PP10/PP11/PP12/PP14, which is the path itself:
+        // The UTF-8 C1 rule (C2 80 - C2 9F) assumes UTF-8 text. When narrow
+        // paths are not UTF-8 (Util::narrow_paths_are_utf8() is false: a
+        // Windows process in an ANSI code page, e.g. a library caller or
+        // jiepp.exe before Windows 10 1903, where the manifest has no effect;
+        // CP932 C2 82 A0 is U+FF82 U+3042), the path keeps those pairs and
+        // only loses C0 controls and DEL. That covers the location path and
+        // the context of the file codes PP10/PP11/PP12/PP14, which is the
+        // path itself:
         // in sandbox builds {#include}/{#sinclude}/__has_include are PP62 and
         // {#line}'s file name is ignored, so both come only from the command
         // line (input file, --disppath, -include, -o, -MF) or from a library
         // caller. Other contexts are input text (UTF-8, SPEC 1) and keep the
-        // full rule on every platform.
-#ifdef _WIN32
-        constexpr Util::C1Pairs path_c1 = Util::C1Pairs::Keep;
-#else
-        constexpr Util::C1Pairs path_c1 = Util::C1Pairs::Remove;
-#endif
+        // full rule on every platform. The predicate is evaluated here, at
+        // every diagnostic, because the CRT locale can change at run time.
+        const Util::C1Pairs path_c1 = Util::narrow_paths_are_utf8()
+            ? Util::C1Pairs::Remove : Util::C1Pairs::Keep;
         const bool message_code = code == Code::SEVERE_MESSAGE
             || code == Code::ERROR_MESSAGE
             || code == Code::WARNING_MESSAGE
