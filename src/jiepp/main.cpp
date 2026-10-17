@@ -142,6 +142,12 @@ int main(int argc, char* argv[]) {
     // for identical content. stderr is left in text mode: it only carries
     // human-facing diagnostics, never diffed against file output.
     _setmode(_fileno(stdout), _O_BINARY);
+    // B2: stdin is read in binary mode too. In the CRT's default text mode
+    // byte 0x1A (Ctrl+Z) ends the input, so `printf 'aa\x1abb\n' | jiepp`
+    // silently dropped everything after it and exited 0, while the same
+    // bytes given as a file were read completely. CRLF is still handled by
+    // the lexer (SPEC 1).
+    _setmode(_fileno(stdin), _O_BINARY);
 #endif
     Issue::initialize(std::cerr);
 

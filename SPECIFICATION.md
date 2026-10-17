@@ -17,6 +17,7 @@ Jiepp is a preprocessor for IEC 61131-3, providing C-preprocessor-equivalent mac
 - エンコーディング: UTF-8（BOM 有無どちらも可）
 - 改行コード: LF, CRLF, CR
 - ファイル拡張子: 任意（推奨 `.iec`）
+- Windows でも標準入力はバイナリモードで読む。バイト `0x1A`（Ctrl+Z）で入力は終わらず、ファイルをパスで渡した場合と同じく最後まで読む（CRLF は字句解析器が処理する）。パイプやリダイレクトでは影響しない。対話型のコンソールから直接入力する場合は、標準入力をバイナリにしたことで Ctrl+Z では入力を終えられなくなる可能性がある（この点は対話型コンソールで未確認）
 
 ### 出力 / Output
 

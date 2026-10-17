@@ -169,6 +169,37 @@ TEST_F(SmokeTest, StdinPipe) {
         << "stdout: " << r.out;
 }
 
+// ---- 5a. stdin is read in binary mode (B2) ----
+//
+// The Windows CRT opens stdin in text mode, where byte 0x1A (Ctrl+Z) ends the
+// input, so `printf 'aa\x1abb\n' | jiepp -P` printed only "aa" and exited 0
+// while the same bytes passed as a file were read completely. main() now
+// switches stdin to binary mode, as it already does for stdout.
+
+TEST_F(SmokeTest, StdinCtrlZIsNotEndOfInput) {
+    fs::path input = tmp_dir_ / "stdin_ctrlz.iec";
+    write_file(input, std::string("aa\x1a" "bb\n"));
+
+    auto r = run("-P", input.generic_string());
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, std::string("aa\x1a" "bb\n")) << "stdout: " << r.out;
+}
+
+TEST_F(SmokeTest, StdinCrlfMatchesFileInput_Guard) {
+    // Guard (passes before the change too): CRLF input gives the same stdout
+    // from stdin and from a file, including __LINE__, so binary stdin does not
+    // change the line accounting.
+    fs::path input = tmp_dir_ / "stdin_crlf.iec";
+    write_file(input, "a\r\n__LINE__\r\n{#define X 1}\r\nX __LINE__\r\nb\r\n");
+
+    auto from_file = run("-P \"" + input.generic_string() + "\"");
+    auto from_stdin = run("-P", input.generic_string());
+    EXPECT_EQ(from_file.exit_code, 0) << "stderr: " << from_file.err;
+    EXPECT_EQ(from_stdin.exit_code, 0) << "stderr: " << from_stdin.err;
+    EXPECT_EQ(from_file.out, from_stdin.out);
+    EXPECT_NE(from_stdin.out.find("4"), std::string::npos) << "stdout: " << from_stdin.out;
+}
+
 // ---- 5b. stdin display name is "<stdin>", never the literal "-" ----
 //
 // H: gcc/clang both report "<stdin>" for __FILE__/line markers when the
