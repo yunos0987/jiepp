@@ -176,8 +176,9 @@ TEST_F(DirectiveTest, Ignore) {
 }
 
 TEST_F(DirectiveTest, IgnorePP45SuppressesUnknownDirective) {
-    // is_ignored(code) && !is_severe(code) still applies now that PP45 is
-    // ERROR instead of WARNING: {#ignore PP45} suppresses it completely.
+    // is_ignored(code) alone decides (it already excludes severe codes and
+    // the unignorable file codes PP10-PP14): PP45 is ERROR instead of
+    // WARNING and {#ignore PP45} still suppresses it completely.
     EXPECT_NO_THROW(pp("{#ignore PP45}{#foo}"));
     EXPECT_TRUE(empty());
 }

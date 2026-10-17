@@ -377,9 +377,24 @@ TEST_F(IncludeTest, SyspathPragmaReemittedAsWritten) {
 TEST_F(IncludeTest, IncludePathWithNulIsPP47) {
     fs::current_path(jiepp_root_dir());
     Issue::ContinueMode guard({});
+    // The <...> and {#sinclude} forms search only the syspath list, so a
+    // syspath that contains a.iec is put first: without the NUL check the
+    // truncated path would be found and included.
+    {
+        // Control: the same syspath and a name without the NUL include a.iec.
+        std::string o;
+        EXPECT_NO_THROW({ o = pp("{#syspath 'tests/core/test_include'}{#include <a.iec>}"); });
+        EXPECT_NE(std::string::npos, o.find("a.iec begin")) << o;
+        EXPECT_TRUE(empty());
+        EXPECT_NO_THROW({ o = pp("{#syspath 'tests/core/test_include'}{#sinclude 'a.iec'}"); });
+        EXPECT_NE(std::string::npos, o.find("a.iec begin")) << o;
+        EXPECT_TRUE(empty());
+    }
     for (const char* src : {"{#include 'tests/core/test_include/a.iec$00x'}",
                             "{#include <tests/core/test_include/a.iec$00x>}",
-                            "{#sinclude 'tests/core/test_include/a.iec$00x'}"}) {
+                            "{#sinclude 'tests/core/test_include/a.iec$00x'}",
+                            "{#syspath 'tests/core/test_include'}{#include <a.iec$00x>}",
+                            "{#syspath 'tests/core/test_include'}{#sinclude 'a.iec$00x'}"}) {
         std::string o;
         EXPECT_NO_THROW({ o = pp(src); }) << src;
         EXPECT_EQ(std::string::npos, o.find("a.iec begin")) << src << "\n" << o;
@@ -411,6 +426,17 @@ TEST_F(IncludeTest, HasIncludeWithNulIsFalse) {
     EXPECT_NE(std::string::npos, o.find("HAS")) << o;
     EXPECT_TRUE(empty());
     o = pp("{#if __has_include('tests/core/test_include/a.iec$00x')}HAS{#else}NO{#endif}");
+    EXPECT_EQ(std::string::npos, o.find("HAS")) << o;
+    EXPECT_NE(std::string::npos, o.find("NO")) << o;
+    EXPECT_TRUE(empty());
+    // <...> form: searches only the syspath list. Control first, then the
+    // NUL path that would resolve to a.iec if it were truncated at the NUL.
+    o = pp("{#syspath 'tests/core/test_include'}"
+           "{#if __has_include(<a.iec>)}HAS{#else}NO{#endif}");
+    EXPECT_NE(std::string::npos, o.find("HAS")) << o;
+    EXPECT_TRUE(empty());
+    o = pp("{#syspath 'tests/core/test_include'}"
+           "{#if __has_include(<a.iec$00x>)}HAS{#else}NO{#endif}");
     EXPECT_EQ(std::string::npos, o.find("HAS")) << o;
     EXPECT_NE(std::string::npos, o.find("NO")) << o;
     EXPECT_TRUE(empty());
