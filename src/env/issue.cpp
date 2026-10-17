@@ -153,7 +153,30 @@ void Issue::add_ignoring(Code code) {
     ignorings_.insert(code);
 }
 
+// PP10-PP14 (FILE_ERROR, FILE_NOT_FOUND, MAX_INCLUDE_DEPTH_EXCEEDED,
+// INVALID_COMMAND, INCLUDE_TARGET_IS_DIRECTORY) cannot be suppressed by
+// {#ignore} / add_ignoring(), same as SEVERE (SPEC 10). Suppressing one
+// would not just hide a message: the file silently counts as empty, or a
+// failed -o / -MF open exits 0 with no file written. These are also the
+// codes jiepp_command() lists in jiepp_continue_abort_codes() (jiepp.cpp)
+// as aborting in continue mode, together with PP60/PP61, which stay
+// suppressible (SPEC 11 uses {#ignore PP60} to lift the limit).
+static bool is_unignorable_file_code(Issue::Code code) {
+    switch (code) {
+    case Issue::Code::FILE_ERROR:
+    case Issue::Code::FILE_NOT_FOUND:
+    case Issue::Code::MAX_INCLUDE_DEPTH_EXCEEDED:
+    case Issue::Code::INVALID_COMMAND:
+    case Issue::Code::INCLUDE_TARGET_IS_DIRECTORY:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool Issue::is_ignored(Code code) {
+    if (is_severe(code) || is_unignorable_file_code(code))
+        return false;
     return ignorings_.count(code) != 0;
 }
 
@@ -173,8 +196,9 @@ bool Issue::is_blocked(Code code) {
 }
 
 void Issue::happen(Code code, std::string context, std::source_location loc) {
-    // ignore list has no effect, but SEVERE always proceeds.
-    if (is_ignored(code) && !is_severe(code))
+    // {#ignore} suppresses the code, except SEVERE and PP10-PP14, which
+    // is_ignored() never reports as ignored.
+    if (is_ignored(code))
         return;
 
     // Default-off code that was not enabled: nothing at all happens.

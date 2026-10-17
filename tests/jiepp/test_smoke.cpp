@@ -869,3 +869,62 @@ TEST_F(SmokeTest, RelexDiagnosticInIncludedFileAtPragmaLine) {
     EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 2) << "stderr: " << r.err;
 }
 #endif
+
+// ---- PP10-PP14 cannot be suppressed by {#ignore} (SPEC 10) ----
+
+#ifndef JIEPP_SANDBOX
+TEST_F(SmokeTest, IgnoredPP10CannotHideUnopenableOutputFile) {
+    fs::path input = tmp_dir_ / "ign_o.iec";
+    write_file(input, "{#ignore PP10}\nx := 1;\n");
+    fs::path bad_out = tmp_dir_ / "no_such_dir" / "x.out";
+
+    auto r = run("-o \"" + bad_out.generic_string() + "\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP10"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_FALSE(fs::exists(bad_out));
+    EXPECT_FALSE(fs::exists(bad_out.parent_path()));
+}
+
+TEST_F(SmokeTest, IgnoredPP10CannotHideUnopenableDependencyFile) {
+    fs::path input = tmp_dir_ / "ign_mf.iec";
+    write_file(input, "{#ignore PP10}\nx := 1;\n");
+    fs::path bad_dep = tmp_dir_ / "no_such_dir" / "x.d";
+    fs::path out = tmp_dir_ / "ign_mf_out.iec";
+
+    auto r = run("-MD -MF \"" + bad_dep.generic_string() + "\" -o \"" + out.generic_string() +
+                 "\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP10"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_FALSE(fs::exists(bad_dep));
+    EXPECT_FALSE(fs::exists(bad_dep.parent_path()));
+    EXPECT_FALSE(fs::exists(out));
+}
+
+TEST_F(SmokeTest, IgnoredPP11CannotHideMissingInclude) {
+    fs::path input = tmp_dir_ / "ign_inc.iec";
+    write_file(input, "{#ignore PP11}\n{#include \"missing_header.iec\"}\nx := 1;\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP11"), std::string::npos) << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, IgnoredPP14CannotHideDirectoryInclude) {
+    fs::create_directories(tmp_dir_ / "adir");
+    fs::path input = tmp_dir_ / "ign_dir.iec";
+    write_file(input, "{#ignore PP14}\n{#include \"adir\"}\nx := 1;\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP14"), std::string::npos) << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, IgnoredPP12CannotHideIncludeDepthExceeded) {
+    fs::path input = tmp_dir_ / "ign_depth.iec";
+    write_file(input, "{#ignore PP12}\n{#include \"ign_depth.iec\"}\nx := 1;\n");
+
+    auto r = run("--max-include-depth 3 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP12"), std::string::npos) << "stderr: " << r.err;
+}
+#endif

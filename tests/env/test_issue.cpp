@@ -101,9 +101,20 @@ TEST_F(IssueTest, FilepathAndLineno) {
 }
 
 TEST_F(IssueTest, AddIgnoring) {
+    // EXPR_TYPE_ERROR (PP50) is an ordinary ERROR code: add_ignoring() works
+    // for it. (FILE_NOT_FOUND used to be tested here; PP10-PP14 can no longer
+    // be ignored, see AddIgnoringHasNoEffectOnFileCodes.)
+    EXPECT_FALSE(Issue::is_ignored(Issue::Code::EXPR_TYPE_ERROR));
+    Issue::add_ignoring(Issue::Code::EXPR_TYPE_ERROR);
+    EXPECT_TRUE(Issue::is_ignored(Issue::Code::EXPR_TYPE_ERROR));
+}
+
+TEST_F(IssueTest, AddIgnoringHasNoEffectOnFileCodes) {
+    // PP10-PP14 cannot be suppressed (SPEC 10): add_ignoring() accepts the
+    // call but is_ignored() stays false.
     EXPECT_FALSE(Issue::is_ignored(Issue::Code::FILE_NOT_FOUND));
     Issue::add_ignoring(Issue::Code::FILE_NOT_FOUND);
-    EXPECT_TRUE(Issue::is_ignored(Issue::Code::FILE_NOT_FOUND));
+    EXPECT_FALSE(Issue::is_ignored(Issue::Code::FILE_NOT_FOUND));
 }
 
 TEST_F(IssueTest, DefaultBlockings) {
