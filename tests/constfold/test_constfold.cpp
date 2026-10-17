@@ -99,6 +99,62 @@ TEST_F(ConstfoldTest, BaseNInvalidBase) {
     EXPECT_TRUE(empty());
 }
 
+// A6: a base so large that "base * 10 + digit" used to overflow a signed int
+// (undefined behavior, observed as a wrapped small base) is an invalid base
+// regardless of how many digits it has.
+TEST_F(ConstfoldTest, BaseNHugeBaseIsInvalidNotWrapped) {
+    Issue::Blocking guard({});
+    for (const char* expr : {"4294967298#101 = 5", "4294967300#1",
+                             "18446744073709551618#11 = 4"}) {
+        eval_const_expr(expr);
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()) << expr;
+    }
+    eval_const_expr("4294967298#101 = 5");
+    EXPECT_NE(std::string::npos, message().find("invalid base: 4294967298#101"));
+}
+
+TEST_F(ConstfoldTest, BaseNLeadingZerosStillValid_Guard) {
+    EXPECT_NE(0LL, eval_const_expr("0036#z = 35"));
+    EXPECT_NE(0LL, eval_const_expr("002#101 = 5"));
+    EXPECT_TRUE(empty());
+}
+
+// A6: the float -> integer range is the half-open [-2^63, 2^63). 2^63 itself
+// used to pass the check (static_cast<double>(INT64_MAX) is 2^63) and then
+// overflowed the conversion (undefined behavior).
+TEST_F(ConstfoldTest, FloatCastRangeIsHalfOpen) {
+    Issue::Blocking guard({});
+    eval_const_expr("LWORD#9223372036854775808.0");
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+
+    EXPECT_NE(0LL, eval_const_expr(
+        "LWORD#9223372036854774784.0 = LWORD#16#7FFFFFFFFFFFFC00"));
+    EXPECT_TRUE(empty());
+    EXPECT_NE(0LL, eval_const_expr(
+        "LWORD#-9223372036854775808.0 = LWORD#16#8000000000000000"));
+    EXPECT_TRUE(empty());
+
+    eval_const_expr("LWORD#-9223372036854777856.0");
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+
+    // The out-of-range value becomes 0, so the comparison is true; before the
+    // fix this was true with no diagnostic at all.
+    EXPECT_NE(0LL, eval_const_expr("BYTE#9223372036854775808.0 = BYTE#0"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+}
+
+// The range error depends on the value, so it stays silent in an unevaluated
+// operand (SPEC 6.4). The right-hand side compares with LWORD#0: LWORD against
+// Int would be a value-independent type error (PP50) that is reported even
+// there.
+TEST_F(ConstfoldTest, FloatCastRangeUnevaluatedSilent_Guard) {
+    Issue::Blocking guard({});
+    auto r = eval_const_value(
+        "FALSE \\and\\ (LWORD#9223372036854775808.0 = LWORD#0)");
+    EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(ConstfoldTest, BaseNInvalidDigit) {
     EXPECT_THROW(eval_const_expr("2#9"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());

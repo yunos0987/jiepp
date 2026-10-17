@@ -161,9 +161,11 @@ static int64_t cast_scalar_to_int(const CfValue& v) {
     case ValueKind::Bool:      return v.bval ? 1 : 0;
     case ValueKind::Int:       return v.ival;
     case ValueKind::Float: {
-        constexpr auto max_i64 = static_cast<double>(INT64_MAX);
-        constexpr auto min_i64 = static_cast<double>(INT64_MIN);
-        if (v.fval > max_i64 || v.fval < min_i64 || std::isnan(v.fval)) {
+        // A6: the valid range is the half-open [-2^63, 2^63). INT64_MAX is
+        // not representable as a double (it rounds up to exactly 2^63), so
+        // an inclusive upper bound would let 2^63 reach the conversion below,
+        // which is undefined behavior. The negated form also rejects NaN.
+        if (!(v.fval >= -0x1p63 && v.fval < 0x1p63)) {
             // Value dependent: nothing (not even a failure) in an
             // unevaluated operand (SPEC 6.4).
             cf_value_diag(Issue::Code::INVALID_EXPRESSION, "float value out of integer range", true);

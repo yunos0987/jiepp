@@ -38,7 +38,9 @@ ALPHA   [A-Za-z_]
     // which the parser then reports as a syntax error (PP52).
     const char* p = yytext;
     int base = 0;
-    while (*p != '#') { base = base * 10 + (*p - '0'); ++p; }
+    // A6: once the base exceeds 36 it is invalid whatever follows; stop
+    // accumulating so "base * 10 + digit" can never overflow the int.
+    while (*p != '#') { if (base <= 36) base = base * 10 + (*p - '0'); ++p; }
     ++p; // skip '#'
     if (base < 2 || base > 36) {
         cf_note_failure(Issue::Code::INVALID_EXPRESSION);
