@@ -409,9 +409,9 @@ TEST_F(DirectiveParserTest, MixedClosersInKey_Guard) {
 TEST_F(DirectiveParserTest, UnclosedOpenersInKeyAreLinear_TimingGuard) {
     // Before the fix an unclosed "(*" / "/*" made every character of the key
     // search the rest of the text for the closer: quadratic. Measured before
-    // the fix (Release): "(*" x 200000 took 5.65 s (about 22 s at x 400000),
-    // "/*x" x 100000 took 4.73 s (about 19 s at x 200000). After: well under
-    // 0.1 s.
+    // the fix (Release, measured on the development machine; load-dependent):
+    // "(*" x 400000 took 49.9 s and "/*x" x 200000 took 32.0 s. After: well
+    // under 0.1 s.
     const auto timed = [](const std::string& body, std::string& key) {
         const auto t0 = std::chrono::steady_clock::now();
         std::optional<std::string> invalid;

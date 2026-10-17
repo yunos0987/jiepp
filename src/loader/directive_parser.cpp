@@ -41,6 +41,8 @@ std::size_t skip_directive_ws(std::string_view text, std::size_t pos) {
 // gcc/clang accept "#/*c*/define". A document comment ((*!, /*!, //!) is a
 // token in jiepp and is not skipped; an unclosed block comment is not a
 // comment here, so "{# /*}" keeps "/*" as the (unknown) name.
+// comment_or_ws_at() below must make the same decision as this function
+// (skip(text, pos) != pos); change both together.
 std::size_t skip_directive_ws_and_comments(std::string_view text, std::size_t pos) {
     for (;;) {
         pos = skip_directive_ws(text, pos);
@@ -315,12 +317,13 @@ std::pair<std::string, std::string> parse_directive(std::string_view text,
             }
             continue;
         }
-        // A comment ends the name, like whitespace ("{#define(*c*)X 1}"):
-        // reuse the same recognizer as the leading skip, so a document
-        // comment (a token, kept as part of an unrecognized name, e.g.
-        // "{#(*! d *)define X 1}" stays PP45) and an unclosed block comment
-        // (not a comment at all, e.g. "{# /*}") are treated the same way
-        // here as there.
+        // A comment ends the name, like whitespace ("{#define(*c*)X 1}").
+        // comment_or_ws_at() must make the same decision as
+        // skip_directive_ws_and_comments(text, pos) != pos (change both
+        // together), so a document comment (a token, kept as part of an
+        // unrecognized name, e.g. "{#(*! d *)define X 1}" stays PP45) and an
+        // unclosed block comment (not a comment at all, e.g. "{# /*}") are
+        // treated the same way here as in the leading skip.
         if (comment_or_ws_at(inner, pos, ix))
             break;
         if (c == ':' || c == ';' || c == '\'' || c == '"' || c == '<' || is_directive_ws(c)) {
