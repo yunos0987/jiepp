@@ -253,6 +253,7 @@ cmake --build --preset linux-portable-sandbox-release
 - [`SPECIFICATION.md`](SPECIFICATION.md) — プリプロセッサの完全な仕様 / Complete preprocessor specification
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — 内部モジュール構成とデータフロー / Internal architecture
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — コントリビューションガイド / Contribution guide
+- [`CHANGELOG.md`](CHANGELOG.md) — 変更履歴 / Changelog
 - [`CMakePresets.json`](CMakePresets.json) — 公式 preset と workflow 定義 / Build presets
 - [`vcpkg.json`](vcpkg.json) — 依存パッケージ定義 / Dependencies
 - [`.gitmodules`](.gitmodules) — `vcpkg` サブモジュール設定
