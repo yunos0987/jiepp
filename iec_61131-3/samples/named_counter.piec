@@ -1,0 +1,32 @@
+(*{#:0 'iec_61131-3/samples/named_counter.iec'}*)
+(* named_counter.iec - Independent numbering with __counter, __counter_peek and __counter_set *)
+
+(* Each DETECT gets the next slot of edge_trig[]. The slot number is passed  *)
+(* through a parameter, so both uses in DETECT_ see the same value.          *)
+
+
+
+
+(* Alarm numbers start at 100 and do not share numbers with the edge slots *)
+
+
+
+program Main
+var
+    start_button, stop_button, door_switch: bool;
+    start_pressed, stop_pressed, door_opened: bool;
+    edge_trig: array[0..8 - 1] of R_TRIG;
+    door_alarm, overload_alarm: int;
+    used_slots: int;
+end_var
+(*{st}*)
+edge_trig[0](CLK := start_button); start_pressed := edge_trig[0].Q;
+edge_trig[1](CLK := stop_button); stop_pressed := edge_trig[1].Q;
+edge_trig[2](CLK := door_switch); door_opened := edge_trig[2].Q;
+door_alarm := 100;
+overload_alarm := 101;
+(* __counter_peek reads a counter without advancing it *)
+used_slots := 3;
+
+(*{end}*)
+end_program

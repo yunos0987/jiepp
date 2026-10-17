@@ -1,0 +1,38 @@
+(* assert.iec - Expansion-time checks with __assert, __error and __has_builtin *)
+
+{#define AXIS_COUNT 4}
+{#define MAX_AXES 8}
+{#define CYCLE_TIME_MS 10}
+
+(* A check outside any macro expands to nothing when it holds *)
+__assert(AXIS_COUNT <= MAX_AXES, too many axes: AXIS_COUNT > MAX_AXES)
+__assert(defined(CYCLE_TIME_MS), CYCLE_TIME_MS must be defined)
+
+(* Directives cannot be written in a macro body, but __assert can. The   *)
+(* check runs at each use; parameter names in the message are replaced, *)
+(* so AXIS_TABLE(axes, 12) reports 'axes has 12 entries, allowed 1 to 8' *)
+{#define AXIS_TABLE(name, size) __assert(size >= 1 \and\ size <= MAX_AXES, name has size entries, allowed 1 to MAX_AXES)name: array[1..size] of AxisRef}
+
+(* -D '__assert(...)=' turns the checks off; __has_builtin tells whether they run *)
+{#if __has_builtin(__assert)}
+{#define CHECKS_ACTIVE true}
+{#else}
+{#define CHECKS_ACTIVE false}
+{#endif}
+
+(* __error reports only when the macro that contains it is used *)
+{#if defined(TARGET_OMRON) \or\ defined(TARGET_SIEMENS)}
+{#define HIGH_SPEED_COUNTER(name) name: HscCounter}
+{#else}
+{#define HIGH_SPEED_COUNTER(name) __error(HIGH_SPEED_COUNTER is not supported on this target)}
+{#endif}
+
+program Main
+var
+    AXIS_TABLE(axes, AXIS_COUNT);
+    checks_active: bool := CHECKS_ACTIVE;
+    cycle_ms: int := CYCLE_TIME_MS;
+end_var
+{st}
+{end}
+end_program

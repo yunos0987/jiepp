@@ -80,6 +80,8 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 
 再生成後は、テストスイートが pass することを確認し、ドキュメント（SPECIFICATION.md 等）での参照が正確であることを確認してください。
 
+サンプルを追加するときは、`_` で始まらない名前の `.iec` を置いて再生成するだけで、テストや CMake の変更は要りません（スクリプトと `SamplesRegenerateIdentically` が自動で列挙します）。サンプルは警告や情報を出してもかまいませんが、エラーを出してはいけません。`SamplesRegenerateIdentically` は終了コード 0 を求め、スクリプトも 0 以外を失敗として扱います。エラーになる使い方（`__assert` の条件が偽になる場合など）は、コメントで説明してください。
+
 ## テスト期待値（ゴールデン）の更新 / Updating Test Goldens
 
 上記のサンプル `.piec` とは別に、`tests/jiepp/` の E2E テスト（`run_e2e()`、`tests/jiepp/test_jiepp_command.cpp`）は独自のゴールデンファイル一式を持ちます。意図的な仕様変更でこれらの期待値を更新する必要がある場合は、以下の手順に従ってください。

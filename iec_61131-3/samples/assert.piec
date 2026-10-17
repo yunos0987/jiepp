@@ -1,0 +1,39 @@
+(*{#:0 'iec_61131-3/samples/assert.iec'}*)
+(* assert.iec - Expansion-time checks with __assert, __error and __has_builtin *)
+
+
+
+
+
+(* A check outside any macro expands to nothing when it holds *)
+
+
+
+(* Directives cannot be written in a macro body, but __assert can. The   *)
+(* check runs at each use; parameter names in the message are replaced, *)
+(* so AXIS_TABLE(axes, 12) reports 'axes has 12 entries, allowed 1 to 8' *)
+
+
+(* -D '__assert(...)=' turns the checks off; __has_builtin tells whether they run *)
+
+
+
+
+
+
+(* __error reports only when the macro that contains it is used *)
+
+
+
+
+
+
+program Main
+var
+    axes: array[1..4] of AxisRef;
+    checks_active: bool := true;
+    cycle_ms: int := 10;
+end_var
+(*{st}*)
+(*{end}*)
+end_program
