@@ -507,3 +507,33 @@ TEST_F(ConstfoldTest, EvalConstValueReportsFailureCode) {
     EXPECT_EQ(1LL, eval_const_expr("99999999999999999999 > 0"));
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
 }
+
+// ---- Float literal range: subnormals are accepted, zero/inf results are PP52 ----
+// std::stod throws on ERANGE, and glibc sets ERANGE for subnormal results while
+// the UCRT does not, so the outcome used to differ per platform. The lexer now
+// uses strtod and reports only a true overflow (+-HUGE_VAL) or an underflow
+// to exactly zero from a nonzero literal.
+
+TEST_F(ConstfoldTest, FloatLiteralSubnormalIsAccepted) {
+    EXPECT_NE(0LL, eval_const_expr("1.0e-310 > 0.0"));
+    EXPECT_TRUE(empty());
+    EXPECT_NE(0LL, eval_const_expr("2.0e-308 > 0.0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, FloatLiteralUnderflowToZeroIsPP52) {
+    EXPECT_THROW(eval_const_expr("1.0e-400 = 0.0"), Issue::Exception);
+    EXPECT_NE(std::string::npos,
+              message().find("PP52: Invalid expression; 'float literal underflow: 1.0e-400'"));
+}
+
+TEST_F(ConstfoldTest, FloatLiteralZeroIsNotUnderflow) {
+    EXPECT_NE(0LL, eval_const_expr("0.0e-400 = 0.0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, FloatLiteralOverflowIsPP52) {
+    EXPECT_THROW(eval_const_expr("1.0e400 = 0.0"), Issue::Exception);
+    EXPECT_NE(std::string::npos,
+              message().find("PP52: Invalid expression; 'float literal overflow: 1.0e400'"));
+}

@@ -6,7 +6,10 @@
 #include "env/issue.hpp"
 extern CfValue cflval;  // defined in constfold_parser.cpp (bison %code section)
 #include <cctype>
+#include <cerrno>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <stdexcept>
@@ -94,12 +97,31 @@ ALPHA   [A-Za-z_]
     clean.reserve(yyleng);
     for (const char* p = yytext; *p; ++p)
         if (*p != '_') clean.push_back(*p);
+    // strtod rather than stod: stod throws on every ERANGE, and glibc sets
+    // ERANGE for subnormal results where the UCRT does not. Subnormals are
+    // accepted as-is on every platform; only an overflow (+-HUGE_VAL) and an
+    // underflow to exactly zero from a nonzero literal are PP52.
     double fval = 0.0;
-    try {
-        fval = std::stod(clean);
-    } catch (const std::out_of_range&) {
-        cf_note_failure(Issue::Code::INVALID_EXPRESSION);
-        ISSUE(INVALID_EXPRESSION, std::string("float literal overflow: ") + yytext);
+    {
+        errno = 0;
+        char* endp = nullptr;
+        const double parsed = std::strtod(clean.c_str(), &endp);
+        const int err = errno;
+        if (std::isinf(parsed)) {
+            cf_note_failure(Issue::Code::INVALID_EXPRESSION);
+            ISSUE(INVALID_EXPRESSION, std::string("float literal overflow: ") + yytext);
+        } else {
+            fval = parsed;
+            if (parsed == 0.0 && err == ERANGE) {
+                // Only a nonzero mantissa can underflow; "0.0e-400" is plain zero.
+                const std::size_t epos = clean.find_first_of("eE");
+                if (clean.find_first_of("123456789") < epos) {
+                    cf_note_failure(Issue::Code::INVALID_EXPRESSION);
+                    ISSUE(INVALID_EXPRESSION,
+                          std::string("float literal underflow: ") + yytext);
+                }
+            }
+        }
     }
     cflval = CfValue::float_value(fval);
     return cf::CfParser::token::CF_FLOAT;
