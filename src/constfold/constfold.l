@@ -103,16 +103,17 @@ ALPHA   [A-Za-z_]
     // underflow to exactly zero from a nonzero literal are PP52.
     double fval = 0.0;
     {
-        errno = 0;
         char* endp = nullptr;
         const double parsed = std::strtod(clean.c_str(), &endp);
-        const int err = errno;
         if (std::isinf(parsed)) {
             cf_note_failure(Issue::Code::INVALID_EXPRESSION);
             ISSUE(INVALID_EXPRESSION, std::string("float literal overflow: ") + yytext);
         } else {
             fval = parsed;
-            if (parsed == 0.0 && err == ERANGE) {
+            // errno is not consulted: whether strtod sets ERANGE on underflow is
+            // implementation-defined, so a zero result from a literal with a
+            // nonzero mantissa digit is the underflow test on every platform.
+            if (parsed == 0.0) {
                 // Only a nonzero mantissa can underflow; "0.0e-400" is plain zero.
                 const std::size_t epos = clean.find_first_of("eE");
                 if (clean.find_first_of("123456789") < epos) {

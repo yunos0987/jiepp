@@ -1051,6 +1051,23 @@ TEST_F(SmokeTest, MaxIncludeCountIgnoresCommandLineInclude) {
     EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
     EXPECT_EQ(r.out, "P1\nP2\nX\n");
 }
+
+// A {#include} inside a -include file is an executed directive and is counted.
+TEST_F(SmokeTest, MaxIncludeCountCountsIncludeInsideCommandLineInclude) {
+    write_file(tmp_dir_ / "inc.iec", "X\n");
+    write_file(tmp_dir_ / "pre.iec", "{#include 'inc.iec'}\n");
+    fs::path input = tmp_dir_ / "body.iec";
+    write_file(input, "{#include 'inc.iec'}\n");
+
+    const std::string args = "-P -include \"" + (tmp_dir_ / "pre.iec").generic_string() +
+                             "\" \"" + input.generic_string() + "\"";
+    auto r = run("--max-include-count 1 " + args);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_EQ(count_lines_with(r.err, ": PP66:"), 1u) << "stderr: " << r.err;
+
+    r = run("--max-include-count 2 " + args);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+}
 #endif
 
 // ---- U1: re-lex diagnostics are reported at the file and line of the
@@ -1139,16 +1156,16 @@ TEST_F(SmokeTest, IgnoredPP12CannotHideIncludeDepthExceeded) {
 namespace {
 
 // True when s holds a byte a diagnostic must not carry: a C0 control other
-// than TAB and LF (a CR is allowed only right before an LF: the Windows CRT
+// than TAB and LF (on Windows a CR is allowed right before an LF: the CRT
 // text mode writes CR LF to stderr), DEL, or the UTF-8 C1 pair C2 80 - C2 9F.
 bool has_forbidden_diagnostic_byte(const std::string& s) {
     for (std::size_t i = 0; i < s.size(); ++i) {
         const auto c = static_cast<unsigned char>(s[i]);
-        if (c == '\r') {
-            if (i + 1 < s.size() && s[i + 1] == '\n')
-                continue;
-            return true;
-        }
+#ifdef _WIN32
+        // Only the Windows CRT text mode turns a diagnostic's LF into CR LF.
+        if (c == '\r' && i + 1 < s.size() && s[i + 1] == '\n')
+            continue;
+#endif
         if ((c < 0x20 && c != '\t' && c != '\n') || c == 0x7F)
             return true;
         if (c == 0xC2 && i + 1 < s.size()) {
@@ -1204,8 +1221,9 @@ TEST_F(SmokeTest, DiagnosticsPathLineBreakEscaped) {
 // UTF-8 instead of the ANSI code page. These tests spawn jiepp.exe with
 // CreateProcessW so the command line can carry characters the ANSI code page
 // of jiepp_test itself (932 locally, 1252 on CI) cannot represent. File names
-// are built from u8 string literals holding raw UTF-8 characters so that
-// jiepp_test's own ACP does not matter (the source file itself is UTF-8).
+// are built from u8 string literals holding raw UTF-8 characters, or universal
+// character names (\u form) for emoji and C1 controls, so that jiepp_test's own
+// ACP does not matter (the source file itself is UTF-8).
 //
 // CI note: .github/workflows/ci.yml has no Windows sandbox job, so the
 // sandbox builds of these tests are only exercised locally.

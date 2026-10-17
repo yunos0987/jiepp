@@ -122,13 +122,12 @@ TEST_F(UtilTest, narrow_paths_are_utf8_follows_process_codepage) {
         const std::string saved = prev ? prev : "C";
         if (std::setlocale(LC_ALL, ".UTF8") != nullptr) {
             EXPECT_TRUE(Util::narrow_paths_are_utf8());
-            std::setlocale(LC_ALL, saved.c_str());
-            // The ACP is not UTF-8 here, so the result is the CRT locale alone.
-            // If the saved locale was not UTF-8 the predicate must be false again.
-            if (___lc_codepage_func() != CP_UTF8)
-                EXPECT_FALSE(Util::narrow_paths_are_utf8());
-            else
-                EXPECT_TRUE(Util::narrow_paths_are_utf8());
+            const char* restored = std::setlocale(LC_ALL, saved.c_str());
+            ASSERT_NE(nullptr, restored);
+            const char* now = std::setlocale(LC_ALL, nullptr);
+            EXPECT_EQ(saved, now ? now : "");
+            // Back to the state computed at the top of the test.
+            EXPECT_EQ(expected, Util::narrow_paths_are_utf8());
         } else {
             std::setlocale(LC_ALL, saved.c_str());
         }
@@ -138,8 +137,8 @@ TEST_F(UtilTest, narrow_paths_are_utf8_follows_process_codepage) {
 #endif
 }
 
-// A7: a NUL is shown as $00 too, so a diagnostic of a normal build (P2-3) does
-// not carry a raw 0x00 (checked for `{#error a$00b}`, which prints 'a$00b').
+// A7: escape_line_breaks shows a NUL as $00 too (the diagnostic text itself is
+// escaped by Issue::happen's escape_control_chars, tested below).
 TEST_F(UtilTest, EscapeLineBreaksAlsoEscapesNul) {
     using Util::escape_line_breaks;
     EXPECT_EQ("", escape_line_breaks(""));

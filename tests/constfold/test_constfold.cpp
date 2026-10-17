@@ -537,3 +537,26 @@ TEST_F(ConstfoldTest, FloatLiteralOverflowIsPP52) {
     EXPECT_NE(std::string::npos,
               message().find("PP52: Invalid expression; 'float literal overflow: 1.0e400'"));
 }
+
+TEST_F(ConstfoldTest, FloatLiteralRangeErrorsContinueWithZero) {
+    Issue::ContinueMode guard({});
+    // After PP52 the literal evaluates as 0.0, so the comparison is true and
+    // the failure code is reported (SPEC section 6).
+    for (const char* expr : {"1.0e-400 = 0.0", "1.0e400 = 0.0"}) {
+        auto r = eval_const_value(expr);
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, r.failure) << expr;
+        EXPECT_EQ(ValueKind::Bool, r.value.kind) << expr;
+        EXPECT_TRUE(r.value.b) << expr;
+    }
+}
+
+TEST_F(ConstfoldTest, FloatLiteralSmallestSubnormalBoundary) {
+    Issue::ContinueMode guard({});
+    // 4.9e-324 rounds to the smallest subnormal (accepted); 2.4e-324 rounds
+    // to zero (PP52).
+    auto ok = eval_const_value("4.9e-324 > 0.0");
+    EXPECT_EQ(Issue::Code::SUCCESS, ok.failure);
+    EXPECT_TRUE(ok.value.b);
+    auto bad = eval_const_value("2.4e-324 = 0.0");
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, bad.failure);
+}
