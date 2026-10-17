@@ -82,3 +82,8 @@
 - vcpkg を `4cb050b` に、actions/checkout を v7.0.1 に、actions/cache を v6.1.0 に更新
 - CI を `develop` への push と PR でも実行する。vcpkg のキャッシュキーに vcpkg サブモジュールのコミットを含める
 - Windows の `jiepp.exe` に UTF-8 マニフェスト（`src/jiepp/jiepp.manifest`）を埋め込む
+
+### サンプルと性能測定 / Samples and benchmarks
+
+- サンプル `iec_61131-3/samples/assert.iec`（`__assert`・`__error`・`__has_builtin`）、`named_counter.iec`（`__counter`・`__counter_peek`・`__counter_set`）、`nosplit.iec`（`__nosplit`）を追加
+- `bench` に、このリリースで直した性能問題の劣化を検出するケースを追加（`va_opt_args`・`repeated_stringize`・`unclosed_comment_directive_keys`）
