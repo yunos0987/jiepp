@@ -113,6 +113,7 @@ public:
     static LineNo lineno() { return top().first; }
 
     // ---- Ignore / block lists ----
+    // Suppression has no effect for SEVERE codes and PP10-PP14 (SPEC 10).
     static void add_ignoring(Code code);
     static bool is_ignored(Code code);
     static void add_blocking(Code code);
@@ -189,6 +190,7 @@ public:
         std::set<Code> original_;
     };
 
+    // Suppression has no effect for SEVERE codes and PP10-PP14 (SPEC 10).
     struct Ignoring {
         Ignoring(std::set<Code> codes);
         ~Ignoring();
