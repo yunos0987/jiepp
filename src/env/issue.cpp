@@ -12,6 +12,8 @@
 
 #include "issue_message.hpp"
 #include "env.hpp"
+#include "../util/text.hpp"
+#include "../util/path.hpp"
 
 // ---------------------------------------------------------------------------
 // Static state
@@ -32,12 +34,15 @@ std::ostream* Issue::stream_ = &std::cerr;
 std::vector<Issue::LocationEntry> Issue::loc_stack_;
 std::set<Issue::Code> Issue::ignorings_;
 std::set<Issue::Code> Issue::blockings_ = make_default_blockings();
+std::set<Issue::Code> Issue::enabled_;
+std::set<Issue::Code> Issue::werror_codes_;
 bool Issue::silent_ = false;
 bool Issue::suppress_warnings_ = false;
 bool Issue::werror_ = false;
 bool Issue::cli_mode_ = false;
 bool Issue::continue_mode_ = false;
 int Issue::error_count_ = 0;
+int Issue::error_limit_ = 0;
 // Inert while continue_mode_ is false; ContinueMode always forces all
 // SEVERE codes in, mirroring make_default_blockings()'s severe-forcing.
 std::set<Issue::Code> Issue::continue_abort_codes_;
@@ -75,6 +80,8 @@ void Issue::initialize(std::ostream& stream) {
     stream_ = &stream;
     ignorings_.clear();
     blockings_ = make_default_blockings();
+    enabled_.clear();
+    werror_codes_.clear();
     loc_stack_.clear();
     loc_stack_.push_back({1, "<unknown location>"}); // dummy entry to avoid empty stack checks in filepath()/lineno()
     silent_ = false;
@@ -83,6 +90,7 @@ void Issue::initialize(std::ostream& stream) {
     cli_mode_ = false;
     continue_mode_ = false;
     error_count_ = 0;
+    error_limit_ = 0;
     continue_abort_codes_.clear();
     message_ = PlainTextMessage::instance();
 }
@@ -146,7 +154,30 @@ void Issue::add_ignoring(Code code) {
     ignorings_.insert(code);
 }
 
+// PP10-PP14 (FILE_ERROR, FILE_NOT_FOUND, MAX_INCLUDE_DEPTH_EXCEEDED,
+// INVALID_COMMAND, INCLUDE_TARGET_IS_DIRECTORY) cannot be suppressed by
+// {#ignore} / add_ignoring(), same as SEVERE (SPEC 10). Suppressing one
+// would not just hide a message: the file silently counts as empty, or a
+// failed -o / -MF open exits 0 with no file written. These are also the
+// codes jiepp_command() lists in jiepp_continue_abort_codes() (jiepp.cpp)
+// as aborting in continue mode, together with PP60/PP61, which stay
+// suppressible (SPEC 11 uses {#ignore PP60} to lift the limit).
+static bool is_unignorable_file_code(Issue::Code code) {
+    switch (code) {
+    case Issue::Code::FILE_ERROR:
+    case Issue::Code::FILE_NOT_FOUND:
+    case Issue::Code::MAX_INCLUDE_DEPTH_EXCEEDED:
+    case Issue::Code::INVALID_COMMAND:
+    case Issue::Code::INCLUDE_TARGET_IS_DIRECTORY:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool Issue::is_ignored(Code code) {
+    if (is_severe(code) || is_unignorable_file_code(code))
+        return false;
     return ignorings_.count(code) != 0;
 }
 
@@ -166,18 +197,38 @@ bool Issue::is_blocked(Code code) {
 }
 
 void Issue::happen(Code code, std::string context, std::source_location loc) {
-    // ignore list has no effect, but SEVERE always proceeds.
-    if (is_ignored(code) && !is_severe(code))
+    // {#ignore} suppresses the code, except SEVERE and PP10-PP14, which
+    // is_ignored() never reports as ignored.
+    if (is_ignored(code))
+        return;
+
+    // Default-off code that was not enabled: nothing at all happens.
+    if (!is_enabled(code))
         return;
 
     Severity severity = severity_of(code);
 
-    // -Werror: promote WARNING to ERROR
+    // -Werror (all warnings) or add_werror() (this code): promote WARNING
+    // to ERROR
     bool promoted = false;
-    if (werror_ && is_warning(code))
+    if (is_warning(code) && (werror_ || werror_codes_.count(code) != 0))
         promoted = true;
     if (promoted)
         severity = Severity::ERROR;
+
+    // --error-limit (PP65), continue mode only: once error_limit_ errors have
+    // been counted, the next ERROR that would be counted is not printed.
+    // PP65 (SEVERE) is raised at its location instead and stops processing.
+    // The check does not apply to SEVERE or to a code that aborts on its own
+    // (it stops the run with its own, more specific code). PP65 is SEVERE, so
+    // it cannot re-enter this check, and the whole check is O(1).
+    if (continue_mode_ && error_limit_ > 0 && severity == Severity::ERROR && !is_severe(code)
+        && continue_abort_codes_.count(code) == 0 && error_count_ >= error_limit_) {
+        happen(Code::TOO_MANY_ERRORS,
+               "limit " + std::to_string(error_limit_) +
+               "; use --error-limit N to raise it (0 = no limit)", loc);
+        throw Exception(Code::TOO_MANY_ERRORS); // defense in depth
+    }
 
     // -w: suppress warning output (unless promoted by -Werror)
     bool output_suppressed = suppress_warnings_ && is_warning(code) && !promoted;
@@ -191,12 +242,15 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // preprocess()/preprocess_text() API keeps using unchanged.
         // C5/U2: also render as CLI_LOCATION when a real entry was pushed on
         // top of the dummy but still carries the dummy's own placeholder
-        // filename -- e.g. with_fallback_line() (lexer_helpers.hpp), used by
-        // a lexer diagnostic (like UNCLOSED_COMMENT) raised while tokenizing
-        // a -D/-U operand at the CLI stage, pushes {ln, filepath()} which
-        // just copies that placeholder forward. Without this, such a
-        // diagnostic rendered as "<unknown location>:N.0: ..." instead of
-        // "jiepp: ...", because loc_stack_.size() was already 2 by then.
+        // filename -- a LineGuard pushed while only the dummy is below it
+        // (LineGuard(ln) pushes {ln, filepath()}) just copies that
+        // placeholder forward.
+        // Without this, such a diagnostic rendered as "<unknown
+        // location>:N.0: ..." instead of "jiepp: ...", because
+        // loc_stack_.size() was already 2 by then. (A -D/-U operand itself
+        // is re-lexed with iec3_relex(), which pushes nothing, so its lexer
+        // diagnostics take the size() == 1 branch; this condition stays as
+        // a guard for the other paths.)
         // B1 defensive: loc_stack_ should never be empty here (ensure_location_stack()
         // and initialize() both guarantee a bottom dummy entry), but if some future
         // caller manages to hit this with an empty stack, filepath()/lineno() calling
@@ -212,6 +266,78 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
                         filepath() == loc_stack_.front().second)) ? CLI_LOCATION : filepath();
             loc_line = lineno();
         }
+        // Shared by the sandbox strip and the normal-build escape below.
+        // path_c1: whether the UTF-8 C1 rule (C2 80 - C2 9F) applies to a
+        // file path; it is evaluated at every diagnostic because the CRT
+        // locale can change at run time (see the sandbox notes below).
+        const Util::C1Pairs path_c1 = Util::narrow_paths_are_utf8()
+            ? Util::C1Pairs::Remove : Util::C1Pairs::Keep;
+        const bool message_code = code == Code::SEVERE_MESSAGE
+            || code == Code::ERROR_MESSAGE
+            || code == Code::WARNING_MESSAGE
+            || code == Code::INFO_MESSAGE;
+        const bool path_code = code == Code::FILE_ERROR
+            || code == Code::FILE_NOT_FOUND
+            || code == Code::MAX_INCLUDE_DEPTH_EXCEEDED
+            || code == Code::INCLUDE_TARGET_IS_DIRECTORY;
+#ifdef JIEPP_SANDBOX
+        // Sandbox: strip control characters to prevent log injection (SPEC
+        // 14) from both user-derived fields of every diagnostic -- the
+        // context text and the file path -- right before they are handed
+        // to the formatter. In src/, this call is where message_ and
+        // stream_ are used to print a diagnostic (main.cpp's last-resort
+        // PP01 lines write to std::cerr directly but print no user text in
+        // sandbox builds); the code, severity and the C++ source location
+        // are not user text, and Issue::Exception carries only the code. So
+        // the printed line and the IssueMessage formatter both receive the
+        // stripped text. The fixed placeholders ("jiepp", "<unknown location>",
+        // "<no location>") contain no control characters and are unchanged.
+        // The strip keeps '\n' and '\r'; after it, each LF and each CR is
+        // replaced with one space (CR LF becomes two spaces) in the file
+        // path of every diagnostic and in the context of every diagnostic
+        // except the message passthrough codes PP90-PP93, whose context is
+        // the user's own message ({#error}/{#warning}/{#info}/{#severe},
+        // __error/__assert), where a $n/$r line break is intended. Elsewhere
+        // a line break would let quoted operand text or a path forge a whole
+        // extra diagnostic line. Replacing a byte with a space in place
+        // removes nothing and a space is neither C2 nor 0x80-0x9F, so the
+        // strip's "no forbidden byte or pair" result still holds.
+        // The UTF-8 C1 rule (C2 80 - C2 9F) assumes UTF-8 text. When narrow
+        // paths are not UTF-8 (Util::narrow_paths_are_utf8() is false: a
+        // Windows process in an ANSI code page, e.g. a library caller or
+        // jiepp.exe before Windows 10 1903, where the manifest has no effect;
+        // CP932 C2 82 A0 is U+FF82 U+3042), the path keeps those pairs and
+        // only loses C0 controls and DEL. That covers the location path and
+        // the context of the file codes PP10/PP11/PP12/PP14, which is the
+        // path itself:
+        // in sandbox builds {#include}/{#sinclude}/__has_include are PP62 and
+        // {#line}'s file name is ignored, so both come only from the command
+        // line (input file, --disppath, -include, -o, -MF) or from a library
+        // caller. Other contexts are input text (UTF-8, SPEC 1) and keep the
+        // full rule on every platform. The predicate (path_c1, above) is
+        // evaluated at every diagnostic, because the CRT locale can change at
+        // run time.
+        context = Util::strip_control_chars(context, path_code ? path_c1 : Util::C1Pairs::Remove);
+        if (!message_code)
+            context = Util::line_breaks_to_spaces(context);
+        loc_file = Util::line_breaks_to_spaces(Util::strip_control_chars(loc_file, path_c1));
+#else
+        // Normal build (P2-3, SPEC 16): nothing is removed; every control
+        // character of the context and of the file path is shown as $XX
+        // (LF as $n, CR as $r), so one diagnostic is one line and a quoted
+        // operand or path cannot forge a second diagnostic or carry an
+        // escape sequence to the terminal. The message codes PP90-PP93 keep
+        // the LF/CR of the user's own message ($n there is meant to make a
+        // second line); every other control character in them is escaped.
+        // The same file-path rule as the sandbox strip above decides whether
+        // the C1 pair is escaped (path_c1, path_code); other contexts are
+        // input text and use the full rule. Issue::set_output() streams get
+        // the escaped text too. The fixed placeholders contain no control
+        // characters and are unchanged.
+        context = Util::escape_control_chars(context, path_code ? path_c1 : Util::C1Pairs::Remove,
+                                             /*keep_line_breaks=*/message_code);
+        loc_file = Util::escape_control_chars(loc_file, path_c1, /*keep_line_breaks=*/false);
+#endif
         message_.message(*stream_, severity, code, context, loc_file, loc_line, 0, loc);
         *stream_ << '\n';
     }

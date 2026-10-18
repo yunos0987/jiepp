@@ -12,6 +12,7 @@
 
 # Build / config
 *.cmake text eol=lf
+*.manifest text eol=lf
 *.json text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf

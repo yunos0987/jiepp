@@ -48,6 +48,11 @@ void handle_include(const std::string& raw_arg,
                     std::vector<Token>& ots,
                     bool syspath_only);
 void handle_message(const std::string& raw_arg, Env& env, Issue::Code code);
+// Raises a message-passthrough diagnostic (PP90-PP93) with msg as its
+// context. Shared by handle_message() and the built-ins __error/__assert.
+// The sandbox control-character strip is applied by Issue::happen(), as for
+// every other diagnostic.
+void report_message(std::string msg, Issue::Code code);
 void handle_ignore(const std::string& raw_arg, Env& env);
 void handle_max_include_depth(const std::string& raw_arg, Env& env);
 void handle_max_expansion_depth(const std::string& raw_arg, Env& env);
@@ -63,9 +68,24 @@ void report_unterminated_literal(Token& t);
 
 // Lexes a decoded directive operand and reports PP29 for each unterminated
 // literal in it; with report_unterminated == false (message text, like
-// clang's #error/#warning) only clears the marks.
+// clang's #error/#warning) only clears the marks. Lexes with iec3_relex(),
+// so its own diagnostics (PP20/PP22/PP23) are also reported at the current
+// Issue location; report_nested_brace is passed to it.
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
-                               bool report_unterminated = true);
+                               bool report_unterminated = true,
+                               bool report_nested_brace = true);
+
+// What expand_operand_tokens() lexes (A2 / S-02):
+// - operand: a directive operand or message text.
+// - pragma_body: the body of a pragma token that the lexer did not produce
+//   while re-lexing a pragma body (a source pragma, a pragma from a macro
+//   replacement, or one whose text was rewritten).
+// - nested_pragma_body: the body of a Token::relexed_pragma token; a raw
+//   '{' inside a nested pragma body is not reported again (see
+//   read_pragma_body()).
+// For both pragma kinds every PRAGMA token lexed from the body is marked
+// Token::relexed_pragma.
+enum class OperandKind { operand, pragma_body, nested_pragma_body };
 
 // Lexes text -- a decoded directive operand ({#if}/{#elif} condition,
 // {#string}/{#wstring}/{#line}/{#include}/{#sinclude}/{#syspath} operand,
@@ -74,7 +94,8 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
 // runs: compaction is a post-pass over the final output stream, and running
 // it here spliced a line marker into the operand text itself.
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
-                                         bool report_unterminated = true);
+                                         bool report_unterminated = true,
+                                         OperandKind kind = OperandKind::operand);
 // Concatenated text of expand_operand_tokens().
 std::string expand_operand_text(const std::string& text, Env& env,
                                 bool report_unterminated = true);

@@ -172,6 +172,78 @@ TEST_F(OptionTest, ParseArgsMaxExpansionStepsMissingValue) {
     EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
 }
 
+// P2-4: --error-limit N / --error_limit N; 0 (no limit) is valid.
+TEST_F(OptionTest, ParseArgsErrorLimitBothSpellings) {
+    for (const char* spelling : {"--error-limit", "--error_limit"}) {
+        for (const char* value : {"5", "0", "2147483647"}) {
+            char* argv[] = {const_cast<char*>("jiepp"),
+                            const_cast<char*>(spelling), const_cast<char*>(value)};
+            auto opts = parse_args(3, argv);
+            ASSERT_TRUE(opts.error_limit.has_value()) << spelling << " " << value;
+            EXPECT_EQ(*opts.error_limit, std::stoi(value)) << spelling;
+        }
+    }
+    char* argv[] = {const_cast<char*>("jiepp")};
+    EXPECT_FALSE(parse_args(1, argv).error_limit.has_value());
+}
+
+TEST_F(OptionTest, ParseArgsErrorLimitInvalidValues) {
+    for (const char* spelling : {"--error-limit", "--error_limit"}) {
+        for (const char* bad : {"-1", "x", "3x", "2147483648"}) {
+            char* argv[] = {const_cast<char*>("jiepp"),
+                            const_cast<char*>(spelling), const_cast<char*>(bad)};
+            EXPECT_THROW(parse_args(3, argv), Issue::Exception) << spelling << " " << bad;
+            auto msgs = messages();
+            ASSERT_EQ(1u, msgs.size()) << bad;
+            EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << bad << ": " << msgs[0];
+        }
+    }
+}
+
+TEST_F(OptionTest, ParseArgsErrorLimitMissingValue) {
+    for (const char* spelling : {"--error-limit", "--error_limit"}) {
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(spelling)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception) << spelling;
+        EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code()) << spelling;
+    }
+}
+
+// --max-include-count N / --max_include_count N; 0 (no limit) is valid.
+TEST_F(OptionTest, ParseArgsMaxIncludeCountBothSpellings) {
+    for (const char* spelling : {"--max-include-count", "--max_include_count"}) {
+        for (const char* value : {"5", "0", "2147483647"}) {
+            char* argv[] = {const_cast<char*>("jiepp"),
+                            const_cast<char*>(spelling), const_cast<char*>(value)};
+            auto opts = parse_args(3, argv);
+            ASSERT_TRUE(opts.max_include_count.has_value()) << spelling << " " << value;
+            EXPECT_EQ(*opts.max_include_count, std::stoi(value)) << spelling;
+        }
+    }
+    char* argv[] = {const_cast<char*>("jiepp")};
+    EXPECT_FALSE(parse_args(1, argv).max_include_count.has_value());
+}
+
+TEST_F(OptionTest, ParseArgsMaxIncludeCountInvalidValues) {
+    for (const char* spelling : {"--max-include-count", "--max_include_count"}) {
+        for (const char* bad : {"-1", "x", "3x", "2147483648"}) {
+            char* argv[] = {const_cast<char*>("jiepp"),
+                            const_cast<char*>(spelling), const_cast<char*>(bad)};
+            EXPECT_THROW(parse_args(3, argv), Issue::Exception) << spelling << " " << bad;
+            auto msgs = messages();
+            ASSERT_EQ(1u, msgs.size()) << bad;
+            EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << bad << ": " << msgs[0];
+        }
+    }
+}
+
+TEST_F(OptionTest, ParseArgsMaxIncludeCountMissingValue) {
+    for (const char* spelling : {"--max-include-count", "--max_include_count"}) {
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(spelling)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception) << spelling;
+        EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code()) << spelling;
+    }
+}
+
 TEST_F(OptionTest, ParseArgsSnakeCaseVariants) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("--max_include_depth"), const_cast<char*>("5")};
@@ -527,4 +599,32 @@ TEST_F(OptionTest, ParseArgsUnknownOptionMessageFormat) {
     auto msgs = messages();
     ASSERT_EQ(1u, msgs.size());
     EXPECT_EQ("jiepp: error: PP70: Unknown command-line option; '--foo'", msgs[0]);
+}
+
+TEST_F(OptionTest, ParsesWundef) {
+    char* plain[] = {const_cast<char*>("jiepp")};
+    EXPECT_FALSE(parse_args(1, plain).warn_undef);
+
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Wundef")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.warn_undef);
+    EXPECT_FALSE(opts.werror);
+}
+
+TEST_F(OptionTest, ParsesWerrorUndef) {
+    char* plain[] = {const_cast<char*>("jiepp")};
+    EXPECT_FALSE(parse_args(1, plain).werror_undef);
+
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Werror=undef")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.werror_undef);
+    EXPECT_FALSE(opts.werror);
+    EXPECT_FALSE(opts.warn_undef);
+
+    // No other -Werror= / -Wno- form is accepted.
+    for (const char* bad : {"-Werror=foo", "-Wno-undef", "-Wno-error=undef"}) {
+        char* argv2[] = {const_cast<char*>("jiepp"), const_cast<char*>(bad)};
+        EXPECT_THROW(parse_args(2, argv2), Issue::Exception) << bad;
+        EXPECT_EQ(Issue::Code::UNKNOWN_OPTION, code()) << bad;
+    }
 }

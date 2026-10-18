@@ -21,6 +21,8 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     // One expansion-step budget (PP64) per call; a previous call's count,
     // including one that stopped at the limit, does not carry over.
     env.reset_expansion_steps();
+    // Same for the executed-include count (PP66).
+    env.reset_include_count();
     auto its = iec3_tokens(input, env.get_remove_comments(), 1);
     std::vector<Token> ots;
     // No leading line marker here (unlike the jiepp command line), so tell
@@ -46,8 +48,10 @@ void report_unterminated_literal(Token& t) {
 }
 
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
-                               bool report_unterminated) {
-    auto ts = iec3_tokens_from_string(text, remove_comments);
+                               bool report_unterminated, bool report_nested_brace) {
+    // U1: re-lexed text is not source text, so its diagnostics go to the
+    // current Issue location (the directive/pragma being processed).
+    auto ts = iec3_relex(text, remove_comments, report_nested_brace);
     for (auto& t : ts) {
         if (report_unterminated)
             report_unterminated_literal(t);
@@ -58,12 +62,22 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
 }
 
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
-                                         bool report_unterminated) {
+                                         bool report_unterminated, OperandKind kind) {
     // Work budget (PP64): one step per byte, charged BEFORE lexing, so an
     // operand (pragma body, {#if} condition, {#include} path, message, ...)
     // costs work in proportion to its size even if it expands to nothing.
     env.charge_expansion_steps(text.size());
-    auto its = lex_operand(text, env.get_remove_comments(), report_unterminated);
+    auto its = lex_operand(text, env.get_remove_comments(), report_unterminated,
+                           kind != OperandKind::nested_pragma_body);
+    // A2 / S-02: a pragma lexed from a pragma body is still the lexer's own
+    // text here; every raw '{' in its body was met by this lex and reported
+    // by it or by an enclosing pass (see read_pragma_body()), so its own
+    // re-lex need not report them again.
+    if (kind != OperandKind::operand) {
+        for (auto& t : its)
+            if (t.type == Token::PRAGMA)
+                t.relexed_pragma = true;
+    }
     // Every newline in an operand is a decoded $n/$l/$r/$0A/$0D escape: the
     // raw newlines of the directive are counted by the lexer separately
     // (the extra newline tokens of read_pragma_body()), so none is a source line.
@@ -131,6 +145,16 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     env.define("__INCLUDE_LEVEL__",     std::make_unique<IncludeLevelMacro>());
     env.define("__BASE_FILE__",         std::make_unique<BaseFileMacro>());
     env.define("__FILE_NAME__",         std::make_unique<FileNameMacro>());
+    // Built-in function-like macros (SPEC 12.9-12.11): ordinary symbol-table
+    // entries like __COUNTER__, so {#ifdef} sees them and {#undef} removes
+    // them (with a PP35 warning); -dM does not list them. The named-counter
+    // values live in the Env (Param), not in these objects.
+    env.define("__error",               std::make_unique<ErrorBuiltin>());
+    env.define("__assert",              std::make_unique<AssertBuiltin>());
+    env.define("__counter",             std::make_unique<CounterBuiltin>(CounterBuiltin::Kind::next));
+    env.define("__counter_peek",        std::make_unique<CounterBuiltin>(CounterBuiltin::Kind::peek));
+    env.define("__counter_set",         std::make_unique<CounterSetBuiltin>());
+    env.define("__nosplit",             std::make_unique<NosplitBuiltin>());
     // NOTE: "defined" is NOT installed permanently; it is installed temporarily
     // by eval_cond_str during #if/#elif condition evaluation only.
 

@@ -98,6 +98,19 @@ bool Param::fix_max_expansion_depth(int depth) {
 }
 
 // ---------------------------------------------------------------------------
+// Include count budget
+// ---------------------------------------------------------------------------
+
+void Param::raise_include_count_exceeded() const {
+    ISSUE(MAX_INCLUDE_COUNT_EXCEEDED,
+          "limit " + std::to_string(max_include_count_) +
+          "; use --max-include-count N to raise it (0 = no limit)");
+    // SEVERE: happen() always throws; this keeps the [[noreturn]] contract
+    // honest, like raise_expansion_steps_exceeded() below.
+    throw Issue::Exception(Issue::Code::MAX_INCLUDE_COUNT_EXCEEDED);
+}
+
+// ---------------------------------------------------------------------------
 // Expansion work budget
 // ---------------------------------------------------------------------------
 
@@ -196,4 +209,17 @@ std::shared_ptr<const std::vector<Token>> Param::get_cache(const std::string& ke
 void Param::set_cache(std::string key, std::vector<Token> tokens) {
     cache_->data.insert_or_assign(
         std::move(key), std::make_shared<const std::vector<Token>>(std::move(tokens)));
+}
+
+// ---------------------------------------------------------------------------
+// Named counters
+// ---------------------------------------------------------------------------
+
+std::uint32_t Param::counter_value(std::string_view name) const {
+    auto it = counters_.find(std::string(name));
+    return it != counters_.end() ? it->second : 0;
+}
+
+std::uint32_t& Param::counter_slot(const std::string& name) {
+    return counters_[name];
 }

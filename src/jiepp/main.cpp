@@ -1,7 +1,9 @@
 #include "option.hpp"
 #include "jiepp.hpp"
 #include "../env/issue.hpp"
+#include "../util/path.hpp"
 #include "../util/stack_guard.hpp"
+#include "../util/text.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <iostream>
@@ -84,7 +86,15 @@ void report_uncaught_exception([[maybe_unused]] const std::exception& e) {
 #ifdef JIEPP_SANDBOX
     std::cerr << Issue::CLI_LOCATION << ": error: PP01: Unknown error\n";
 #else
-    std::cerr << Issue::CLI_LOCATION << ": error: PP01: Unknown error; " << e.what() << "\n";
+    // Same escaping as Issue::happen() in a normal build (P2-3): what() can
+    // quote a file name or other user text, and one diagnostic stays one
+    // line. what() may hold a path, so the C1 pair rule follows the path
+    // rule (narrow_paths_are_utf8()), evaluated here as at every diagnostic.
+    std::cerr << Issue::CLI_LOCATION << ": error: PP01: Unknown error; "
+              << Util::escape_control_chars(e.what(),
+                     Util::narrow_paths_are_utf8() ? Util::C1Pairs::Remove : Util::C1Pairs::Keep,
+                     /*keep_line_breaks=*/false)
+              << "\n";
 #endif
 }
 
@@ -142,6 +152,12 @@ int main(int argc, char* argv[]) {
     // for identical content. stderr is left in text mode: it only carries
     // human-facing diagnostics, never diffed against file output.
     _setmode(_fileno(stdout), _O_BINARY);
+    // B2: stdin is read in binary mode too. In the CRT's default text mode
+    // byte 0x1A (Ctrl+Z) ends the input, so `printf 'aa\x1abb\n' | jiepp`
+    // silently dropped everything after it and exited 0, while the same
+    // bytes given as a file were read completely. CRLF is still handled by
+    // the lexer (SPEC 1).
+    _setmode(_fileno(stdin), _O_BINARY);
 #endif
     Issue::initialize(std::cerr);
 

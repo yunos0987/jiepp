@@ -2,11 +2,14 @@
 // expand_helpers.hpp — Internal shared header for expand*.cpp files.
 // Mirrors cpp.algo.md (Prosser's algorithm) section structure.
 
+#include "../constfold/constfold.hpp"
 #include "../loader/token.hpp"
 #include "../env/env.hpp"
 #include "../env/issue.hpp"
+#include "../macro/macro.hpp"
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -43,6 +46,42 @@ bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env);
 // Whether NAME counts as defined for {#ifdef}/{#ifndef}/`defined`. See the
 // definition in expand_ctrl.cpp for the __has_include special case.
 bool macro_name_is_defined(std::string_view name, Env& env);
+
+// __has_builtin(NAME) (SPEC 5.2): 1 for the operators `__has_builtin`,
+// `defined` and (normal build) `__has_include`, and for a symbol-table entry
+// that is still a built-in kind (is_builtin_macro()); 0 otherwise.
+bool has_builtin(std::string_view name, Env& env);
+
+// The __has_builtin operator branch of expand(), called with the operator
+// token already popped from `work` while the transient 'defined' operator is
+// active and not suspended. Pushes "1"/"0" to `ots`; an operand error is
+// reported once per condition through `defop` like the 'defined' branch.
+// noinline so the expand() frame does not grow.
+[[gnu::noinline]] void expand_has_builtin(std::vector<Token>& work,
+                                          std::vector<Token>& ots,
+                                          Env& env,
+                                          DefinedOperator& defop);
+
+// Evaluates the operand tokens of a built-in function macro (__assert's
+// expression, __counter_set's value) with the {#if} rules: the tokens are
+// NOT pre-expanded; they are expanded during evaluation with the transient
+// 'defined' operator installed (or, inside an {#if} condition, re-enabled
+// with the outer condition's defined-error state saved and restored),
+// __has_include(...) resolved, undefined identifiers = 0, comments =
+// whitespace. Hide sets on the tokens are kept (a text round trip would
+// lose them, so {#define N __assert(N, m)} would re-expand N until PP60).
+// Charges one expansion step per byte of the operand text (PP64), like an
+// {#if} operand.
+// failure != SUCCESS when the evaluation itself failed -- PP62 (sandbox
+// __has_include), a 'defined' operand error (PP40, or PP52 for a missing
+// ')'), or a constfold failure (PP50/PP51/PP52, literal errors included) --
+// whether or not that diagnostic was shown (it may have been suppressed by
+// {#ignore}). Division/modulo by zero is not a failure (SPEC 6.3).
+struct CondValue {
+    Issue::Code failure = Issue::Code::SUCCESS; // first failing diagnostic code
+    cf::ConstValue value;                       // valid only when failure == SUCCESS
+};
+CondValue eval_cond_value_tokens(std::vector<Token> ts, Env& env);
 
 // ── Prosser's algorithm support (expand_subst.cpp) ─────────────────
 // Corresponds to cpp.algo.md: §hsadd, §glue, §Support functions, §subst.
@@ -89,6 +128,10 @@ std::vector<Token> select_arg(int idx,
                               bool is_va,
                               const std::vector<ArgWs>* ws = nullptr,
                               VaJoin join = VaJoin::plain);
+// select_arg(idx, actuals, is_va).empty(), in O(1) and without copying any
+// actual token: it runs the same join as select_arg() (one definition of the
+// separator rule) and stops at the first token produced (S-01).
+bool va_args_empty(int idx, const std::vector<std::vector<Token>>& actuals, bool is_va);
 int argc_from(int idx, const std::vector<std::vector<Token>>& actuals);
 
 // ── §subst — argument-expansion memoisation (task_slug arg-expand-once, D1/D2) ──
@@ -109,10 +152,20 @@ int argc_from(int idx, const std::vector<std::vector<Token>>& actuals);
 // (computed from FunctionMacro::arg_slot_uses(), which over-counts, so
 // remaining can reach 0 only at the true last need) moves the vector out
 // instead of copying it.
+//
+// S-01: `stringized` caches, per slot, the encoded STRING text of `@param`
+// (or `@__VA_ARGS__` / `@args`), so a parameter is stringized at most once
+// per invocation however often `@` names it. The text depends only on the
+// slot: `@param` always joins variable arguments with VaJoin::stringize
+// (R6), whatever va_sep_ws is. `@__VA_ARGC__` resolves to the same pidx (and
+// so the same slot) as the variable arguments, so subst() looks the cache up
+// only after it has ruled `__VA_ARGC__` out. The vector stays empty until
+// the first stringize of a parameter with a slot.
 struct ArgExpansionMemo {
     const std::vector<int>* slots;      // FunctionMacro::arg_slots(), by pidx
     std::vector<int> remaining;         // copy of FunctionMacro::arg_slot_uses()
     std::vector<std::optional<std::vector<Token>>> expanded; // per slot, lazy
+    std::vector<std::optional<std::string>> stringized;      // per slot, lazy
 };
 
 // §Support functions: stringize
@@ -134,8 +187,15 @@ Token stringize_tokens(const std::vector<Token>& ts);
 // (see ArgExpansionMemo above); forwarded unchanged through every recursive
 // subst() call for __VA_OPT__(...) content, so the single shared expansion
 // is visible to occurrences inside and outside that content alike.
+// va_opt: the VaOptSpan table of `body` (FunctionMacro / UserDefinedObjectMacro
+// ::va_opt_spans(), or the matching subrange for __VA_OPT__ content). An
+// empty table is computed locally the first time a __VA_OPT__ token is met,
+// so a caller without one (a built-in replacement) stays correct. The
+// content of __VA_OPT__(...) is substituted as a subspan of `body`, never
+// copied or rescanned.
 std::vector<Token> subst(
-    const std::vector<Token>& body,
+    std::span<const Token> body,
+    std::span<const VaOptSpan> va_opt,
     const std::unordered_map<std::string, std::pair<int, bool>>& formal_params,
     const std::vector<std::vector<Token>>& actual_params,
     const std::vector<ArgWs>* actual_ws,
@@ -143,5 +203,12 @@ std::vector<Token> subst(
     Env& env,
     bool va_sep_ws = false,
     ArgExpansionMemo* memo = nullptr);
+
+// ── Stack-exhaustion report (expand.cpp) ──────────────────────────
+
+// PP63 (SEVERE). Shared by ExpansionDepthGuard and subst_va_opt_content()
+// so the message cannot drift. Out of line: its std::string temporaries
+// must not enlarge the frames of the recursive functions.
+[[noreturn, gnu::noinline, gnu::cold]] void raise_stack_exhausted(const Env& env);
 
 } // namespace jiepp::expand_detail

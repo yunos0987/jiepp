@@ -71,11 +71,13 @@ public:
     // any source file has been pushed -- CLI option errors, -o/-MF open
     // failures, INVALID_COMMAND, the top-level input's FILE_NOT_FOUND, and
     // (C5/U2) a lexer diagnostic raised while tokenizing a -D/-U operand
-    // (e.g. UNCLOSED_COMMENT), even though that reaches happen() through a
-    // with_fallback_line()-pushed LineGuard copy of the dummy entry below,
-    // not through loc_stack_ still being exactly the dummy. PlainTextMessage
-    // ::message() renders this exact value without a trailing ":line.column",
-    // i.e. "jiepp: error: PPxx: message". This is distinct from the
+    // (e.g. UNCLOSED_COMMENT). That operand is re-lexed with iec3_relex(),
+    // which pushes no location of its own, so loc_stack_ is still exactly
+    // the dummy; happen() also treats an entry that merely copies the
+    // dummy's placeholder filename forward as CLI-level (see there).
+    // PlainTextMessage::message() renders this exact value without a
+    // trailing ":line.column", i.e. "jiepp: error: PPxx: message". This is
+    // distinct from the
     // "<unknown location>" bottom-of-stack dummy pushed by initialize(): the
     // string-input preprocess()/preprocess_text() API keeps using that
     // dummy's "<unknown location>:N.0" form unchanged.
@@ -111,11 +113,27 @@ public:
     static LineNo lineno() { return top().first; }
 
     // ---- Ignore / block lists ----
+    // Suppression has no effect for SEVERE codes and PP10-PP14 (SPEC 10).
     static void add_ignoring(Code code);
     static bool is_ignored(Code code);
     static void add_blocking(Code code);
     static void remove_blocking(Code code);
     static bool is_blocked(Code code);
+
+    // ---- Off-by-default codes ----
+    // A default-off code (today only UNDEFINED_IDENTIFIER, PP54, -Wundef)
+    // is dropped by happen() -- no output, no count, no throw -- until
+    // enable() is called. initialize() clears the enabled set.
+    static bool is_default_off(Code c) { return c == Code::UNDEFINED_IDENTIFIER; }
+    static void enable(Code c) { enabled_.insert(c); }
+    static bool is_enabled(Code c) { return !is_default_off(c) || enabled_.count(c) != 0; }
+
+    // ---- Per-code promotion (-Werror=undef) ----
+    // Like -Werror, but only for this code: happen() reports it as an ERROR
+    // (counted; thrown in library mode unless ContinueMode is active). Also
+    // enables the code, so a default-off code needs no separate enable().
+    // initialize() clears the set.
+    static void add_werror(Code c) { werror_codes_.insert(c); enabled_.insert(c); }
 
     // ---- Issue a diagnostic ----
     static void happen(Code code, std::string context = "", std::source_location loc = std::source_location::current());
@@ -125,6 +143,8 @@ public:
     static std::vector<Issue::LocationEntry> loc_stack_;
     static std::set<Code> ignorings_;
     static std::set<Code> blockings_;
+    static std::set<Code> enabled_;  // default-off codes switched on by enable()
+    static std::set<Code> werror_codes_;  // codes promoted to ERROR by add_werror()
     static bool silent_;
     static bool suppress_warnings_;
     static bool werror_;
@@ -134,6 +154,10 @@ public:
     // throws -- is unaffected when this is false) ----
     static bool continue_mode_;
     static int error_count_;
+    // --error-limit (PP65): 0 = unlimited. Like the rest of the continue-mode
+    // state it acts only while continue_mode_ is true; a library caller that
+    // sets it without ContinueMode gets no effect. initialize() resets it to 0.
+    static int error_limit_;
     static std::set<Code> continue_abort_codes_;
     static IssueMessage& message_;
 
@@ -170,6 +194,7 @@ public:
         std::set<Code> original_;
     };
 
+    // Suppression has no effect for SEVERE codes and PP10-PP14 (SPEC 10).
     struct Ignoring {
         Ignoring(std::set<Code> codes);
         ~Ignoring();

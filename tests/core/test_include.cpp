@@ -368,3 +368,214 @@ TEST_F(IncludeTest, SyspathPragmaReemittedAsWritten) {
         << "pragma must not be rewritten to an absolute path; got:\n" << o;
     EXPECT_TRUE(empty());
 }
+
+#ifndef JIEPP_SANDBOX
+// A9: a path with a NUL ($00 decoded in the directive operand) used to be
+// truncated at the NUL by the C-string filesystem calls, so
+// `'a.iec$00x'` included a.iec. It is PP47 now (the sandbox has no file
+// access directives, hence no sandbox build of these tests).
+TEST_F(IncludeTest, IncludePathWithNulIsPP47) {
+    fs::current_path(jiepp_root_dir());
+    Issue::ContinueMode guard({});
+    // The <...> and {#sinclude} forms search only the syspath list, so a
+    // syspath that contains a.iec is put first: without the NUL check the
+    // truncated path would be found and included.
+    {
+        // Control: the same syspath and a name without the NUL include a.iec.
+        std::string o;
+        EXPECT_NO_THROW({ o = pp("{#syspath 'tests/core/test_include'}{#include <a.iec>}"); });
+        EXPECT_NE(std::string::npos, o.find("a.iec begin")) << o;
+        EXPECT_TRUE(empty());
+        EXPECT_NO_THROW({ o = pp("{#syspath 'tests/core/test_include'}{#sinclude 'a.iec'}"); });
+        EXPECT_NE(std::string::npos, o.find("a.iec begin")) << o;
+        EXPECT_TRUE(empty());
+    }
+    for (const char* src : {"{#include 'tests/core/test_include/a.iec$00x'}",
+                            "{#include <tests/core/test_include/a.iec$00x>}",
+                            "{#sinclude 'tests/core/test_include/a.iec$00x'}",
+                            "{#syspath 'tests/core/test_include'}{#include <a.iec$00x>}",
+                            "{#syspath 'tests/core/test_include'}{#sinclude 'a.iec$00x'}"}) {
+        std::string o;
+        EXPECT_NO_THROW({ o = pp(src); }) << src;
+        EXPECT_EQ(std::string::npos, o.find("a.iec begin")) << src << "\n" << o;
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size()) << src;
+        EXPECT_EQ(Issue::Code::INVALID_PATH, PlainTextMessage::parse_code(msgs[0])) << src;
+        // The context shows the NUL as $00, not as a raw byte.
+        EXPECT_NE(std::string::npos, msgs[0].find("a.iec$00x")) << msgs[0];
+        EXPECT_EQ(std::string::npos, msgs[0].find('\0'));
+    }
+}
+
+TEST_F(IncludeTest, SyspathWithNulIsPP47) {
+    fs::current_path(jiepp_root_dir());
+    Issue::ContinueMode guard({});
+    std::string o;
+    EXPECT_NO_THROW({ o = pp("{#syspath 'tests/core/test_include/shadow_syspath1$00x'}"); });
+    EXPECT_EQ(std::string::npos, o.find("syspath")) << o;
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_PATH, cs[0]);
+}
+
+TEST_F(IncludeTest, HasIncludeWithNulIsFalse) {
+    fs::current_path(jiepp_root_dir());
+    Issue::ContinueMode guard({});
+    // Control: the same path without the NUL exists.
+    std::string o = pp("{#if __has_include('tests/core/test_include/a.iec')}HAS{#else}NO{#endif}");
+    EXPECT_NE(std::string::npos, o.find("HAS")) << o;
+    EXPECT_TRUE(empty());
+    o = pp("{#if __has_include('tests/core/test_include/a.iec$00x')}HAS{#else}NO{#endif}");
+    EXPECT_EQ(std::string::npos, o.find("HAS")) << o;
+    EXPECT_NE(std::string::npos, o.find("NO")) << o;
+    EXPECT_TRUE(empty());
+    // <...> form: searches only the syspath list. Control first, then the
+    // NUL path that would resolve to a.iec if it were truncated at the NUL.
+    o = pp("{#syspath 'tests/core/test_include'}"
+           "{#if __has_include(<a.iec>)}HAS{#else}NO{#endif}");
+    EXPECT_NE(std::string::npos, o.find("HAS")) << o;
+    EXPECT_TRUE(empty());
+    o = pp("{#syspath 'tests/core/test_include'}"
+           "{#if __has_include(<a.iec$00x>)}HAS{#else}NO{#endif}");
+    EXPECT_EQ(std::string::npos, o.find("HAS")) << o;
+    EXPECT_NE(std::string::npos, o.find("NO")) << o;
+    EXPECT_TRUE(empty());
+}
+
+// ---- --max-include-count (PP66) ----
+//
+// The number of executed {#include}/{#sinclude} directives is capped per
+// preprocess() call: the (N+1)th raises PP66 (SEVERE) at that directive.
+// {#pragma once} skips count too (the path is resolved either way). The
+// sandbox has no include directives (PP62), hence no sandbox build of these.
+
+class IncludeCountTest : public JieppTest {
+protected:
+    fs::path dir_;
+    std::string inc_;      // include operand: 'path'
+    std::string once_;
+
+    void SetUp() override {
+        JieppTest::SetUp();
+        dir_ = fs::temp_directory_path() / "jiepp_include_count_test";
+        fs::create_directories(dir_);
+        write(dir_ / "inc.iec", "X\n");
+        write(dir_ / "once.iec", "{#pragma once}\nO\n");
+        inc_  = "{#include '" + (dir_ / "inc.iec").generic_string() + "'}\n";
+        once_ = "{#include '" + (dir_ / "once.iec").generic_string() + "'}\n";
+    }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+        JieppTest::TearDown();
+    }
+    static void write(const fs::path& p, const std::string& s) {
+        std::ofstream f(p, std::ios::binary);
+        f << s;
+    }
+    static std::string repeat(const std::string& s, int n) {
+        std::string r;
+        for (int i = 0; i < n; ++i)
+            r += s;
+        return r;
+    }
+    static std::size_t count_of(const std::string& hay, const std::string& needle) {
+        std::size_t n = 0;
+        for (std::size_t p = hay.find(needle); p != std::string::npos; p = hay.find(needle, p + 1))
+            ++n;
+        return n;
+    }
+    // True when preprocessing src raised PP66 (any other outcome is false).
+    bool raises_pp66(Env& env, const std::string& src) {
+        try {
+            pp(src, env);
+        } catch (const Issue::Exception& e) {
+            return e.code == Issue::Code::MAX_INCLUDE_COUNT_EXCEEDED;
+        }
+        return false;
+    }
+};
+
+TEST_F(IncludeCountTest, DefaultIsTenThousand) {
+    Env env = setup();
+    EXPECT_EQ(10000, env.get_max_include_count());
+    EXPECT_EQ(DEFAULT_MAX_INCLUDE_COUNT, 10000);
+}
+
+TEST_F(IncludeCountTest, StopsAtNPlusOne) {
+    {
+        Env env = setup();
+        env.set_max_include_count(3);
+        const std::string o = pp(repeat(inc_, 3), env);
+        EXPECT_EQ(3u, count_of(o, "X")) << o;
+        EXPECT_TRUE(empty());
+    }
+    {
+        Env env = setup();
+        env.set_max_include_count(3);
+        EXPECT_TRUE(raises_pp66(env, repeat(inc_, 4)));
+        const auto ms = messages();
+        ASSERT_EQ(1u, ms.size());
+        EXPECT_NE(std::string::npos, ms[0].find("error: PP66: Maximum include count exceeded")) << ms[0];
+        EXPECT_NE(std::string::npos,
+                  ms[0].find("limit 3; use --max-include-count N to raise it (0 = no limit)")) << ms[0];
+    }
+}
+
+TEST_F(IncludeCountTest, SincludeIsCounted) {
+    Env env = setup();
+    env.set_max_include_count(1);
+    const std::string src = "{#sinclude '" + (dir_ / "inc.iec").generic_string() + "'}\n";
+    EXPECT_TRUE(raises_pp66(env, repeat(src, 2)));
+}
+
+TEST_F(IncludeCountTest, PragmaOnceSkipsAreCounted) {
+    {
+        Env env = setup();
+        env.set_max_include_count(4);
+        const std::string o = pp(repeat(once_, 4), env);
+        EXPECT_EQ(1u, count_of(o, "O")) << o;   // 3 of the 4 are skipped
+    }
+    {
+        Env env = setup();
+        env.set_max_include_count(3);
+        EXPECT_TRUE(raises_pp66(env, repeat(once_, 4)));
+    }
+}
+
+TEST_F(IncludeCountTest, ZeroIsUnlimited) {
+    Env env = setup();
+    env.set_max_include_count(0);
+    const std::string o = pp(repeat(inc_, 50), env);
+    EXPECT_EQ(50u, count_of(o, "X"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(IncludeCountTest, ResetPerPreprocessCall) {
+    Env env = setup();
+    env.set_max_include_count(3);
+    EXPECT_EQ(3u, count_of(pp(repeat(inc_, 3), env), "X"));
+    EXPECT_EQ(3u, count_of(pp(repeat(inc_, 3), env), "X"));
+    EXPECT_TRUE(empty());
+}
+
+// An include that does not resolve to a syntactically valid path is not an
+// executed include (PP47), and a failing one does not need the count either.
+TEST_F(IncludeCountTest, InvalidPathIsNotCounted) {
+    Env env = setup();
+    env.set_max_include_count(1);
+    Issue::ContinueMode guard({});
+    pp(repeat("{#include 'a$00b'}\n", 3), env);
+    const auto cs = codes();
+    ASSERT_EQ(3u, cs.size());
+    for (auto c : cs)
+        EXPECT_EQ(Issue::Code::INVALID_PATH, c);
+}
+
+// {#ignore PP66} has no effect: PP66 is SEVERE.
+TEST_F(IncludeCountTest, IgnorePP66HasNoEffect) {
+    Env env = setup();
+    env.set_max_include_count(1);
+    EXPECT_TRUE(raises_pp66(env, "{#ignore PP66}\n" + repeat(inc_, 2)));
+}
+#endif

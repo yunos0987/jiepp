@@ -253,6 +253,60 @@ TEST_F(ExpansionStepsTest, LibraryThrowsAndEnvIsReusable) {
     EXPECT_LT(env.expansion_steps(), kLimit);
 }
 
+// ---- @@: the right operand is charged once ----
+//
+// subst() charges every token merged by @@ before merging it, and charges the
+// tokens pushed to the result at the next element. A right operand token that
+// is pushed (the rest of a successful paste's operand, and all of a failed
+// paste's operand) must be counted only once. These tests pin the exact step
+// count and the PP64 boundary of expansions with a multi-token right operand.
+namespace {
+
+// Runs `src` in continue mode (PP32 is counted, not thrown) with `limit`
+// (0 = unlimited) and returns the step count; *threw tells whether PP64 stopped it.
+std::uint64_t steps_of(const std::string& src, std::uint64_t limit, bool* threw) {
+    Issue::ContinueMode guard({});
+    Env env = setup();
+    env.set_max_expansion_steps(limit);
+    try {
+        pp(src, env);
+        *threw = false;
+    } catch (const Issue::Exception&) {
+        *threw = true;
+    }
+    return env.expansion_steps();
+}
+
+} // namespace
+
+TEST_F(ExpansionStepsTest, FailedPasteChargesRightOperandOnce) {
+    // x @@ (y z): ANY @@ LP is PP32; the five tokens ( y ' ' z ) are kept.
+    const std::string src = "{#define F(a, b) a @@ b}F(x, (y z))\n";
+    // 25 steps; counting the pushed operand tokens twice gave 30.
+    constexpr std::uint64_t kSteps = 25;
+    bool threw = true;
+    EXPECT_EQ(kSteps, steps_of(src, 0, &threw));
+    EXPECT_FALSE(threw);
+    (void)steps_of(src, kSteps, &threw);
+    EXPECT_FALSE(threw) << "limit == steps must pass";
+    (void)steps_of(src, kSteps - 1, &threw);
+    EXPECT_TRUE(threw) << "limit == steps - 1 must stop with PP64";
+}
+
+TEST_F(ExpansionStepsTest, ValidPasteChargesRestOfRightOperandOnce) {
+    // x @@ y z: the paste merges y into x; the blank and z are pushed.
+    const std::string src = "{#define F(a, b) a @@ b}F(x, y z)\n";
+    // 18 steps; counting the pushed operand tokens twice gave 20.
+    constexpr std::uint64_t kSteps = 18;
+    bool threw = true;
+    EXPECT_EQ(kSteps, steps_of(src, 0, &threw));
+    EXPECT_FALSE(threw);
+    (void)steps_of(src, kSteps, &threw);
+    EXPECT_FALSE(threw) << "limit == steps must pass";
+    (void)steps_of(src, kSteps - 1, &threw);
+    EXPECT_TRUE(threw) << "limit == steps - 1 must stop with PP64";
+}
+
 TEST_F(ExpansionStepsTest, LibraryWritesNothingOnStop) {
     Env env = setup();
     env.set_max_expansion_steps(kLimit);

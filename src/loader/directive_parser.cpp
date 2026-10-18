@@ -5,6 +5,7 @@
 #if defined(__cpp_lib_format)
 #include <format>
 #endif
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -40,6 +41,8 @@ std::size_t skip_directive_ws(std::string_view text, std::size_t pos) {
 // gcc/clang accept "#/*c*/define". A document comment ((*!, /*!, //!) is a
 // token in jiepp and is not skipped; an unclosed block comment is not a
 // comment here, so "{# /*}" keeps "/*" as the (unknown) name.
+// comment_or_ws_at() below must make the same decision as this function
+// (skip(text, pos) != pos); change both together.
 std::size_t skip_directive_ws_and_comments(std::string_view text, std::size_t pos) {
     for (;;) {
         pos = skip_directive_ws(text, pos);
@@ -58,6 +61,50 @@ std::size_t skip_directive_ws_and_comments(std::string_view text, std::size_t po
             return text.size();
         return pos;
     }
+}
+
+// Answers "is the block comment that starts here closed" (by a later closer)
+// in O(1) per query. skip_directive_ws_and_comments() searches forward for
+// the closer ("*)" / "*/") on every call, which is quadratic when the key
+// scan below calls it at every character of a name full of unclosed
+// openers. Here the last "*)" and the last "*/" are located once (lazily,
+// only when an opener is actually met); a closer at or after `from` exists
+// exactly when the last one does not lie before `from`.
+class CommentCloserIndex {
+public:
+    explicit CommentCloserIndex(std::string_view text) : text_(text) {}
+
+    // True if text_ contains the closer of `opener` ('(' -> "*)", '/' -> "*/")
+    // starting at or after `from`.
+    bool closes_after(char opener, std::size_t from) {
+        std::optional<std::size_t>& slot = opener == '(' ? paren_ : slash_;
+        if (!slot) {
+            const std::size_t last =
+                text_.rfind(opener == '(' ? std::string_view("*)") : std::string_view("*/"));
+            slot = last;
+        }
+        return *slot != std::string_view::npos && *slot >= from;
+    }
+
+private:
+    std::string_view text_;
+    std::optional<std::size_t> paren_, slash_;
+};
+
+// Same decision as `skip_directive_ws_and_comments(text, pos) != pos`: is
+// there whitespace or a (closed, non-document) comment at pos?
+bool comment_or_ws_at(std::string_view text, std::size_t pos, CommentCloserIndex& ix) {
+    if (is_directive_ws(static_cast<unsigned char>(text[pos])))
+        return true;
+    if (pos + 1 >= text.size())
+        return false;
+    const char c = text[pos], d = text[pos + 1];
+    const bool doc = pos + 2 < text.size() && text[pos + 2] == '!';
+    if (doc)
+        return false;
+    if ((c == '(' || c == '/') && d == '*')
+        return ix.closes_after(c, pos + 2);
+    return c == '/' && d == '/';
 }
 
 } // namespace
@@ -254,6 +301,7 @@ std::pair<std::string, std::string> parse_directive(std::string_view text,
 
     std::size_t pos = skip_directive_ws_and_comments(inner, 0);
     std::size_t key_start = pos;
+    CommentCloserIndex ix(inner);
     while (pos < inner.size()) {
         unsigned char c = static_cast<unsigned char>(inner[pos]);
         if (c == '$') {
@@ -269,13 +317,14 @@ std::pair<std::string, std::string> parse_directive(std::string_view text,
             }
             continue;
         }
-        // A comment ends the name, like whitespace ("{#define(*c*)X 1}"):
-        // reuse the same recognizer as the leading skip, so a document
-        // comment (a token, kept as part of an unrecognized name, e.g.
-        // "{#(*! d *)define X 1}" stays PP45) and an unclosed block comment
-        // (not a comment at all, e.g. "{# /*}") are treated the same way
-        // here as there.
-        if (skip_directive_ws_and_comments(inner, pos) != pos)
+        // A comment ends the name, like whitespace ("{#define(*c*)X 1}").
+        // comment_or_ws_at() must make the same decision as
+        // skip_directive_ws_and_comments(text, pos) != pos (change both
+        // together), so a document comment (a token, kept as part of an
+        // unrecognized name, e.g. "{#(*! d *)define X 1}" stays PP45) and an
+        // unclosed block comment (not a comment at all, e.g. "{# /*}") are
+        // treated the same way here as in the leading skip.
+        if (comment_or_ws_at(inner, pos, ix))
             break;
         if (c == ':' || c == ';' || c == '\'' || c == '"' || c == '<' || is_directive_ws(c)) {
             break;

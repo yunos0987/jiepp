@@ -13,6 +13,8 @@
 #include "../util/text.hpp"
 
 #include <cctype>
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -158,6 +160,57 @@ std::size_t find_has_include_call(const std::string& s) {
 }
 #endif
 
+// Installs the transient 'defined' operator for one condition evaluation and
+// removes it again on scope exit (also when the evaluation throws). When it
+// is already installed -- a built-in such as __assert evaluated inside an
+// {#if}/{#elif} condition -- the scope reuses it for this nested evaluation:
+// the outer condition's operand-error state is saved and reset, the operator
+// is re-enabled if a message expansion had suspended it, and everything is
+// restored on scope exit, so the nested evaluation can neither clear nor
+// inherit the outer condition's PP40 short-circuit.
+class DefinedScope {
+public:
+    explicit DefinedScope(Env& env) : env_(env) {
+        if (auto* d = dynamic_cast<DefinedOperator*>(env.lookup("defined"))) {
+            op_ = d;
+            owns_ = false;
+            saved_error_ = d->operand_error;
+            saved_code_ = d->operand_error_code;
+            saved_suspended_ = d->suspended;
+            d->operand_error = false;
+            d->operand_error_code = Issue::Code::SUCCESS;
+            d->suspended = false;
+        } else {
+            auto owned = std::make_unique<DefinedOperator>();
+            op_ = owned.get();
+            env.define("defined", std::move(owned));
+            owns_ = true;
+        }
+    }
+    ~DefinedScope() {
+        if (owns_) {
+            env_.undef("defined");
+        } else {
+            op_->operand_error = saved_error_;
+            op_->operand_error_code = saved_code_;
+            op_->suspended = saved_suspended_;
+        }
+    }
+    DefinedScope(const DefinedScope&) = delete;
+    DefinedScope& operator=(const DefinedScope&) = delete;
+    // Valid for the lifetime of the scope (a superseded or undefined macro
+    // is retired, never destroyed: symtab.hpp lifetime invariant).
+    DefinedOperator* op() const { return op_; }
+
+private:
+    Env& env_;
+    DefinedOperator* op_ = nullptr;
+    bool owns_ = false;
+    bool saved_error_ = false;
+    Issue::Code saved_code_ = Issue::Code::SUCCESS;
+    bool saved_suspended_ = false;
+};
+
 } // namespace
 
 std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_error) {
@@ -170,34 +223,13 @@ std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_e
 #else
     std::string cond = resolve_has_include(raw_cond, env);
 #endif
-    bool had_defined = env.exist("defined");
-    // C3/U5: install the temporary 'defined' operator via an RAII guard so
-    // it is removed on scope exit even when expand_operand_text() below
-    // throws (previously the matching env.undef("defined") was skipped on
-    // that path, leaking the operator into `env` for the rest of the run).
-    struct DefinedGuard {
-        Env& env;
-        bool owns;
-        ~DefinedGuard() { if (owns) env.undef("defined"); }
-    } guard{env, !had_defined};
-    DefinedOperator* defop;
-    if (!had_defined) {
-        auto d = std::make_unique<DefinedOperator>();
-        defop = d.get();
-        env.define("defined", std::move(d));
-    } else {
-        // Defensive only: 'defined' is installed transiently and
-        // non-reentrantly by this function, so a nested eval_cond_str call
-        // observing an already-installed 'defined' is not expected to
-        // happen in practice. Reset it anyway so a hypothetical nested call
-        // does not inherit a stale operand_error from an unrelated caller.
-        defop = dynamic_cast<DefinedOperator*>(env.lookup("defined"));
-        if (defop)
-            defop->operand_error = false;
-    }
+    // C3/U5: the transient 'defined' operator is installed by an RAII
+    // scope, so it is removed on scope exit even when expand_operand_text()
+    // below throws.
+    DefinedScope defined_scope(env);
     std::string result = jiepp::preprocessor_detail::expand_operand_text(cond, env);
     if (operand_error)
-        *operand_error = defop && defop->operand_error;
+        *operand_error = defined_scope.op()->operand_error;
     return result;
 }
 
@@ -217,6 +249,89 @@ bool eval_cond(const std::string& raw_cond, Env& env) {
     // __has_include(<a//b>) path is not mistaken for a comment.
     int64_t val = eval_const_expr(iec3_blank_out_comments(expanded));
     return val != 0;
+}
+
+// See expand_helpers.hpp for the contract. Mirrors eval_cond_str() +
+// eval_cond() on tokens instead of re-lexed text.
+CondValue eval_cond_value_tokens(std::vector<Token> ts, Env& env) {
+    CondValue r;
+    auto note = [&r](Issue::Code code) {
+        if (r.failure == Issue::Code::SUCCESS)
+            r.failure = code;
+    };
+
+    // Work budget (PP64): one step per byte of the operand, like the
+    // operand charge of expand_operand_tokens() for an {#if} condition.
+    std::size_t bytes = 0;
+    for (const auto& t : ts)
+        bytes += t.text.size();
+    env.charge_expansion_steps(bytes);
+
+    // __has_include(...) written in the operand: the same rule as
+    // find_has_include_call() / resolve_has_include() on an {#if} text --
+    // the keyword followed (after whitespace or comments) by '(' -- before
+    // macro expansion, so its argument is not expanded.
+    for (std::size_t i = 0; i < ts.size(); ++i) {
+        if (ts[i].type != Token::ANY || ts[i].text != "__has_include")
+            continue;
+        std::size_t j = i + 1;
+        while (j < ts.size() && (ts[j].type & Token::MASK_WS))
+            ++j;
+        if (j >= ts.size() || ts[j].type != Token::LP)
+            continue;
+#ifdef JIEPP_SANDBOX
+        // Sandbox: the operator is a filesystem probe (PP62), reported once
+        // like eval_cond_str(); the call text stays in the expression, so
+        // the evaluator below reports it as well (same pair as {#if}).
+        note(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE);
+        ISSUE(SANDBOX_RESTRICTED_DIRECTIVE, "__has_include");
+        break;
+#else
+        std::size_t k = j;
+        int depth = 0;
+        for (; k < ts.size(); ++k) {
+            if (ts[k].type == Token::LP)
+                ++depth;
+            else if (ts[k].type == Token::RP && --depth == 0)
+                break;
+        }
+        if (k >= ts.size())
+            continue; // unclosed: left as is, the evaluator reports it
+        // Comments are whitespace here, as in the expression itself.
+        std::string text;
+        for (std::size_t m = i; m <= k; ++m)
+            text += (ts[m].type == Token::C) ? std::string(" ") : ts[m].text;
+        std::string res = resolve_has_include(text, env);
+        if (res == "1" || res == "0") {
+            ts.erase(ts.begin() + static_cast<std::ptrdiff_t>(i + 1),
+                     ts.begin() + static_cast<std::ptrdiff_t>(k + 1));
+            ts[i] = Token::create(Token::ANY, res);
+        }
+#endif
+    }
+
+    std::string text;
+    {
+        DefinedScope defined_scope(env);
+        std::vector<Token> ots;
+        expand(ts, ots, env);
+        // C3: a 'defined' operand/paren error already reported its
+        // diagnostic; the rest of the expression is not evaluated, like
+        // eval_cond().
+        if (defined_scope.op()->operand_error) {
+            note(defined_scope.op()->operand_error_code);
+            return r;
+        }
+        for (const auto& t : ots)
+            text += t.text;
+    }
+    // Comments are whitespace in the expression (see eval_cond()).
+    cf::EvalResult ev = eval_const_value(iec3_blank_out_comments(text));
+    if (ev.failure != Issue::Code::SUCCESS)
+        note(ev.failure);
+    if (r.failure == Issue::Code::SUCCESS)
+        r.value = ev.value;
+    return r;
 }
 
 // C2: {#ifdef NAME}/{#ifndef NAME}. See expand_helpers.hpp for the contract.
@@ -251,14 +366,84 @@ bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env) {
 // feature-test it; jiepp's __has_include(...) operator cannot be disabled
 // by {#undef}/{#define}, so it stays defined even after
 // {#undef __has_include}. Not in a JIEPP_SANDBOX build, where the operator
-// itself is restricted (PP62): there it reads as undefined.
+// itself is restricted (PP62): there it reads as undefined. The
+// __has_builtin(NAME) operator counts in both builds (it needs no filesystem
+// access) and likewise survives {#undef __has_builtin}.
 bool macro_name_is_defined(std::string_view name, Env& env) {
 #ifndef JIEPP_SANDBOX
     if (name == "__has_include")
         return true;
 #endif
+    if (name == "__has_builtin")
+        return true;
     Macro* m = env.lookup(name);
     return m && !dynamic_cast<DefinedOperator*>(m);
+}
+
+// The value of __has_builtin(NAME), SPEC 5.2: 1 for the two operators and for
+// a symbol-table entry that is still a built-in kind (is_builtin_macro()); 0
+// for value macros, user macros, undefined/redefined names and unknown names.
+bool has_builtin(std::string_view name, Env& env) {
+    if (name == "__has_builtin" || name == "defined")
+        return true;
+#ifndef JIEPP_SANDBOX
+    if (name == "__has_include")
+        return true;
+#endif
+    return is_builtin_macro(env.lookup(name));
+}
+
+// The __has_builtin operator branch of expand(): `work` has the operator token
+// already popped. Errors follow the 'defined' branch (first error per
+// condition only, state kept in the DefinedOperator, remaining text not
+// evaluated by the caller); the result token is "1"/"0".
+[[gnu::noinline]] void expand_has_builtin(std::vector<Token>& work,
+                                          std::vector<Token>& ots,
+                                          Env& env,
+                                          DefinedOperator& defop) {
+    auto skip_ws = [&work]() {
+        while (!work.empty() && (work.back().type & Token::MASK_WS))
+            work.pop_back();
+    };
+    auto fail = [&](Issue::Code code, const std::string& what) {
+        if (!defop.operand_error) {
+            defop.operand_error = true;
+            defop.operand_error_code = code;
+            if (code == Issue::Code::INVALID_BUILTIN_OPERAND)
+                ISSUE(INVALID_BUILTIN_OPERAND, what);
+            else
+                ISSUE(INVALID_EXPRESSION, what);
+        }
+        ots.push_back(Token::create(Token::ANY, "0"));
+    };
+
+    skip_ws();
+    if (work.empty() || work.back().type != Token::LP) {
+        fail(Issue::Code::INVALID_EXPRESSION, "missing '(' after '__has_builtin'");
+        return;
+    }
+    work.pop_back();
+    skip_ws();
+
+    if (work.empty() || work.back().type == Token::RP) {
+        fail(Issue::Code::INVALID_BUILTIN_OPERAND, "__has_builtin: name missing");
+        return;
+    }
+    if (work.back().type != Token::ANY || !iec3_is_identifier(work.back().text)) {
+        fail(Issue::Code::INVALID_BUILTIN_OPERAND,
+             "__has_builtin: name must be an identifier: " +
+                 Util::escape_line_breaks(work.back().text));
+        return;
+    }
+    std::string operand = std::move(work.back().text);
+    work.pop_back();
+    skip_ws();
+    if (work.empty() || work.back().type != Token::RP) {
+        fail(Issue::Code::INVALID_EXPRESSION, "missing ')' after '__has_builtin'");
+        return;
+    }
+    work.pop_back();
+    ots.push_back(Token::create(Token::ANY, has_builtin(operand, env) ? "1" : "0"));
 }
 
 } // namespace jiepp::expand_detail

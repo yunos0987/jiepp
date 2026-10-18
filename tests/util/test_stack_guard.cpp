@@ -1,6 +1,9 @@
 #include "test_helper.hpp"
+#include "core/expand_helpers.hpp"
 #include "util/stack_guard.hpp"
 #include <cstddef>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -85,4 +88,68 @@ TEST_F(StackGuardTest, LibraryModeUnaffected) {
     src += ";";
 
     EXPECT_NO_THROW(pp(src));
+}
+
+// ---- F2: nested __VA_OPT__ recursion (subst() -> subst()) ----
+//
+// subst() substitutes __VA_OPT__ content by calling itself through
+// subst_va_opt_content(), without passing through expand() and so without
+// ExpansionDepthGuard's PP63 check. Nesting __VA_OPT__ (PP37 ignored or in
+// continue mode, also in sandbox builds) used to overflow the stack. The
+// fixture name matches the sandbox test presets' filter
+// ^(Sandbox|RobustnessTest), so these also run in sandbox builds.
+class RobustnessTestStackGuard : public StackGuardTest {};
+
+// Each of the three callers of subst_va_opt_content() (plain __VA_OPT__,
+// `@@ __VA_OPT__`, `@__VA_OPT__`) must check the stack before recursing.
+// With the base recorded at exactly the headroom, the first check fires, so
+// calling subst() directly shows PP63 without a deep (crashing) recursion,
+// and expand()'s own guard is never on the path. Before the fix subst()
+// returned normally here.
+TEST_F(RobustnessTestStackGuard, VaOptContentRecursionReportsPP63) {
+    const char* const bodies[] = {
+        "__VA_OPT__(x)",
+        "a @@ __VA_OPT__(x)",
+        "@__VA_OPT__(x)",
+    };
+    for (const char* body : bodies) {
+        SCOPED_TRACE(body);
+        Env env = setup();
+        pp(std::string("{#define M(...) ") + body + "}", env);
+        ASSERT_TRUE(empty());
+        const auto* fm = dynamic_cast<const FunctionMacro*>(env.lookup("M"));
+        ASSERT_NE(nullptr, fm);
+        const std::vector<std::vector<Token>> actuals{{Token::create(Token::ANY, "1")}};
+
+        Util::note_stack_base(Util::STACK_HEADROOM);  // no room above the headroom
+        EXPECT_THROW(jiepp::expand_detail::subst(fm->body(), fm->va_opt_spans(), fm->args(),
+                                                 actuals, nullptr, {}, env),
+                     Issue::Exception);
+        Util::reset_stack_base();
+
+        const auto ms = messages();
+        EXPECT_EQ(1u, ms.size());
+        if (ms.size() != 1)
+            continue;  // still check the remaining bodies
+        EXPECT_EQ(Issue::Code::STACK_EXHAUSTED, PlainTextMessage::parse_code(ms[0]));
+        // Same wording as expand()'s PP63 (one shared reporting function).
+        EXPECT_THAT(ms[0], ::testing::HasSubstr(
+                               "PP63: Stack nearly exhausted; 'expansion depth 0 with a 256 KiB "
+                               "stack; retry with --recursion-limit greater than 32'"));
+        EXPECT_EQ(0, env.expansion_depth());
+    }
+}
+
+// Regression watchpoints around the __VA_OPT__ paths (library mode, no
+// stack base): a bracketed argument stays one argument (__VA_ARGC__ tells
+// a split apart, which the joined __VA_ARGS__ spelling cannot), and an
+// identical redefinition of a variadic macro is silent.
+TEST_F(RobustnessTestStackGuard, VaOptWatchpointsUnchanged) {
+    EXPECT_EQ("<a[x,y]>", pp("{#define V(...) __VA_OPT__(<__VA_ARGS__>)}V(a[x,y])"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("1", pp("{#define C(...) __VA_ARGC__}C(a[x,y])"));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ("", pp("{#define V(...) __VA_OPT__(<__VA_ARGS__>)}"
+                     "{#define V(...) __VA_OPT__(<__VA_ARGS__>)}"));
+    EXPECT_TRUE(empty());
 }

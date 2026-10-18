@@ -67,6 +67,10 @@ echo '{#define X 42} VAR x : INT := X; END_VAR' | .\build\windows-clang-ninja-de
 | `__LINE__` | 現在の行番号 / Current line number |
 | `__COUNTER__` | インクリメントカウンタ / Auto-incrementing counter |
 | `__has_include(...)` | インクルード存在チェック / Include file existence check |
+| `__has_builtin(NAME)` | `NAME` がビルトインなら 1（条件式内。`-D __assert=` で無効にした `__assert` の検出に使える） / 1 if `NAME` is a built-in (in conditions; detects a disabled `__assert`) |
+| `__error(...)` / `__assert(expr, ...)` | マクロ展開中に `PP91` を出す（`__assert` は条件が偽のとき） / Report PP91 during macro expansion (`__assert`: when the condition is false) |
+| `__counter(name)` / `__counter_peek(name)` / `__counter_set(name, value)` | 名前ごとに独立したカウンタ / Named counters, independent per name |
+| `__nosplit(...)` | 結果のカンマが後のマクロ呼び出しの引数を区切らない / Commas in the result do not separate macro arguments later |
 | `_JIEPP` | jiepp 識別マクロ / jiepp identification |
 | `__VA_ARGS__` | 可変長引数 / Variadic macro arguments |
 
@@ -116,6 +120,10 @@ VSCode CMake Tools 拡張を使用している場合、`CMakePresets.json` で�
 
 Windows でビルドした `jiepp.exe` を実行する場合、以下が必要になる場合があります：
 
+- **Windows 10 version 1903 以降（Windows Server 2022 以降）、x64**  
+  `jiepp.exe` はアプリケーションマニフェスト（`activeCodePage=UTF-8`）で、コマンドライン引数とファイルパスを UTF-8 で扱います。1903 未満（Windows Server 2019 を含む）ではマニフェストが無視され、警告もなく ANSI コードページ（日本語版では CP932）で扱われます。そのため、ANSI で表せない文字を含むパスは開けず、`ü` → `u` のような近い文字への置き換えも起こります（0.8.0 と同じ）。  
+  出力と診断は UTF-8 です。コンソールのコードページが CP932 のままだと日本語は文字化けして見えるので、`chcp 65001` で切り替えてください（パイプやファイルに出したバイト列は正しい）。
+
 - **Microsoft Visual C++ Redistributable 2015-2022 (x64)**  
   Windows 10 以降では UCRT（Universal C Runtime）がOS に統合済みのため、個別インストール不要な場合がほとんどです。ただし、古い環境や一部カスタム設定では Redistributable が必要になることがあります。  
   不足している場合は、[Microsoft の公式ページ](https://support.microsoft.com/en-us/help/2977003/) から 2015-2022 版をダウンロード・インストールしてください。
@@ -149,10 +157,14 @@ cat input.iec | jiepp -
 | `-include FILE` | 入力前に強制インクルード | — |
 | `-w` | 警告抑制 | off |
 | `-Werror` | 警告→エラー昇格 | off |
+| `-Wundef` | 条件式で `0` に評価した未定義の識別子を警告（`PP54`）。`\and\` / `\or\` の評価されない右辺では出さない | off |
+| `-Werror=undef` | `-Wundef` と同じに有効にし、`PP54` をエラーにする（終了コード `1`、`-o` は書かない。`-w` では隠れない）。ほかの警告は昇格しない | off |
 | `-M` / `-MM` | Makefile 依存関係出力（プリプロセス結果は出力しない。`-MD`/`-MMD` は出力も残す） | off |
 | `-nC` | コメント除去 | off |
 | `-dM` | マクロ一覧出力 | off |
 | `--max-expansion-steps N` | マクロ展開の仕事量の上限（`0` で無制限。超えると `PP64` で中断） | 16777216 |
+| `--max-include-count N` / `--max_include_count N` | 実行した `{#include}` / `{#sinclude}` の回数の上限（`0` で無制限。超えると `PP66` で中断） | 10000 |
+| `--error-limit N` / `--error_limit N` | エラー件数の上限（`0` で無制限。N 件に達した後の次のエラーは出さずに `PP65` で中断） | 1000（サンドボックスビルドは 100） |
 | `--` | オプション終端 | — |
 | `--help` / `-h` | ヘルプ表示 | — |
 
@@ -241,6 +253,7 @@ cmake --build --preset linux-portable-sandbox-release
 - [`SPECIFICATION.md`](SPECIFICATION.md) — プリプロセッサの完全な仕様 / Complete preprocessor specification
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — 内部モジュール構成とデータフロー / Internal architecture
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — コントリビューションガイド / Contribution guide
+- [`CHANGELOG.md`](CHANGELOG.md) — 変更履歴 / Changelog
 - [`CMakePresets.json`](CMakePresets.json) — 公式 preset と workflow 定義 / Build presets
 - [`vcpkg.json`](vcpkg.json) — 依存パッケージ定義 / Dependencies
 - [`.gitmodules`](.gitmodules) — `vcpkg` サブモジュール設定

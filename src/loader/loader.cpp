@@ -34,6 +34,12 @@ bool try_resolve(const fs::path& candidate, bool* found_directory, std::string& 
 
 std::string Loader::fullpath(const std::string& filepath, LoadType load_type, Env& env,
                               bool* found_directory) {
+    // A9: defense in depth. The filesystem calls below take C strings, so a
+    // NUL would silently shorten the path; no file has a NUL in its name.
+    // {#include} / {#syspath} reject such a path with PP47 before this, and
+    // this makes __has_include answer 0 for it.
+    if (filepath.find('\0') != std::string::npos)
+        return "";
     fs::path p(filepath);
     std::string out;
     if (p.is_absolute()) {

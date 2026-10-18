@@ -157,6 +157,7 @@ set(JIEPP_SOURCES
     src/loader/lexer_pragma.cpp
     src/loader/lexer_literal.cpp
     src/loader/directive_parser.cpp
+    src/core/builtin_function_macros.cpp
     src/core/directive_handlers.cpp
     src/core/expand.cpp
     src/core/expand_ctrl.cpp
@@ -194,6 +195,12 @@ if(JIEPP_SANDBOX)
 endif()
 
 add_executable(jiepp src/jiepp/main.cpp)
+if(WIN32)
+    # activeCodePage=UTF-8: argv, narrow paths and std::filesystem use UTF-8
+    # (Windows 10 1903+). The linker merges this with its default asInvoker
+    # manifest. Not added to jiepp_test, which keeps the ANSI code page.
+    target_sources(jiepp PRIVATE src/jiepp/jiepp.manifest)
+endif()
 target_compile_options(jiepp PRIVATE -Wall -Wextra)
 set_target_properties(jiepp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"

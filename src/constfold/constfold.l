@@ -6,7 +6,9 @@
 #include "env/issue.hpp"
 extern CfValue cflval;  // defined in constfold_parser.cpp (bison %code section)
 #include <cctype>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <stdexcept>
@@ -38,9 +40,12 @@ ALPHA   [A-Za-z_]
     // which the parser then reports as a syntax error (PP52).
     const char* p = yytext;
     int base = 0;
-    while (*p != '#') { base = base * 10 + (*p - '0'); ++p; }
+    // A6: once the base exceeds 36 it is invalid whatever follows; stop
+    // accumulating so "base * 10 + digit" can never overflow the int.
+    while (*p != '#') { if (base <= 36) base = base * 10 + (*p - '0'); ++p; }
     ++p; // skip '#'
     if (base < 2 || base > 36) {
+        cf_note_failure(Issue::Code::INVALID_EXPRESSION);
         ISSUE(INVALID_EXPRESSION, std::string("invalid base: ") + yytext);
         cflval = CfValue::int_value(0);
         return cf::CfParser::token::CF_INT;
@@ -64,12 +69,14 @@ ALPHA   [A-Za-z_]
         int d = std::isdigit((unsigned char)ch) ? (ch - '0') :
                 std::islower((unsigned char)ch) ? (ch - 'a' + 10) : (ch - 'A' + 10);
         if (d >= base) {
+            cf_note_failure(Issue::Code::INVALID_EXPRESSION);
             ISSUE(INVALID_EXPRESSION, std::string("invalid digit for base: ") + yytext);
             cflval = CfValue::int_value(0);
             return cf::CfParser::token::CF_INT;
         }
         const std::uint64_t ud = static_cast<std::uint64_t>(d);
         if (!overflowed && uval > (UINT64_MAX - ud) / ubase) {
+            cf_note_failure(Issue::Code::INVALID_EXPRESSION);
             ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
             overflowed = true;
         }
@@ -89,11 +96,32 @@ ALPHA   [A-Za-z_]
     clean.reserve(yyleng);
     for (const char* p = yytext; *p; ++p)
         if (*p != '_') clean.push_back(*p);
+    // strtod rather than stod: stod throws on every ERANGE, and glibc sets
+    // ERANGE for subnormal results where the UCRT does not. Subnormals are
+    // accepted as-is on every platform; only an overflow (+-HUGE_VAL) and an
+    // underflow to exactly zero from a nonzero literal are PP52.
     double fval = 0.0;
-    try {
-        fval = std::stod(clean);
-    } catch (const std::out_of_range&) {
-        ISSUE(INVALID_EXPRESSION, std::string("float literal overflow: ") + yytext);
+    {
+        char* endp = nullptr;
+        const double parsed = std::strtod(clean.c_str(), &endp);
+        if (std::isinf(parsed)) {
+            cf_note_failure(Issue::Code::INVALID_EXPRESSION);
+            ISSUE(INVALID_EXPRESSION, std::string("float literal overflow: ") + yytext);
+        } else {
+            fval = parsed;
+            // errno is not consulted: whether strtod sets ERANGE on underflow is
+            // implementation-defined, so a zero result from a literal with a
+            // nonzero mantissa digit is the underflow test on every platform.
+            if (parsed == 0.0) {
+                // Only a nonzero mantissa can underflow; "0.0e-400" is plain zero.
+                const std::size_t epos = clean.find_first_of("eE");
+                if (clean.find_first_of("123456789") < epos) {
+                    cf_note_failure(Issue::Code::INVALID_EXPRESSION);
+                    ISSUE(INVALID_EXPRESSION,
+                          std::string("float literal underflow: ") + yytext);
+                }
+            }
+        }
     }
     cflval = CfValue::float_value(fval);
     return cf::CfParser::token::CF_FLOAT;
@@ -135,6 +163,7 @@ ALPHA   [A-Za-z_]
         || (digits.size() == kInt64MaxDigits.size() && digits > kInt64MaxDigits);
     int64_t ival;
     if (overflow) {
+        cf_note_failure(Issue::Code::INVALID_EXPRESSION);
         ISSUE(INVALID_EXPRESSION, std::string("integer literal overflow: ") + yytext);
         std::uint64_t uval = 0;
         for (char c : clean) uval = uval * 10 + static_cast<std::uint64_t>(c - '0');
@@ -153,11 +182,11 @@ ALPHA   [A-Za-z_]
 [oO][rR]                                      { return cf::CfParser::token::CF_OR; }
 [xX][oO][rR]                                  { return cf::CfParser::token::CF_XOR; }
 [mM][oO][dD]                                  { return cf::CfParser::token::CF_MOD; }
-[bB][oO][oO][lL]                              { cflval.text = "BOOL";  return cf::CfParser::token::CF_TYPE_KW; }
-[bB][yY][tT][eE]                              { cflval.text = "BYTE";  return cf::CfParser::token::CF_TYPE_KW; }
-[dD][wW][oO][rR][dD]                          { cflval.text = "DWORD"; return cf::CfParser::token::CF_TYPE_KW; }
-[wW][oO][rR][dD]                              { cflval.text = "WORD";  return cf::CfParser::token::CF_TYPE_KW; }
-[lL][wW][oO][rR][dD]                          { cflval.text = "LWORD"; return cf::CfParser::token::CF_TYPE_KW; }
+[bB][oO][oO][lL]                              { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
+[bB][yY][tT][eE]                              { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
+[dD][wW][oO][rR][dD]                          { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
+[wW][oO][rR][dD]                              { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
+[lL][wW][oO][rR][dD]                          { cflval.text = yytext; return cf::CfParser::token::CF_TYPE_KW; }
 
 [A-Za-z_][A-Za-z0-9_]*  {
     cflval = CfValue::int_value(0);
@@ -185,3 +214,11 @@ ALPHA   [A-Za-z_]
 .   { return cf::CfParser::token::CF_UNKNOWN; }
 
 %%
+
+// A7: scan an expression by its length instead of as a NUL-terminated C
+// string (yy_scan_string), which would silently end the expression at the
+// first NUL byte. evaluate() in constfold.cpp checks n <= INT_MAX - 2 and
+// rejects a NUL in the expression before calling this.
+YY_BUFFER_STATE cf_scan_expr(const char* d, std::size_t n) {
+    return yy_scan_bytes(d, static_cast<int>(n));
+}

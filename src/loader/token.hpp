@@ -32,6 +32,16 @@ struct Token {
     // `type`, to reuse the padding before `text` so sizeof(Token) is
     // unchanged; excluded from operator== like the other bookkeeping flags.
     bool        va_sep = false;
+    // True only for a PRAGMA token that the lexer produced while re-lexing
+    // a pragma body (expand_operand_tokens() with a pragma OperandKind),
+    // with its text exactly as lexed. The body of such a token is re-lexed
+    // without reporting a raw '{' inside a nested pragma body (PP22): the
+    // enclosing pass already reported that same character (task_slug
+    // security-impl, A2 / S-02; see read_pragma_body()). Cleared wherever
+    // the text is rewritten (expand_pragma_token(), glue_tokens()). Also
+    // reuses the padding before `text`; excluded from operator== like the
+    // other bookkeeping flags.
+    bool        relexed_pragma = false;
     std::string text;
     int         num_of_lines = 0; // number of newlines this token contributes
     // True once this token's num_of_lines has already been applied to Env's line

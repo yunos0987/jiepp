@@ -15,6 +15,8 @@ struct JieppOptions {
     std::optional<int> max_include_depth;
     std::optional<int> max_expansion_depth;
     std::optional<int> max_expansion_steps;   // --max-expansion-steps: 0 = no limit
+    std::optional<int> error_limit;           // --error-limit: 0 = no limit
+    std::optional<int> max_include_count;     // --max-include-count: 0 = no limit
     std::optional<int> max_if_nesting;
     std::optional<int> max_blank_lines;   // --max-blank-lines: 0 disables compaction
     std::optional<std::string> pp_output_pragma_style;
@@ -28,6 +30,8 @@ struct JieppOptions {
     bool silent = false;
     bool suppress_warnings = false;  // -w: suppress warning output
     bool werror = false;             // -Werror: promote warnings to errors
+    bool warn_undef = false;         // -Wundef: warn (PP54) on an undefined identifier in a condition
+    bool werror_undef = false;       // -Werror=undef: -Wundef, with PP54 reported as an error
     DepMode dep_mode = DepMode::NONE;           // -M / -MM
     std::optional<std::string> dep_file;        // -MF: dependency output file
     std::optional<std::string> dep_target;      // -MT: dependency target name

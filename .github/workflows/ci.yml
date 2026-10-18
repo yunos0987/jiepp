@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -29,12 +29,17 @@ jobs:
       - name: Install Flex/Bison
         run: choco install winflexbison3 --yes --no-progress
 
+      - name: Get vcpkg commit
+        id: vcpkg-rev
+        shell: bash
+        run: echo "rev=$(git rev-parse HEAD:vcpkg)" >> "$GITHUB_OUTPUT"
+
       - name: Cache vcpkg packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/${{ matrix.preset }}/vcpkg_installed
-          key: vcpkg-${{ matrix.preset }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-${{ matrix.preset }}-
+          key: vcpkg-${{ matrix.preset }}-${{ steps.vcpkg-rev.outputs.rev }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ matrix.preset }}-${{ steps.vcpkg-rev.outputs.rev }}-
 
       - name: Bootstrap vcpkg
         run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
@@ -67,12 +72,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake make flex bison curl zip unzip tar
 
+      - name: Get vcpkg commit
+        id: vcpkg-rev
+        shell: bash
+        run: echo "rev=$(git rev-parse HEAD:vcpkg)" >> "$GITHUB_OUTPUT"
+
       - name: Cache vcpkg packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/${{ matrix.preset }}/vcpkg_installed
-          key: vcpkg-${{ matrix.preset }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-${{ matrix.preset }}-
+          key: vcpkg-${{ matrix.preset }}-${{ steps.vcpkg-rev.outputs.rev }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ matrix.preset }}-${{ steps.vcpkg-rev.outputs.rev }}-
 
       - name: Bootstrap vcpkg
         run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
@@ -103,12 +113,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake make flex bison curl zip unzip tar
 
+      - name: Get vcpkg commit
+        id: vcpkg-rev
+        shell: bash
+        run: echo "rev=$(git rev-parse HEAD:vcpkg)" >> "$GITHUB_OUTPUT"
+
       - name: Cache vcpkg packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/${{ matrix.preset }}/vcpkg_installed
-          key: vcpkg-${{ matrix.preset }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-${{ matrix.preset }}-
+          key: vcpkg-${{ matrix.preset }}-${{ steps.vcpkg-rev.outputs.rev }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ matrix.preset }}-${{ steps.vcpkg-rev.outputs.rev }}-
 
       - name: Bootstrap vcpkg
         run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics

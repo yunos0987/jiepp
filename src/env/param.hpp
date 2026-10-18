@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 struct Token; // forward declaration (defined in loader/token.hpp)
@@ -51,6 +53,22 @@ public:
             raise_expansion_steps_exceeded();
     }
 
+    // ---- Include count budget (PP66; 0 = no limit) ----
+    // Counts executed {#include}/{#sinclude} directives (a {#pragma once}
+    // skip included: the path is resolved either way), per
+    // preprocess()/preprocess_text() call (reset on entry); -include files,
+    // __has_include and the main input are not counted. Like the step budget
+    // there is no in-source directive, so input cannot raise its own limit.
+    void count_include() {
+        if (max_include_count_ != 0 &&
+            ++include_count_ > static_cast<std::uint64_t>(max_include_count_)) [[unlikely]]
+            raise_include_count_exceeded();
+    }
+    void          set_max_include_count(int n) { max_include_count_ = n; }
+    int           get_max_include_count() const { return max_include_count_; }
+    std::uint64_t include_count() const { return include_count_; }
+    void          reset_include_count() { include_count_ = 0; }
+
     // ---- Conditional nesting limit ----
     int  get_max_if_nesting() const { return max_if_nesting_; }
     bool set_max_if_nesting(int n);
@@ -83,8 +101,24 @@ public:
     std::shared_ptr<const std::vector<Token>> get_cache(const std::string& key) const;
     void set_cache(std::string key, std::vector<Token> tokens);
 
+    // ---- Named counters (__counter / __counter_peek / __counter_set) ----
+    // Separate namespace from macros: {#define}/{#undef} never touch it. Lives
+    // as long as the Env (like the state of __COUNTER__ in its CounterMacro),
+    // so it is shared by -include files and the main input and is NOT reset
+    // per preprocess() call; a caller wanting fresh counters uses a fresh
+    // setup() Env. A stored value above INT32_MAX means "overflowed" (see
+    // SPECIFICATION.md 12.10).
+    // The value of `name`, or 0 if it was never used; never inserts.
+    std::uint32_t counter_value(std::string_view name) const;
+    // The slot of `name`, inserted with 0 if absent.
+    std::uint32_t& counter_slot(const std::string& name);
+
 private:
     [[noreturn]] void raise_expansion_steps_exceeded() const;
+    [[noreturn]] void raise_include_count_exceeded() const;
+
+    std::uint64_t include_count_         = 0;
+    int           max_include_count_     = DEFAULT_MAX_INCLUDE_COUNT;
 
     std::uint64_t expansion_steps_       = 0;
     std::uint64_t max_expansion_steps_   = DEFAULT_MAX_EXPANSION_STEPS;
@@ -110,6 +144,8 @@ private:
     bool        remove_comments_fixed_   = false;
 
     bool        dd_mode_                 = false;
+
+    std::unordered_map<std::string, std::uint32_t> counters_;
 
     struct CacheImpl;
     std::unique_ptr<CacheImpl> cache_;

@@ -76,6 +76,8 @@ void display_help_and_exit(int exit_code = 0) {
         "  -include FILE            Force-include file before input\n"
         "  -w                       Suppress warnings\n"
         "  -Werror                  Promote warnings to errors\n"
+        "  -Wundef                  Warn when an undefined identifier in a condition evaluates to 0\n"
+        "  -Werror=undef            Like -Wundef, but report it as an error\n"
         "  -M                       Output Makefile dependency rules\n"
         "  -MM                      Like -M but exclude system includes\n"
         "  -MD                      Write dependency rules to .d file (keep normal output)\n"
@@ -85,6 +87,12 @@ void display_help_and_exit(int exit_code = 0) {
         "  --max-include-depth N    Maximum include depth (default: 100)\n"
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
         "  --max-expansion-steps N  Maximum macro expansion work in steps (default: 16777216; 0 = no limit)\n"
+        "  --max-include-count N    Maximum number of executed {#include} directives (default: 10000; 0 = no limit)\n"
+#ifdef JIEPP_SANDBOX
+        "  --error-limit N          Stop at the first error beyond N (default: 100; 0 = no limit)\n"
+#else
+        "  --error-limit N          Stop at the first error beyond N (default: 1000; 0 = no limit)\n"
+#endif
         "  --max-if-nesting N       Maximum if/elif nesting depth (default: 256)\n"
         "  --max-blank-lines N      Max consecutive blank lines before compaction (default: 7; 0 disables)\n"
         "  --recursion-limit N      Stack size: N x 8 KiB, at least 1 MiB (default: 8 MiB)\n"
@@ -226,6 +234,16 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
+        if (arg == "-Wundef") {
+            opts.warn_undef = true;
+            ++i; continue;
+        }
+
+        if (arg == "-Werror=undef") {
+            opts.werror_undef = true;
+            ++i; continue;
+        }
+
         if (arg == "-M") {
             opts.dep_mode = DepMode::ALL;
             ++i; continue;
@@ -275,6 +293,18 @@ JieppOptions parse_args(int argc, char* argv[]) {
         if (arg == "--max-expansion-steps" || arg == "--max_expansion_steps") {
             require_value(i, argc, arg);
             opts.max_expansion_steps = parse_nonnegative_int(argv[++i], arg);
+            ++i; continue;
+        }
+
+        if (arg == "--max-include-count" || arg == "--max_include_count") {
+            require_value(i, argc, arg);
+            opts.max_include_count = parse_nonnegative_int(argv[++i], arg);
+            ++i; continue;
+        }
+
+        if (arg == "--error-limit" || arg == "--error_limit") {
+            require_value(i, argc, arg);
+            opts.error_limit = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 

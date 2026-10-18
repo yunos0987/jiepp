@@ -54,7 +54,8 @@ Token read_pragma_body(const std::string& text,
                        std::size_t& pos,
                        int& lineno,
                        char opener_sign,
-                       std::vector<Token>& extra_nl)
+                       std::vector<Token>& extra_nl,
+                       LexOptions opts)
 {
     const std::size_t start_pos = pos;
     size_t len = text.size();
@@ -214,8 +215,26 @@ Token read_pragma_body(const std::string& text,
             continue;
         }
 
-        if (c == '{') {
-            Issue::with_lineno(lineno, [&] {
+        // A raw '{' inside the body (A2 / S-02). opts.report_nested_brace
+        // is false only while re-lexing the body of a Token::relexed_pragma
+        // token, i.e. a pragma the lexer itself produced, with its text
+        // unchanged, while re-lexing the body B of an enclosing pragma.
+        // The pass that read B called this function over the same
+        // characters with the same "$" pairing: the body of a nested pragma
+        // starts right after its opening '{', and that '{' ended a "$"
+        // pair or was a single character in that pass too, and the body
+        // ends no later than B does. So this same '{' was already met
+        // there, and reported with the same code (PP22) unless that pass
+        // was itself quiet, in which case the argument repeats outwards up
+        // to a pass that reported it: the source lex or the first re-lex
+        // of a pragma body that was not produced by a re-lex. Only this
+        // one diagnostic is skipped; the closer mismatches, the unclosed
+        // PP22 and PP23 below are always reported. Since the {#ignore} set
+        // only grows during a run, the earlier report counted whenever this
+        // one would have, so the error count stays >= 1 and the exit status
+        // cannot change.
+        if (c == '{' && opts.report_nested_brace) {
+            report_lex_issue(lineno, opts, [&] {
                 ISSUE(INVALID_PRAGMA_SYNTAX, std::string(1, c));
             });
         }
@@ -231,14 +250,14 @@ Token read_pragma_body(const std::string& text,
                 if (has_star && text[cl + 1] == expected_end) {
                     pos = cl + 2;
                 } else {
-                    Issue::with_lineno(lineno, [&] {
+                    report_lex_issue(lineno, opts, [&] {
                         ISSUE(INVALID_PRAGMA_SYNTAX, std::string(1, c));
                     });
                     pos = has_star ? cl + 2 : pos + 1;
                 }
             } else {
                 if (has_star) {
-                    Issue::with_lineno(lineno, [&] {
+                    report_lex_issue(lineno, opts, [&] {
                         ISSUE(INVALID_PRAGMA_SYNTAX, std::string(1, c));
                     });
                     pos = cl + 2;
@@ -267,12 +286,12 @@ Token read_pragma_body(const std::string& text,
 
     if (!closed) {
         if (is_directive) {
-            Issue::with_lineno(lineno, [&] {
+            report_lex_issue(lineno, opts, [&] {
                 std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
                 ISSUE(INVALID_PP_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
             });
         } else {
-            Issue::with_lineno(lineno, [&] {
+            report_lex_issue(lineno, opts, [&] {
                 std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
                 ISSUE(INVALID_PRAGMA_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
             });

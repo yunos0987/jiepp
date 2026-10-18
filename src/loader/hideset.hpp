@@ -12,8 +12,9 @@
 // interned macro-name ids (task_slug hideset-linear). The previous
 // representation (a sorted string set, deep-copied per level) made an
 // n-level macro-expansion chain O(n^2); this handle is one pointer (8
-// bytes), copying is an atomic increment, and with()/unite()/intersect()
-// are O(h) (h = trie height, typically <= 3) instead of O(set size).
+// bytes), copying is a plain (non-atomic) reference-count increment, and
+// with()/unite()/intersect() are O(h) (h = trie height, typically <= 3)
+// instead of O(set size).
 //
 // Value semantics: default-constructed is the empty set; copy/move/assign
 // behave like a reference-counted handle (no deep copy). `same()` is a
@@ -24,7 +25,9 @@
 // shrinks, and is NOT thread-safe, like Issue's process-global state (see
 // ARCHITECTURE.md, loader/ section): a library host driving concurrent
 // preprocessing from multiple threads was already unsupported before this
-// change. Ids are global (not per Env/Symtab) so a token carrying a hide
+// change. HideSet values, and the Tokens carrying them, must not be copied
+// or destroyed concurrently from different threads, because the reference
+// count is not atomic. Ids are global (not per Env/Symtab) so a token carrying a hide
 // set stays correct across different Env instances in the same process.
 class HideSet {
 public:

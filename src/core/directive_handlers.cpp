@@ -129,6 +129,23 @@ std::size_t ellipsis_at(const std::vector<Token>& ts, std::size_t i) {
     return 3;
 }
 
+// PP35 context for redefining `existing` as `name`. is_builtin_macro() is
+// defined in macro.hpp (shared with __has_builtin).
+std::string redefinition_context(const std::string& name, const Macro* existing) {
+    return is_builtin_macro(existing) ? name + ": redefining built-in macro" : name;
+}
+
+// Operators that have no symbol-table entry but are built-in for PP35 and
+// __has_builtin: __has_builtin always, __has_include in a normal build (in a
+// sandbox build the operator itself is restricted, PP62, so no warning).
+bool is_builtin_operator_name(const std::string& name) {
+#ifndef JIEPP_SANDBOX
+    if (name == "__has_include")
+        return true;
+#endif
+    return name == "__has_builtin";
+}
+
 } // namespace
 
 namespace jiepp::preprocessor_detail {
@@ -330,7 +347,9 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
                 if (!existing->equal(*nm))
-                    ISSUE(MACRO_REDEFINED, name);
+                    ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
+            } else if (is_builtin_operator_name(name)) {
+                ISSUE(MACRO_REDEFINED, name + ": redefining built-in macro");
             }
             env.define(name, std::move(nm));
         } else {
@@ -338,7 +357,9 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
                 if (!existing->equal(*nm))
-                    ISSUE(MACRO_REDEFINED, name);
+                    ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
+            } else if (is_builtin_operator_name(name)) {
+                ISSUE(MACRO_REDEFINED, name + ": redefining built-in macro");
             }
             env.define(name, std::move(nm));
         }
@@ -377,6 +398,15 @@ bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_n
         ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
               "{#undef " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
     }
+    // Undefining a built-in macro warns PP35, like clang ("undefining
+    // builtin macro"). __has_include and __has_builtin have no symbol-table
+    // entry and keep working after {#undef} (SPEC 5.2), but clang warns for
+    // them too; in a sandbox build __has_include is restricted (PP62), so no
+    // warning for it there.
+    bool builtin = is_builtin_macro(env.lookup(ts[0].text)) ||
+                   is_builtin_operator_name(ts[0].text);
+    if (builtin)
+        ISSUE(MACRO_REDEFINED, ts[0].text + ": undefining built-in macro");
     env.undef(ts[0].text);
     if (undefined_name)
         *undefined_name = ts[0].text;
@@ -494,7 +524,9 @@ void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ot
     std::string raw_path = iec3_blank_out_comments(expand_operand_text(raw_arg, env), /*header_name=*/true);
     std::string syspath;
     bool _;
-    if (strip_path(raw_path, syspath, _)) {
+    // A9: a NUL (decoded from $00) would end the path early in the C-string
+    // filesystem calls, so it is an invalid path, like a malformed operand.
+    if (strip_path(raw_path, syspath, _) && syspath.find('\0') == std::string::npos) {
         env.add_syspath(resolve_syspath_base(syspath, env));
         ots.push_back(Token::pragma("syspath", Util::encode_iec_string(syspath, '\''), env.is_standard_pragma_style()));
         return;
@@ -514,8 +546,15 @@ void handle_include(const std::string& raw_arg,
     std::string raw_path = iec3_blank_out_comments(expand_operand_text(raw_arg, env), /*header_name=*/true);
     std::string include_path;
     bool syspath_only_path;
-    if (strip_path(raw_path, include_path, syspath_only_path)) {
+    // A9: same NUL rule as {#syspath} above.
+    if (strip_path(raw_path, include_path, syspath_only_path)
+        && include_path.find('\0') == std::string::npos) {
         auto disp_path = fs::path(include_path).generic_string();
+
+        // PP66: count the executed directive (valid path, about to resolve
+        // and include; a {#pragma once} skip is counted too, since the path
+        // is resolved either way) before any file system work.
+        env.count_include();
 
         Loader::LoadType loadtype = (syspath_only || syspath_only_path) ? Loader::LoadType::SINCLUDE : Loader::LoadType::INCLUDE;
         expand(include_path, loadtype, ots, env, disp_path);
@@ -536,14 +575,17 @@ void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
     // is printed as one. NewlineInStringAndMessageDirectives checks both.
     // A quote in the message text is not scanned for PP29, like clang's
     // #error/#warning (gcc does scan it).
-    std::string msg = expand_operand_text(raw_arg, env, /*report_unterminated=*/false);
-#ifdef JIEPP_SANDBOX
-    // Sandbox: strip control characters to prevent log injection
-    std::erase_if(msg, [](unsigned char c) {
-        return (c < 0x20) && (c != '\n') && (c != '\r') && (c != '\t');
-    });
-#endif
-    Issue::happen(code, msg);
+    report_message(expand_operand_text(raw_arg, env, /*report_unterminated=*/false), code);
+}
+
+// The single place a message-passthrough diagnostic (PP90-PP93) is raised:
+// {#error}/{#warning}/{#info}/{#severe} (handle_message() above) and the
+// built-ins __error/__assert (builtin_function_macros.cpp) all report here.
+// The message is passed on verbatim: in sandbox builds Issue::happen()
+// strips control characters from the context and file path of every
+// diagnostic, these included (Util::strip_control_chars(), SPEC 14).
+void report_message(std::string msg, Issue::Code code) {
+    Issue::happen(code, std::move(msg));
 }
 
 void handle_ignore(const std::string& raw_arg, Env& env) {

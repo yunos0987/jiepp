@@ -155,3 +155,23 @@ TEST_F(ParamTest, Cache) {
     ASSERT_NE(nullptr, cached);
     EXPECT_TRUE(cached->empty());
 }
+
+// R2 named counters: counter_value() never inserts (it is const), a
+// counter_slot() is inserted with 0 and stays the same slot, and a move
+// keeps the map.
+TEST_F(ParamTest, NamedCounterStorage) {
+    Env env;
+    const Param& cp = env;
+    EXPECT_EQ(0u, cp.counter_value("a"));
+    std::uint32_t& slot = env.counter_slot("a");
+    EXPECT_EQ(0u, slot);
+    slot = 7;
+    EXPECT_EQ(7u, env.counter_value("a"));
+    EXPECT_EQ(&slot, &env.counter_slot("a"));
+    EXPECT_EQ(0u, env.counter_value("b"));
+    env.counter_slot("b") = 2147483648u;
+    Env moved(std::move(env));
+    EXPECT_EQ(7u, moved.counter_value("a"));
+    EXPECT_EQ(2147483648u, moved.counter_value("b"));
+    EXPECT_TRUE(empty());
+}

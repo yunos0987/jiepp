@@ -101,9 +101,20 @@ TEST_F(IssueTest, FilepathAndLineno) {
 }
 
 TEST_F(IssueTest, AddIgnoring) {
+    // EXPR_TYPE_ERROR (PP50) is an ordinary ERROR code: add_ignoring() works
+    // for it. (FILE_NOT_FOUND used to be tested here; PP10-PP14 can no longer
+    // be ignored, see AddIgnoringHasNoEffectOnFileCodes.)
+    EXPECT_FALSE(Issue::is_ignored(Issue::Code::EXPR_TYPE_ERROR));
+    Issue::add_ignoring(Issue::Code::EXPR_TYPE_ERROR);
+    EXPECT_TRUE(Issue::is_ignored(Issue::Code::EXPR_TYPE_ERROR));
+}
+
+TEST_F(IssueTest, AddIgnoringHasNoEffectOnFileCodes) {
+    // PP10-PP14 cannot be suppressed (SPEC 10): add_ignoring() accepts the
+    // call but is_ignored() stays false.
     EXPECT_FALSE(Issue::is_ignored(Issue::Code::FILE_NOT_FOUND));
     Issue::add_ignoring(Issue::Code::FILE_NOT_FOUND);
-    EXPECT_TRUE(Issue::is_ignored(Issue::Code::FILE_NOT_FOUND));
+    EXPECT_FALSE(Issue::is_ignored(Issue::Code::FILE_NOT_FOUND));
 }
 
 TEST_F(IssueTest, DefaultBlockings) {
@@ -443,4 +454,193 @@ TEST_F(IssueTest, EmptyStackFatalThrowsInsteadOfRecursing) {
 
     EXPECT_THROW(Issue::fatal(), Issue::Exception);
     EXPECT_THAT(message(), ::testing::HasSubstr("PP01"));
+}
+
+// A default-off code (PP54, -Wundef) prints nothing, counts nothing and
+// throws nothing until enable() is called.
+TEST_F(IssueTest, DefaultOffCodeNeedsEnable) {
+    IssueStateReset reset;
+    Issue::initialize(output());
+    EXPECT_TRUE(Issue::is_default_off(Issue::Code::UNDEFINED_IDENTIFIER));
+    EXPECT_FALSE(Issue::is_default_off(Issue::Code::MACRO_REDEFINED));
+    EXPECT_FALSE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    EXPECT_TRUE(Issue::is_enabled(Issue::Code::MACRO_REDEFINED));
+
+    Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO");
+    EXPECT_TRUE(empty());
+
+    Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+    EXPECT_TRUE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO");
+    EXPECT_THAT(message(), ::testing::HasSubstr(
+        "warning: PP54: 'FOO' is not defined, evaluates to 0"));
+
+    // Without a context the generic text is used.
+    Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER);
+    EXPECT_THAT(message(), ::testing::HasSubstr("warning: PP54: Identifier is not defined, evaluates to 0"));
+}
+
+TEST_F(IssueTest, InitializeResetsEnabled) {
+    IssueStateReset reset;
+    Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+    ASSERT_TRUE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    Issue::initialize(output());
+    EXPECT_FALSE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO");
+    EXPECT_TRUE(empty());
+}
+
+// add_werror() enables the code and promotes only that code; initialize()
+// clears both sets.
+TEST_F(IssueTest, AddWerrorPromotesOnlyThatCode) {
+    IssueStateReset reset;
+    Issue::initialize(output());
+    Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER);
+    EXPECT_TRUE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+
+    Issue::push({1, "test.iec"});
+    EXPECT_THROW(Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO"), Issue::Exception);
+    EXPECT_EQ("test.iec:1.0: error: PP54: 'FOO' is not defined, evaluates to 0", message());
+
+    // Another warning is not promoted.
+    EXPECT_NO_THROW(Issue::happen(Issue::Code::MACRO_REDEFINED, "X"));
+    EXPECT_THAT(message(), ::testing::HasSubstr("warning: PP35"));
+
+    Issue::initialize(output());
+    EXPECT_FALSE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+    EXPECT_NO_THROW(Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO"));
+    EXPECT_TRUE(empty());
+    Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+    EXPECT_NO_THROW(Issue::happen(Issue::Code::UNDEFINED_IDENTIFIER, "FOO"));
+    EXPECT_THAT(message(), ::testing::HasSubstr("warning: PP54"));
+}
+
+// ensure_location_stack() (setup()) must not reset the enabled set.
+TEST_F(IssueTest, EnsureLocationStackKeepsEnabled) {
+    IssueStateReset reset;
+    Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+    Issue::ensure_location_stack();
+    EXPECT_TRUE(Issue::is_enabled(Issue::Code::UNDEFINED_IDENTIFIER));
+}
+
+// ---- P2-4: --error-limit (PP65) ----
+//
+// error_limit_ matters only in continue mode (the CLI's). N counted errors
+// are allowed; the next ERROR that would be counted is not printed, PP65 is
+// printed (SEVERE, at the location of that error) and processing stops.
+
+class IssueErrorLimitTest : public JieppTest {
+protected:
+    void SetUp() override {
+        JieppTest::SetUp();
+        Issue::push({5, "lim.iec"});
+        Issue::error_limit_ = 3;
+    }
+    void TearDown() override {
+        Issue::error_limit_ = 0;
+        JieppTest::TearDown();
+    }
+};
+
+TEST_F(IssueErrorLimitTest, StopsInsteadOfTheFourthError) {
+    Issue::ContinueMode guard({});
+    for (int i = 0; i < 3; ++i)
+        EXPECT_NO_THROW(Issue::happen(Issue::Code::INVALID_EXPRESSION, "e" + std::to_string(i)));
+    EXPECT_EQ(3, Issue::error_count_);
+    try {
+        Issue::happen(Issue::Code::INVALID_EXPRESSION, "e3");
+        ADD_FAILURE() << "expected Issue::Exception";
+    } catch (const Issue::Exception& e) {
+        EXPECT_EQ(Issue::Code::TOO_MANY_ERRORS, e.code);
+    }
+    // The stopped error itself is not printed or counted.
+    EXPECT_EQ(3, Issue::error_count_);
+    const auto ms = messages();
+    ASSERT_EQ(4u, ms.size());
+    EXPECT_EQ(std::string::npos, ms[3].find("e3"));
+    EXPECT_NE(std::string::npos, ms[3].find("lim.iec:5.0: error: PP65: Too many errors emitted, stopping now"))
+        << ms[3];
+    EXPECT_NE(std::string::npos, ms[3].find("limit 3; use --error-limit N to raise it (0 = no limit)"))
+        << ms[3];
+}
+
+TEST_F(IssueErrorLimitTest, ExactlyNErrorsNoPP65) {
+    Issue::ContinueMode guard({});
+    for (int i = 0; i < 3; ++i)
+        Issue::happen(Issue::Code::INVALID_EXPRESSION, "e");
+    EXPECT_EQ(3, Issue::error_count_);
+    EXPECT_EQ(3u, messages().size());
+}
+
+TEST_F(IssueErrorLimitTest, ZeroIsUnlimited) {
+    Issue::error_limit_ = 0;
+    Issue::ContinueMode guard({});
+    for (int i = 0; i < 50; ++i)
+        EXPECT_NO_THROW(Issue::happen(Issue::Code::INVALID_EXPRESSION, "e"));
+    EXPECT_EQ(50, Issue::error_count_);
+}
+
+TEST_F(IssueErrorLimitTest, IgnoredAndWarningsNotCounted) {
+    Issue::ContinueMode guard({});
+    Issue::add_ignoring(Issue::Code::INVALID_EXPRESSION);
+    for (int i = 0; i < 20; ++i) {
+        EXPECT_NO_THROW(Issue::happen(Issue::Code::INVALID_EXPRESSION, "ignored"));
+        EXPECT_NO_THROW(Issue::happen(Issue::Code::MACRO_REDEFINED, "warning"));
+        EXPECT_NO_THROW(Issue::happen(Issue::Code::INFO_MESSAGE, "info"));
+    }
+    EXPECT_EQ(0, Issue::error_count_);
+}
+
+TEST_F(IssueErrorLimitTest, PromotedWarningsCounted) {
+    Issue::werror_ = true;
+    Issue::ContinueMode guard({});
+    for (int i = 0; i < 3; ++i)
+        Issue::happen(Issue::Code::MACRO_REDEFINED, "w");
+    EXPECT_EQ(3, Issue::error_count_);
+    try {
+        Issue::happen(Issue::Code::MACRO_REDEFINED, "w");
+        ADD_FAILURE() << "expected Issue::Exception";
+    } catch (const Issue::Exception& e) {
+        EXPECT_EQ(Issue::Code::TOO_MANY_ERRORS, e.code);
+    }
+}
+
+// An abort code (PP11 here) at the limit keeps its own code: it stops the
+// run itself, and PP65 would only hide the more specific diagnostic.
+TEST_F(IssueErrorLimitTest, AbortCodeAtLimitKeepsItsOwnCode) {
+    Issue::ContinueMode guard({Issue::Code::FILE_NOT_FOUND});
+    for (int i = 0; i < 3; ++i)
+        Issue::happen(Issue::Code::INVALID_EXPRESSION, "e");
+    try {
+        Issue::happen(Issue::Code::FILE_NOT_FOUND, "x.iec");
+        ADD_FAILURE() << "expected Issue::Exception";
+    } catch (const Issue::Exception& e) {
+        EXPECT_EQ(Issue::Code::FILE_NOT_FOUND, e.code);
+    }
+}
+
+TEST_F(IssueErrorLimitTest, IgnorePP65HasNoEffect) {
+    Issue::ContinueMode guard({});
+    Issue::add_ignoring(Issue::Code::TOO_MANY_ERRORS);
+    for (int i = 0; i < 3; ++i)
+        Issue::happen(Issue::Code::INVALID_EXPRESSION, "e");
+    EXPECT_THROW(Issue::happen(Issue::Code::INVALID_EXPRESSION, "e"), Issue::Exception);
+}
+
+// Outside continue mode (the library's default) the limit does nothing: the
+// first blocked ERROR already throws.
+TEST_F(IssueErrorLimitTest, NoEffectOutsideContinueMode) {
+    for (int i = 0; i < 2; ++i) {
+        try {
+            Issue::happen(Issue::Code::INVALID_EXPRESSION, "e");
+            ADD_FAILURE() << "expected Issue::Exception";
+        } catch (const Issue::Exception& e) {
+            EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, e.code);
+        }
+    }
+}
+
+TEST_F(IssueErrorLimitTest, InitializeResetsTheLimit) {
+    Issue::initialize(output());
+    EXPECT_EQ(0, Issue::error_limit_);
 }

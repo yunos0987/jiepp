@@ -2703,3 +2703,260 @@ TEST_F(JieppCommandTest, UnknownDirectiveIgnoredExitsZero) {
     EXPECT_NE(std::string::npos, out.find("y;")) << out;
     EXPECT_TRUE(empty());
 }
+
+// ─── R1: built-in function macros __error / __assert (SPEC 12.9) ─────────
+
+// E21: -dM lists neither built-in function macro (like __COUNTER__ and
+// gcc/clang -dM), while user macros are still listed.
+TEST_F(JieppCommandTest, DMExcludesBuiltinFunctionMacros) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("r1_dm_builtins", "{#define USER 1}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.dM = true;
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("{#define USER 1}")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__error")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__assert")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__counter")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__counter_peek")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__counter_set")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__nosplit")) << out;
+    EXPECT_TRUE(empty());
+}
+
+// R2 (N14): the named counters live as long as the Env of one run, so an
+// -include file and the main input share them.
+TEST_F(JieppCommandTest, CountersSharedAcrossIncludeOption) {
+    fs::current_path(jiepp_root_dir());
+    fs::path inc = write_temp_iec("r2_counter_inc", "INC __counter(k);\n");
+    fs::path src = write_temp_iec("r2_counter_main", "MAIN __counter(k) __counter_peek(k);\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.include_filepaths = {inc.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("INC 0;")) << out;
+    EXPECT_NE(std::string::npos, out.find("MAIN 1 2;")) << out;
+    EXPECT_TRUE(empty());
+}
+
+// E23: like {#error}, a PP91 from __error/__assert is counted and processing
+// continues (later text and later diagnostics are still processed), the exit
+// code is 1, and -o is not written.
+TEST_F(JieppCommandTest, BuiltinErrorContinuesAndFailsLikeHashError) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("r1_builtin_continue",
+                                  "BEFORE;\n__error(first)\nMIDDLE;\n__assert(0, second)\nAFTER;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BEFORE;")) << out;
+    EXPECT_NE(std::string::npos, out.find("MIDDLE;")) << out;
+    EXPECT_NE(std::string::npos, out.find("AFTER;")) << out;
+    auto ms = messages();
+    ASSERT_EQ(2u, ms.size());
+    EXPECT_NE(std::string::npos, ms[0].find(":2.0: error: PP91: 'first'")) << ms[0];
+    EXPECT_NE(std::string::npos, ms[1].find(":4.0: error: PP91: 'second'")) << ms[1];
+
+    fs::path out_path = fs::temp_directory_path() / "r1_builtin_continue.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+    opts.output_filepath = out_path.generic_string();
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_FALSE(fs::exists(out_path)) << "-o must not be created when error_count_ >= 1";
+}
+
+// M5/L4: -U __assert warns PP35 at the CLI location (clang "undefining
+// builtin macro"), exits 0, and __assert(...) is then plain text; with
+// -Werror the warning makes the run fail.
+TEST_F(JieppCommandTest, UOptionOnBuiltinWarns) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("r1_u_builtin", "__assert(0, m);\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.undef_macros = {"__assert"};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("__assert(0, m);")) << out;
+    EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__assert: undefining built-in macro'",
+              message());
+
+    opts.werror = true;
+    out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(1, rc);
+}
+
+// __has_builtin lets a header detect that -D __assert= disabled __assert:
+// PP35 for the -D, then the guard raises PP91 (exit 1). The input goes to the
+// temp directory; nothing under the repository is touched.
+TEST_F(JieppCommandTest, HasBuiltinDetectsDisabledAssertCli) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("has_builtin_guard",
+        "{#if \\not\\ __has_builtin(__assert)}{#error assert disabled}{#endif}\nBODY;\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.define_macros = {"__assert="};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(1, rc);
+    EXPECT_NE(std::string::npos, out.find("BODY")) << out;
+
+    auto msgs = messages();
+    ASSERT_EQ(2u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find("warning: PP35")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("__assert: redefining built-in macro")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[1].find("error: PP91")) << msgs[1];
+    EXPECT_NE(std::string::npos, msgs[1].find("'assert disabled'")) << msgs[1];
+
+    std::error_code ec;
+    fs::remove(src, ec);
+}
+
+// -U __has_builtin warns PP35 (the operator keeps working) and exits 0.
+TEST_F(JieppCommandTest, UOptionOnHasBuiltinWarns) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("has_builtin_u",
+        "{#if __has_builtin(__LINE__)}OPERATOR_WORKS{#endif}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.undef_macros = {"__has_builtin"};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("OPERATOR_WORKS")) << out;
+    EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__has_builtin: undefining built-in macro'",
+              message());
+
+    std::error_code ec;
+    fs::remove(src, ec);
+}
+
+// -Wundef switches PP54 on: a warning on stderr in clang's wording, exit 0.
+// Without the option nothing is printed. The input goes to the temp
+// directory; the Issue state is reset when the test ends.
+TEST_F(JieppCommandTest, WundefPrintsWarningExitZero) {
+    IssueStateReset reset;
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("wundef_cli", "{#if FOO}A{#else}B{#endif}\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    std::string out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("B")) << out;
+    EXPECT_TRUE(empty());
+
+    opts.warn_undef = true;
+    out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("B")) << out;
+    std::string msg = message();
+    EXPECT_NE(std::string::npos,
+              msg.find(":1.0: warning: PP54: 'FOO' is not defined, evaluates to 0")) << msg;
+
+    std::error_code ec;
+    fs::remove(src, ec);
+}
+
+// -Werror=undef: PP54 is an error (exit 1, -o not written). -w still shows
+// it, --silent hides it (still exit 1), -Werror alone does not switch PP54 on.
+TEST_F(JieppCommandTest, WerrorUndefCli) {
+    IssueStateReset reset;
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("werror_undef_cli", "{#if FOO}A{#else}B{#endif}\n");
+    fs::path out_path = fs::temp_directory_path() / "werror_undef_cli.piec";
+    std::error_code ec;
+    fs::remove(out_path, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = out_path.generic_string();
+    opts.werror_undef = true;
+    Issue::initialize(output());
+    EXPECT_EQ(1, jiepp_command(opts));
+    std::string msg = message();
+    EXPECT_NE(std::string::npos,
+              msg.find(":1.0: error: PP54: 'FOO' is not defined, evaluates to 0")) << msg;
+    EXPECT_FALSE(fs::exists(out_path));
+
+    Issue::initialize(output());
+    opts.suppress_warnings = true;
+    EXPECT_EQ(1, jiepp_command(opts));
+    msg = message();
+    EXPECT_NE(std::string::npos, msg.find("error: PP54: 'FOO'")) << msg;
+
+    Issue::initialize(output());
+    opts.suppress_warnings = false;
+    opts.silent = true;
+    EXPECT_EQ(1, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+    EXPECT_FALSE(fs::exists(out_path));
+
+    // -Wundef and -Werror combined with -Werror=undef: still an error, exit 1.
+    Issue::initialize(output());
+    opts.silent = false;
+    opts.warn_undef = true;
+    EXPECT_EQ(1, jiepp_command(opts));
+    msg = message();
+    EXPECT_NE(std::string::npos, msg.find("error: PP54: 'FOO'")) << msg;
+    EXPECT_FALSE(fs::exists(out_path));
+
+    Issue::initialize(output());
+    opts.warn_undef = false;
+    opts.werror = true;
+    EXPECT_EQ(1, jiepp_command(opts));
+    msg = message();
+    EXPECT_NE(std::string::npos, msg.find("error: PP54: 'FOO'")) << msg;
+    EXPECT_FALSE(fs::exists(out_path));
+
+    // On error the -MD dependency file is not created either.
+    fs::path dep_path = fs::temp_directory_path() / "werror_undef_cli.d";
+    fs::remove(dep_path, ec);
+    Issue::initialize(output());
+    opts.werror = false;
+    opts.MD = true;
+    opts.dep_file = dep_path.generic_string();
+    EXPECT_EQ(1, jiepp_command(opts));
+    msg = message();
+    EXPECT_NE(std::string::npos, msg.find("error: PP54: 'FOO'")) << msg;
+    EXPECT_FALSE(fs::exists(out_path));
+    EXPECT_FALSE(fs::exists(dep_path));
+    opts.MD = false;
+    opts.dep_file.reset();
+
+    // -Werror alone: PP54 stays off, nothing printed, exit 0.
+    Issue::initialize(output());
+    opts.werror_undef = false;
+    opts.werror = true;
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_TRUE(empty());
+    EXPECT_TRUE(fs::exists(out_path));
+
+    fs::remove(src, ec);
+    fs::remove(out_path, ec);
+}

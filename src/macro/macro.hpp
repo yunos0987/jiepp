@@ -1,13 +1,39 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "../env/issue.hpp"
 #include "../loader/token.hpp"
 
 class Env;
+
+namespace jiepp::expand_detail {
+struct ArgWs;
+}
+
+// Per-token __VA_OPT__ layout of a normalized macro body (S-01). Present
+// (size == body size) only when the body has a __VA_OPT__ token. Offsets are
+// relative to the entry's own token, so the content subrange of an enclosing
+// __VA_OPT__ can use the matching subrange of the table: inside a closed
+// content every nested '(' also closes inside it, and an offset that leaves
+// the subrange is clamped by subst() to "no further token".
+struct VaOptSpan {
+    std::uint32_t next = 0;   // offset to the next non-MASK_WS token (size - i if none)
+    std::uint32_t close = 0;  // __VA_OPT__ only: offset to the ')' matching the '(' at
+                              // `next`; 0 = malformed (no '(' there, or unclosed)
+    std::uint32_t nested = 0; // __VA_OPT__ only: __VA_OPT__ tokens after that '(' up to
+                              // `close` (to the body end if unclosed; 0 if no '(') --
+                              // one PP37 each, raised by subst() per occurrence
+};
+
+// Computes the VaOptSpan table of `body` in O(body) (one backward pass, one
+// '('/')' stack pass, one prefix count). Returns an empty table when `body`
+// has no __VA_OPT__ token.
+std::vector<VaOptSpan> compute_va_opt_spans(std::span<const Token> body);
 
 // ---------------------------------------------------------------------------
 // Base class
@@ -35,8 +61,11 @@ public:
     bool equal(const Macro& other) const override;
     std::string str() const override;
     const std::vector<Token>& tokens() const { return ts_; }
+    // See VaOptSpan; derived from tokens(), so not part of equal().
+    const std::vector<VaOptSpan>& va_opt_spans() const { return va_opt_spans_; }
 private:
     std::vector<Token> ts_;
+    std::vector<VaOptSpan> va_opt_spans_;
     static std::vector<Token> normalize(std::vector<Token> ts);
 };
 
@@ -117,13 +146,23 @@ public:
     }
     std::string str() const override { return "defined"; }
 
-    // C3: set by expand()'s 'defined' branch the first time an operand is
+    // C3: set by expand()'s 'defined' branch (and by the __has_builtin
+    // branch, which shares this state) the first time an operand is
     // missing/non-identifier or an opened '(' has no matching ')' within one
     // #if/#elif condition, so only the first such error in that condition is
     // reported (like clang) and eval_cond() can short-circuit the rest of
     // the expression without evaluating it. Not part of macro identity, so
     // equal() (which only checks the dynamic type) intentionally ignores it.
     bool operand_error = false;
+    // The code of that first error (INVALID_DEFINED_OPERAND, or
+    // INVALID_EXPRESSION for a missing ')'), set together with
+    // operand_error; read by eval_cond_value_tokens() as its failure code.
+    Issue::Code operand_error_code = Issue::Code::SUCCESS;
+    // While true, expand() treats the word 'defined' as an ordinary
+    // identifier instead of this operator. Set by __error/__assert while
+    // they expand a message inside a condition (a message is not an
+    // expression); cleared again for a nested expression evaluation.
+    bool suspended = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -174,6 +213,9 @@ public:
     const std::vector<int>& arg_slot_uses() const { return arg_slot_uses_; }
     int num_arg_slots() const { return static_cast<int>(arg_slot_uses_.size()); }
 
+    // See VaOptSpan; derived from body(), so not part of equal().
+    const std::vector<VaOptSpan>& va_opt_spans() const { return va_opt_spans_; }
+
 private:
     std::unordered_map<std::string, std::pair<int, bool>> args_;
     int num_params_min_ = 0;
@@ -183,6 +225,7 @@ private:
     bool named_variadic_ = false;
     std::vector<int> arg_slots_;     // size == number of formals; -1 or slot index
     std::vector<int> arg_slot_uses_; // size == number of slots; spelling count
+    std::vector<VaOptSpan> va_opt_spans_;
 
     // task_slug arg-expand-once (D2). num_formals is the number of distinct
     // formal-parameter slots in args() (regular params plus, for a
@@ -199,3 +242,138 @@ private:
         std::vector<Token> ts,
         const std::unordered_map<std::string, std::pair<int, bool>>& args);
 };
+
+// ---------------------------------------------------------------------------
+// Built-in function-like macros (__error, __assert; named counters and
+// __nosplit below)
+// ---------------------------------------------------------------------------
+
+// Called like a function macro (needs an opening parenthesis, PP34 on an
+// unterminated or wrong-count call, arguments collected by the expand()
+// call loop with [...] comma protection and the same handling of directives
+// in the argument list), but its arguments are NOT pre-expanded and its
+// result is computed by invoke(). Deliberately NOT derived from
+// FunctionMacro, so define_directive_text()/-dM skip it (like __COUNTER__).
+class BuiltinFunctionMacro : public Macro {
+public:
+    std::vector<Token> replacement(Env& /*env*/) const override { return {}; } // unused
+    bool is_function_macro() const override { return true; }
+    virtual int min_args() const = 0;
+    // FunctionMacro::NUM_OF_MAX_ARGS means a variadic tail.
+    virtual int max_args() const = 0;
+    // args: one token vector per actual, ts_flatten()ed like FunctionMacro
+    // actuals (hide sets kept). ws: per-actual whitespace flags, built as for
+    // a variadic FunctionMacro call (empty when max_args() is not variadic).
+    // Implementations live in src/core/builtin_function_macros.cpp.
+    virtual std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                                      const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                                      Env& env) const = 0;
+};
+
+// __error(msg...): reports PP91 with the macro-expanded message; expands to
+// nothing.
+class ErrorBuiltin : public BuiltinFunctionMacro {
+public:
+    bool equal(const Macro& other) const override {
+        return dynamic_cast<const ErrorBuiltin*>(&other) != nullptr;
+    }
+    std::string str() const override { return "__error"; }
+    int min_args() const override { return 0; }
+    int max_args() const override { return FunctionMacro::NUM_OF_MAX_ARGS; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+};
+
+// __assert(expr, msg...): evaluates expr with the {#if} rules; when it is
+// false, reports PP91 with the macro-expanded message (or the clang default
+// text); expands to nothing.
+class AssertBuiltin : public BuiltinFunctionMacro {
+public:
+    bool equal(const Macro& other) const override {
+        return dynamic_cast<const AssertBuiltin*>(&other) != nullptr;
+    }
+    std::string str() const override { return "__assert"; }
+    int min_args() const override { return 1; }
+    int max_args() const override { return FunctionMacro::NUM_OF_MAX_ARGS; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+};
+
+// ---------------------------------------------------------------------------
+// Named counters (__counter, __counter_peek, __counter_set; SPEC 12.10)
+// ---------------------------------------------------------------------------
+
+// __counter(name): the current value of the named counter, then increments
+// it (first value 0). __counter_peek(name): the current value without
+// incrementing (a never-used name gives 0 and is not created). The name is
+// one identifier and is NOT macro-expanded. The values live in the Env
+// (Param::counter_value()/counter_slot()), not in this object, so undefining
+// the built-in does not clear them.
+class CounterBuiltin : public BuiltinFunctionMacro {
+public:
+    enum class Kind { next, peek };
+    explicit CounterBuiltin(Kind kind) : kind_(kind) {}
+    bool equal(const Macro& other) const override {
+        auto* o = dynamic_cast<const CounterBuiltin*>(&other);
+        return o != nullptr && o->kind_ == kind_;
+    }
+    std::string str() const override {
+        return kind_ == Kind::next ? "__counter" : "__counter_peek";
+    }
+    int min_args() const override { return 1; }
+    int max_args() const override { return 1; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+
+private:
+    Kind kind_;
+};
+
+// __counter_set(name, value): evaluates value with the {#if} rules and, when
+// it is an integer in 0..2147483647, stores it; expands to nothing.
+class CounterSetBuiltin : public BuiltinFunctionMacro {
+public:
+    bool equal(const Macro& other) const override {
+        return dynamic_cast<const CounterSetBuiltin*>(&other) != nullptr;
+    }
+    std::string str() const override { return "__counter_set"; }
+    int min_args() const override { return 2; }
+    int max_args() const override { return 2; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+};
+
+// __nosplit(args...): the arguments joined like __VA_ARGS__ and
+// macro-expanded once; every comma of the result outside (...)/[...]
+// becomes an ANY token, so it no longer separates the arguments of a
+// later function-macro call and is not counted by __VA_ARGC__ (SPEC 12.11).
+class NosplitBuiltin : public BuiltinFunctionMacro {
+public:
+    bool equal(const Macro& other) const override {
+        return dynamic_cast<const NosplitBuiltin*>(&other) != nullptr;
+    }
+    std::string str() const override { return "__nosplit"; }
+    int min_args() const override { return 0; }
+    int max_args() const override { return FunctionMacro::NUM_OF_MAX_ARGS; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+};
+
+// A built-in macro: a symbol-table entry whose replacement jiepp computes
+// (__COUNTER__, __LINE__, __FILE__, __DATE__, ..., __error, __assert, the
+// named counters, __nosplit) -- anything that is neither a value macro
+// (UserDefinedObjectMacro: user definitions, -D, and the predefined values
+// such as __INT_MAX__ or _JIEPP_VER) nor a FunctionMacro, nor the transient
+// 'defined' operator. Undefining or redefining one warns PP35, like clang
+// -Wbuiltin-macro-redefined; __has_builtin(NAME) reports it as 1. Built-in
+// entries are created only by Env setup, so "built-in kind" means "still the
+// original entry".
+inline bool is_builtin_macro(const Macro* m) {
+    return m && !dynamic_cast<const UserDefinedObjectMacro*>(m) &&
+           !dynamic_cast<const FunctionMacro*>(m) && !dynamic_cast<const DefinedOperator*>(m);
+}

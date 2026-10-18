@@ -178,6 +178,10 @@ int jiepp_command(const JieppOptions& opts)
     // immediately-following WS token (GCC-compatible -P blank-line removal).
     auto emit_tokens = [&](const std::vector<Token>& tokens) {
         std::ostream* actual_output = not_out ? &virtual_output : output_stream;
+        // Accumulate into one buffer and write once: each operator<< on
+        // cout/ofstream takes the C runtime's per-call FILE lock (and stdio
+        // sync), so a write per token is measurably slower on large outputs.
+        std::string buf;
         if (no_line_markers) {
             bool skip_next_ws = false;
             for (const auto& t : tokens) {
@@ -189,12 +193,13 @@ int jiepp_command(const JieppOptions& opts)
                     skip_next_ws = false;
                     if (t.type == Token::WS) continue;  // drop blank line only, not comments
                 }
-                *actual_output << t.text;
+                buf += t.text;
             }
         } else {
             for (const auto& t : tokens)
-                *actual_output << t.text;
+                buf += t.text;
         }
+        actual_output->write(buf.data(), static_cast<std::streamsize>(buf.size()));
     };
 
     std::vector<Token> ots;
@@ -242,6 +247,16 @@ int jiepp_command(const JieppOptions& opts)
             Issue::suppress_warnings_ = true;
         if (opts.werror)
             Issue::werror_ = true;
+        // --error-limit: the CLI's default (1000, or 100 in a sandbox build)
+        // applies when the option is absent; the library's default is 0.
+        Issue::error_limit_ = opts.error_limit.value_or(DEFAULT_ERROR_LIMIT);
+        // -Wundef (PP54) is off by default; enabled here, before -D/-U, like
+        // the options above.
+        if (opts.warn_undef)
+            Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
+        // -Werror=undef: -Wundef, with PP54 reported as an error.
+        if (opts.werror_undef)
+            Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER);
 
         std::vector<std::pair<std::string,std::string>> predefine_macros;
         for (const auto& dm : opts.define_macros)
@@ -264,6 +279,8 @@ int jiepp_command(const JieppOptions& opts)
             env.fix_max_expansion_depth(*opts.max_expansion_depth);
         if (opts.max_expansion_steps)
             env.set_max_expansion_steps(static_cast<std::uint64_t>(*opts.max_expansion_steps));
+        if (opts.max_include_count)
+            env.set_max_include_count(*opts.max_include_count);
         if (opts.max_if_nesting)
             env.fix_max_if_nesting(*opts.max_if_nesting);
         if (opts.max_blank_lines)

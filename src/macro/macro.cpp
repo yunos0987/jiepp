@@ -3,6 +3,9 @@
 #include "../env/issue.hpp"
 
 #include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -37,6 +40,27 @@ std::vector<Token> normalize_glue(std::vector<Token> ts) {
     return result;
 }
 
+#ifndef NDEBUG
+// subst() decides `@@` adjacency of a formal parameter from its direct
+// neighbours only (S-01), which is exact because normalize_glue() leaves no
+// MASK_WS token next to a GLUE. Checked once per definition.
+bool glue_is_normalized(const std::vector<Token>& ts) {
+    for (std::size_t i = 0; i < ts.size(); ++i) {
+        if (ts[i].type != Token::GLUE)
+            continue;
+        if (i > 0 && (ts[i - 1].type & Token::MASK_WS))
+            return false;
+        if (i + 1 < ts.size() && (ts[i + 1].type & Token::MASK_WS))
+            return false;
+    }
+    return true;
+}
+#endif
+
+bool is_va_opt(const Token& t) {
+    return t.type == Token::ANY && t.text == FunctionMacro::VA_OPT;
+}
+
 // Compare two replacement-list token sequences the way C17 6.10.3p2 requires
 // for macro redefinition: "identical" ignores the AMOUNT of white-space
 // between tokens, only whether a separation is present or absent. Each
@@ -69,6 +93,58 @@ bool token_lists_equal_ignoring_ws_amount(const std::vector<Token>& a,
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
+// __VA_OPT__ layout (S-01)
+// ---------------------------------------------------------------------------
+
+std::vector<VaOptSpan> compute_va_opt_spans(std::span<const Token> body) {
+    if (std::none_of(body.begin(), body.end(), is_va_opt))
+        return {};
+    if (body.size() >= std::numeric_limits<std::uint32_t>::max())
+        throw std::length_error("macro body too large");
+    const auto n = static_cast<std::uint32_t>(body.size());
+    std::vector<VaOptSpan> spans(n);
+
+    // next: one backward pass.
+    std::uint32_t nxt = n;
+    for (std::uint32_t i = n; i-- > 0;) {
+        spans[i].next = nxt - i;
+        if (!(body[i].type & Token::MASK_WS))
+            nxt = i;
+    }
+
+    // Matching ')' of every '(' with one stack pass. An unmatched '(' stays
+    // below in the stack, so this gives the same ')' as scanning forward
+    // from the '(' with a depth counter (the old collect_va_opt_content()).
+    constexpr std::uint32_t kNone = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::uint32_t> rp_of(n, kNone);
+    std::vector<std::uint32_t> open;
+    // Prefix counts of __VA_OPT__ tokens: count[k] = number in [0, k).
+    std::vector<std::uint32_t> count(static_cast<std::size_t>(n) + 1, 0);
+    for (std::uint32_t i = 0; i < n; ++i) {
+        count[i + 1] = count[i] + (is_va_opt(body[i]) ? 1 : 0);
+        if (body[i].type == Token::LP) {
+            open.push_back(i);
+        } else if (body[i].type == Token::RP && !open.empty()) {
+            rp_of[open.back()] = i;
+            open.pop_back();
+        }
+    }
+
+    for (std::uint32_t i = 0; i < n; ++i) {
+        if (!is_va_opt(body[i]))
+            continue;
+        const std::uint32_t lp = i + spans[i].next;
+        if (lp >= n || body[lp].type != Token::LP)
+            continue; // malformed: close = nested = 0
+        const std::uint32_t rp = rp_of[lp];
+        const std::uint32_t end = rp == kNone ? n : rp;
+        spans[i].nested = count[end] - count[lp + 1];
+        spans[i].close = rp == kNone ? 0 : rp - i;
+    }
+    return spans;
+}
+
+// ---------------------------------------------------------------------------
 // UserDefinedObjectMacro
 // ---------------------------------------------------------------------------
 
@@ -79,7 +155,10 @@ std::vector<Token> UserDefinedObjectMacro::normalize(std::vector<Token> ts) {
 }
 
 UserDefinedObjectMacro::UserDefinedObjectMacro(std::vector<Token> ts)
-    : ts_(normalize(std::move(ts))) {}
+    : ts_(normalize(std::move(ts))) {
+    assert(glue_is_normalized(ts_));
+    va_opt_spans_ = compute_va_opt_spans(ts_);
+}
 
 std::vector<Token> UserDefinedObjectMacro::replacement(Env& /*env*/) const {
     return ts_;
@@ -132,8 +211,10 @@ FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Tok
     }
 
     body_ = normalize(std::move(body), args_);
+    assert(glue_is_normalized(body_));
     const int num_formals = regular_count + (has_va ? 1 : 0);
     compute_arg_slots(body_, args_, num_formals, arg_slots_, arg_slot_uses_);
+    va_opt_spans_ = compute_va_opt_spans(body_);
 }
 
 void FunctionMacro::compute_arg_slots(

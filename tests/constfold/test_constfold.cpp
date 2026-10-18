@@ -99,6 +99,76 @@ TEST_F(ConstfoldTest, BaseNInvalidBase) {
     EXPECT_TRUE(empty());
 }
 
+// A6: a base so large that "base * 10 + digit" used to overflow a signed int
+// (undefined behavior, observed as a wrapped small base) is an invalid base
+// regardless of how many digits it has.
+TEST_F(ConstfoldTest, BaseNHugeBaseIsInvalidNotWrapped) {
+    Issue::Blocking guard({});
+    for (const char* expr : {"4294967298#101 = 5", "4294967300#1",
+                             "18446744073709551618#11 = 4"}) {
+        eval_const_expr(expr);
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()) << expr;
+    }
+    eval_const_expr("4294967298#101 = 5");
+    EXPECT_NE(std::string::npos, message().find("invalid base: 4294967298#101"));
+}
+
+TEST_F(ConstfoldTest, BaseNLeadingZerosStillValid_Guard) {
+    EXPECT_NE(0LL, eval_const_expr("0036#z = 35"));
+    EXPECT_NE(0LL, eval_const_expr("002#101 = 5"));
+    EXPECT_TRUE(empty());
+}
+
+// A6: the float -> integer range is the half-open [-2^63, 2^63). 2^63 itself
+// used to pass the check (static_cast<double>(INT64_MAX) is 2^63) and then
+// overflowed the conversion (undefined behavior).
+TEST_F(ConstfoldTest, FloatCastRangeIsHalfOpen) {
+    Issue::Blocking guard({});
+    eval_const_expr("LWORD#9223372036854775808.0");
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+
+    EXPECT_NE(0LL, eval_const_expr(
+        "LWORD#9223372036854774784.0 = LWORD#16#7FFFFFFFFFFFFC00"));
+    EXPECT_TRUE(empty());
+    EXPECT_NE(0LL, eval_const_expr(
+        "LWORD#-9223372036854775808.0 = LWORD#16#8000000000000000"));
+    EXPECT_TRUE(empty());
+
+    eval_const_expr("LWORD#-9223372036854777856.0");
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+
+    // The out-of-range value becomes 0, so the comparison is true; before the
+    // fix this was true with no diagnostic at all.
+    EXPECT_NE(0LL, eval_const_expr("BYTE#9223372036854775808.0 = BYTE#0"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+}
+
+// The range error depends on the value, so it stays silent in an unevaluated
+// operand (SPEC 6.4). The right-hand side compares with LWORD#0: LWORD against
+// Int would be a value-independent type error (PP50) that is reported even
+// there.
+TEST_F(ConstfoldTest, FloatCastRangeUnevaluatedSilent_Guard) {
+    Issue::Blocking guard({});
+    auto r = eval_const_value(
+        "FALSE \\and\\ (LWORD#9223372036854775808.0 = LWORD#0)");
+    EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+    EXPECT_TRUE(empty());
+}
+
+// A7: a NUL used to end the expression early (the scanner read a C string),
+// so `1\0garbage(((` was just `1`. It is PP52 now, and the diagnostic shows
+// the NUL as $00.
+TEST_F(ConstfoldTest, NulInExpressionIsPP52) {
+    Issue::Blocking guard({});
+    for (const std::string& expr : {std::string("1\0garbage(((", 12),
+                                    std::string("1\0", 2)}) {
+        EXPECT_EQ(0LL, eval_const_expr(expr));
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+    }
+    eval_const_expr(std::string("1\0x", 3));
+    EXPECT_NE(std::string::npos, message().find("null character in expression: 1$00x"));
+}
+
 TEST_F(ConstfoldTest, BaseNInvalidDigit) {
     EXPECT_THROW(eval_const_expr("2#9"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
@@ -353,4 +423,140 @@ TEST_F(ConstfoldTest, BasedLiteralMinMagUnaffected) {
     EXPECT_NE(0LL, eval_const_expr(
         "16#8000000000000000 = -9223372036854775807 - 1"));
     EXPECT_TRUE(empty());
+}
+// ---- R1 (H1): eval_const_value() returns the typed value ----
+
+TEST_F(ConstfoldTest, EvalConstValueReturnsKindAndValue) {
+    {
+        auto r = eval_const_value("10");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Int, r.value.kind);
+        EXPECT_EQ(10, r.value.i);
+    }
+    {
+        auto r = eval_const_value("-1");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Int, r.value.kind);
+        EXPECT_EQ(-1, r.value.i);
+    }
+    {
+        auto r = eval_const_value("2147483648");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Int, r.value.kind);
+        EXPECT_EQ(2147483648LL, r.value.i);
+    }
+    {
+        auto r = eval_const_value("2.5");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Float, r.value.kind);
+        EXPECT_DOUBLE_EQ(2.5, r.value.f);
+    }
+    {
+        auto r = eval_const_value("BYTE#16#FF");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Bitstring, r.value.kind);
+        EXPECT_EQ(BitKind::BYTE, r.value.bit_kind);
+        EXPECT_EQ(255u, r.value.bits);
+    }
+    {
+        auto r = eval_const_value("TRUE");
+        EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+        EXPECT_EQ(ValueKind::Bool, r.value.kind);
+        EXPECT_TRUE(r.value.b);
+    }
+    // eval_const_expr() still returns only the 0/1 truth value.
+    EXPECT_EQ(1LL, eval_const_expr("10"));
+    EXPECT_EQ(1LL, eval_const_expr("-1"));
+    EXPECT_EQ(1LL, eval_const_expr("2147483648"));
+    EXPECT_EQ(1LL, eval_const_expr("2.5"));
+    EXPECT_EQ(1LL, eval_const_expr("BYTE#16#FF"));
+    EXPECT_EQ(1LL, eval_const_expr("TRUE"));
+    EXPECT_EQ(0LL, eval_const_expr("0"));
+    EXPECT_TRUE(empty());
+}
+
+// ---- R1 (H1/M1): failure codes, including literal errors raised inside
+// scanner/grammar actions; division by zero is not a failure ----
+
+TEST_F(ConstfoldTest, EvalConstValueReportsFailureCode) {
+    Issue::ContinueMode guard({});
+    auto failure_of = [&](const std::string& expr) {
+        auto r = eval_const_value(expr);
+        return r.failure;
+    };
+    EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, failure_of(""));
+    EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, failure_of("1 +"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, failure_of("1 x"));
+    EXPECT_EQ(Issue::Code::EXPR_TYPE_ERROR, failure_of("TRUE + 1"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, failure_of("99999999999999999999"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, failure_of("2#102"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, failure_of("1.0e999"));
+    auto cs = codes();
+    ASSERT_EQ(7u, cs.size());
+
+    auto r = eval_const_value("1 / 0 + 5");
+    EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+    EXPECT_EQ(ValueKind::Int, r.value.kind);
+    EXPECT_EQ(5, r.value.i);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()); // "division by zero"
+
+    // A failure does not leak into the next evaluation.
+    EXPECT_EQ(Issue::Code::SUCCESS, failure_of("1"));
+
+    // {#if} keeps its result for the literal-error cases (F7).
+    EXPECT_EQ(1LL, eval_const_expr("99999999999999999999 > 0"));
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code());
+}
+
+// ---- Float literal range: subnormals are accepted, zero/inf results are PP52 ----
+// std::stod throws on ERANGE, and glibc sets ERANGE for subnormal results while
+// the UCRT does not, so the outcome used to differ per platform. The lexer now
+// uses strtod and reports only a true overflow (+-HUGE_VAL) or an underflow
+// to exactly zero from a nonzero literal.
+
+TEST_F(ConstfoldTest, FloatLiteralSubnormalIsAccepted) {
+    EXPECT_NE(0LL, eval_const_expr("1.0e-310 > 0.0"));
+    EXPECT_TRUE(empty());
+    EXPECT_NE(0LL, eval_const_expr("2.0e-308 > 0.0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, FloatLiteralUnderflowToZeroIsPP52) {
+    EXPECT_THROW(eval_const_expr("1.0e-400 = 0.0"), Issue::Exception);
+    EXPECT_NE(std::string::npos,
+              message().find("PP52: Invalid expression; 'float literal underflow: 1.0e-400'"));
+}
+
+TEST_F(ConstfoldTest, FloatLiteralZeroIsNotUnderflow) {
+    EXPECT_NE(0LL, eval_const_expr("0.0e-400 = 0.0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, FloatLiteralOverflowIsPP52) {
+    EXPECT_THROW(eval_const_expr("1.0e400 = 0.0"), Issue::Exception);
+    EXPECT_NE(std::string::npos,
+              message().find("PP52: Invalid expression; 'float literal overflow: 1.0e400'"));
+}
+
+TEST_F(ConstfoldTest, FloatLiteralRangeErrorsContinueWithZero) {
+    Issue::ContinueMode guard({});
+    // After PP52 the literal evaluates as 0.0, so the comparison is true and
+    // the failure code is reported (SPEC section 6).
+    for (const char* expr : {"1.0e-400 = 0.0", "1.0e400 = 0.0"}) {
+        auto r = eval_const_value(expr);
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, r.failure) << expr;
+        EXPECT_EQ(ValueKind::Bool, r.value.kind) << expr;
+        EXPECT_TRUE(r.value.b) << expr;
+    }
+}
+
+TEST_F(ConstfoldTest, FloatLiteralSmallestSubnormalBoundary) {
+    Issue::ContinueMode guard({});
+    // 4.9e-324 rounds to the smallest subnormal (accepted); 2.4e-324 rounds
+    // to zero (PP52).
+    auto ok = eval_const_value("4.9e-324 > 0.0");
+    EXPECT_EQ(Issue::Code::SUCCESS, ok.failure);
+    EXPECT_TRUE(ok.value.b);
+    auto bad = eval_const_value("2.4e-324 = 0.0");
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, bad.failure);
 }

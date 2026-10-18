@@ -169,6 +169,37 @@ TEST_F(SmokeTest, StdinPipe) {
         << "stdout: " << r.out;
 }
 
+// ---- 5a. stdin is read in binary mode (B2) ----
+//
+// The Windows CRT opens stdin in text mode, where byte 0x1A (Ctrl+Z) ends the
+// input, so `printf 'aa\x1abb\n' | jiepp -P` printed only "aa" and exited 0
+// while the same bytes passed as a file were read completely. main() now
+// switches stdin to binary mode, as it already does for stdout.
+
+TEST_F(SmokeTest, StdinCtrlZIsNotEndOfInput) {
+    fs::path input = tmp_dir_ / "stdin_ctrlz.iec";
+    write_file(input, std::string("aa\x1a" "bb\n"));
+
+    auto r = run("-P", input.generic_string());
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, std::string("aa\x1a" "bb\n")) << "stdout: " << r.out;
+}
+
+TEST_F(SmokeTest, StdinCrlfMatchesFileInput_Guard) {
+    // Guard (passes before the change too): CRLF input gives the same stdout
+    // from stdin and from a file, including __LINE__, so binary stdin does not
+    // change the line accounting.
+    fs::path input = tmp_dir_ / "stdin_crlf.iec";
+    write_file(input, "a\r\n__LINE__\r\n{#define X 1}\r\nX __LINE__\r\nb\r\n");
+
+    auto from_file = run("-P \"" + input.generic_string() + "\"");
+    auto from_stdin = run("-P", input.generic_string());
+    EXPECT_EQ(from_file.exit_code, 0) << "stderr: " << from_file.err;
+    EXPECT_EQ(from_stdin.exit_code, 0) << "stderr: " << from_stdin.err;
+    EXPECT_EQ(from_file.out, from_stdin.out);
+    EXPECT_NE(from_stdin.out.find("4"), std::string::npos) << "stdout: " << from_stdin.out;
+}
+
 // ---- 5b. stdin display name is "<stdin>", never the literal "-" ----
 //
 // H: gcc/clang both report "<stdin>" for __FILE__/line markers when the
@@ -659,3 +690,803 @@ TEST_F(SmokeTest, DefaultStepLimitStopsDoublingBombQuickly) {
     EXPECT_LE(secs, 10.0) << "took " << secs << " s";
 }
 #endif
+
+// ---- A2 / S-02: nested pragma brace diagnostics through the CLI ----
+
+namespace {
+
+std::size_t count_lines_with(const std::string& s, const std::string& needle) {
+    std::istringstream lines(s);
+    std::string line;
+    std::size_t n = 0;
+    while (std::getline(lines, line))
+        if (line.find(needle) != std::string::npos)
+            ++n;
+    return n;
+}
+
+} // namespace
+
+// '{' x 1000: each pragma body is re-lexed until PP60 stops the recursion at
+// depth 256. Before the fix every level reported every remaining '{' again
+// (224104 PP22 lines, 44 MB of stderr; 14.0-15.8 s measured on Release on
+// the development machine). Now the source
+// lex and the first re-lex report the raw braces (999 + 998) and every
+// level reports its own unclosed pragma once (257 levels): 2254 lines.
+// --error-limit 0 (P2-4): the default limit of 1000 would stop at PP65 before
+// the 2254 PP22 lines this test counts.
+TEST_F(SmokeTest, NestedBracePragmaDiagnosticsAreLinear) {
+    fs::path input = tmp_dir_ / "nested_brace_1000.iec";
+    write_file(input, std::string(1000, '{') + "x\n");
+
+    auto r = run("--error-limit 0 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(count_lines_with(r.err, ": PP22:"), 2254u);
+    EXPECT_EQ(count_lines_with(r.err, ": PP60:"), 1u);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 2255);
+}
+
+// Guard (design review H2): the only diagnostic of this input is a PP22 for
+// an unclosed "${" pragma found while re-lexing a closed nested pragma in a
+// rescanned macro argument; the run must still fail.
+TEST_F(SmokeTest, RescannedPragmaUnclosedEscapedOpenerStillFails) {
+    fs::path input = tmp_dir_ / "rescanned_escaped_opener.iec";
+    write_file(input, "{#define N ${z$}}\n"
+                      "{#define QM ${B $$N$}}\n"
+                      "{#define PM ${ QM $}}\n"
+                      "{#define F(x) x}\n"
+                      "F(PM)\n");
+
+    auto r = run("-P --pp-output-pragma-style standard \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(r.out, "{{B ${z}}} }\n");
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find(": PP22: Invalid syntax for pragma; '{z'"), std::string::npos)
+        << "stderr: " << r.err;
+}
+
+// Guard: a pragma whose text was rewritten by expansion is re-lexed with
+// every diagnostic when rescanned; the raw '{' it reports is the only error.
+TEST_F(SmokeTest, RewrittenPragmaRescanStillFails) {
+    fs::path input = tmp_dir_ / "rewritten_pragma_rescan.iec";
+    write_file(input, "{#define F(x) x}\n"
+                      "{#define E}\n"
+                      "{#define B ${b$}}\n"
+                      "{#define S(x) @x}\n"
+                      "{#define S2(x) S(x)}\n"
+                      "{#define M() ${q S2(B)$}}\n"
+                      "{#define IN ${ M E () $}}\n"
+                      "{#define OUT ${ F E (IN) $}}\n"
+                      "F(OUT)\n");
+
+    auto r = run("-P --pp-output-pragma-style standard \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "{{{q '{b}'} } }\n");
+    EXPECT_EQ(count_lines_with(r.err, ": PP22: Invalid syntax for pragma; '{'"), 1u)
+        << "stderr: " << r.err;
+    EXPECT_EQ(count_lines_with(r.err, ": PP29:"), 2u) << "stderr: " << r.err;
+}
+
+#ifndef JIEPP_SANDBOX
+// Guard (design review H1): PP23 for an unclosed directive found by a deeper
+// re-lex is always reported ({#ignore} is restricted in sandbox builds).
+TEST_F(SmokeTest, UnclosedDirectiveInDeepRelexKeepsPP23) {
+    fs::path input = tmp_dir_ / "deep_relex_pp23.iec";
+    write_file(input, "{#ignore PP22}\n{ { {#define Q 1 }\nQ\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(count_lines_with(r.err, ": PP23:"), 1u) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find(": PP23: Invalid preprocessor syntax; '{#define Q 1 '"),
+              std::string::npos) << "stderr: " << r.err;
+    // The source lex runs before {#ignore PP22} takes effect.
+    EXPECT_EQ(count_lines_with(r.err, ": PP22:"), 2u) << "stderr: " << r.err;
+}
+#endif
+
+// ---- F2: deeply nested __VA_OPT__ reports PP63 instead of crashing ----
+//
+// Nested __VA_OPT__ is PP37, but with PP37 ignored or in continue mode its
+// content is still substituted, recursing subst() -> subst() once per level
+// without passing through expand()'s stack check. 5000 levels exhaust a
+// 1 MiB stack (--recursion-limit 128) in both Debug and Release on every OS
+// (768 KiB / 5000 is about 157 bytes per level); before the fix the process
+// crashed. --max-expansion-steps 0 keeps PP64 (the k(k-1)/2 PP37 step
+// charges) from stopping the run first.
+
+namespace {
+
+std::string nested_va_opt_source(const std::string& prefix, int k) {
+    std::string src = prefix + "{#define M(...) ";
+    for (int i = 0; i < k; ++i)
+        src += "__VA_OPT__(";
+    src += "x";
+    src += std::string(static_cast<std::size_t>(k), ')');
+    src += "}M(1) after_m\n";
+    return src;
+}
+
+} // namespace
+
+#ifndef JIEPP_SANDBOX
+TEST_F(SmokeTest, NestedVaOptIgnoredPP37ReportsPP63NotCrash) {
+    fs::path input = tmp_dir_ / "nested_va_opt_ignored.iec";
+    write_file(input, nested_va_opt_source("{#ignore PP37}", 5000));
+
+    auto r = run("--recursion-limit 128 --max-expansion-steps 0 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    // The depth figure counts expand() nesting only, so it is not pinned.
+    EXPECT_NE(r.err.find("PP63: Stack nearly exhausted; 'expansion depth "), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.err.find("retry with --recursion-limit greater than 128'"), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.err.find("PP37"), std::string::npos) << "stderr: " << r.err.substr(0, 2000);
+    // The run stopped inside M(1): nothing after it was output.
+    EXPECT_EQ(r.out.find("after_m"), std::string::npos);
+}
+#endif
+
+// Same input without {#ignore} (restricted in sandbox builds): the CLI's
+// continue mode counts each PP37 and keeps substituting, so a sandboxed web
+// deployment crashed too. --silent keeps the PP37 lines (millions of them
+// before the stack runs low) off stderr. The RobustnessTest* fixture name
+// matches the sandbox test presets' filter ^(Sandbox|RobustnessTest), so
+// this runs in both normal and sandbox builds.
+// --error-limit 0 (P2-4) keeps the PP63 path exercised: with the default
+// limit (100 in a sandbox build) the run would stop at PP65 before the stack
+// runs low, which also gives rc=1 and is indistinguishable under --silent.
+class RobustnessTestSmoke : public SmokeTest {};
+
+TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsPP63NotCrash) {
+    fs::path input = tmp_dir_ / "nested_va_opt_continue.iec";
+    write_file(input, nested_va_opt_source("", 5000));
+
+    auto r = run("--silent --error-limit 0 --recursion-limit 128 --max-expansion-steps 0 \"" +
+                 input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.out.find("after_m"), std::string::npos);
+}
+
+// __nosplit (SPEC 12.11) nested 1000 deep: each level is one expand() call
+// (invoke() expands the joined arguments), so the stack guard reports PP63
+// instead of the process crashing. Nothing is reported before PP63, so no
+// --silent: the single stderr line must be the PP63 one (not PP60/PP64 or an
+// option error, which would also give rc=1). --max-expansion-depth and
+// --max-expansion-steps are CLI options, accepted in sandbox builds too.
+// PP63 fires at a depth of about 170 (Debug) to 400 (Release) here; every
+// level re-collects the rest of the input, so 1000 levels keep the margin
+// without the quadratic cost of a deeper input.
+TEST_F(RobustnessTestSmoke, NestedNosplitReportsPP63NotCrash) {
+    const int k = 1000;
+    std::string src;
+    for (int i = 0; i < k; ++i)
+        src += "__nosplit(";
+    src += "x";
+    src += std::string(static_cast<std::size_t>(k), ')');
+    src += " after_n\n";
+    fs::path input = tmp_dir_ / "nested_nosplit.iec";
+    write_file(input, src);
+
+    auto r = run("--recursion-limit 128 --max-expansion-depth 100000 --max-expansion-steps 0 \"" +
+                 input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    // The depth figure counts expand() nesting only, so it is not pinned.
+    EXPECT_NE(r.err.find("PP63: Stack nearly exhausted; 'expansion depth "), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.err.find("retry with --recursion-limit greater than 128'"), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.err.find("PP60"), std::string::npos) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.out.find("after_n"), std::string::npos);
+}
+
+// ---- P2-4: --error-limit (PP65) ----
+
+namespace {
+
+std::string repeated_error_source(int n) {
+    std::string src = "A\n";
+    for (int i = 0; i < n; ++i)
+        src += "{#error e}\n";
+    return src;
+}
+
+}  // namespace
+
+// Five errors with a limit of 2: two PP91 lines, then PP65 in place of the
+// third error. The output built so far is still written to stdout.
+TEST_F(SmokeTest, ErrorLimitOption) {
+    fs::path input = tmp_dir_ / "error_limit.iec";
+    write_file(input, repeated_error_source(5));
+
+    for (const char* spelling : {"--error-limit", "--error_limit"}) {
+        SCOPED_TRACE(spelling);
+        auto r = run(std::string("-P ") + spelling + " 2 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+        EXPECT_EQ(count_lines_with(r.err, ": PP91:"), 2u) << "stderr: " << r.err;
+        EXPECT_EQ(count_lines_with(r.err, ": PP65: Too many errors emitted, stopping now"), 1u)
+            << "stderr: " << r.err;
+        EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 3) << "stderr: " << r.err;
+        EXPECT_NE(r.err.find("limit 2; use --error-limit N to raise it (0 = no limit)"),
+                  std::string::npos) << "stderr: " << r.err;
+        // PP65 is reported at the error it stopped at (the third, line 4).
+        EXPECT_NE(r.err.find("error_limit.iec:4.0: error: PP65:"), std::string::npos)
+            << "stderr: " << r.err;
+        EXPECT_NE(r.out.find("A"), std::string::npos) << "stdout: " << r.out;
+    }
+}
+
+TEST_F(SmokeTest, ErrorLimitSilent) {
+    fs::path input = tmp_dir_ / "error_limit_silent.iec";
+    write_file(input, repeated_error_source(5));
+
+    auto r = run("--silent --error-limit 2 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, ErrorLimitZeroAndExactCount) {
+    fs::path input = tmp_dir_ / "error_limit_exact.iec";
+    write_file(input, repeated_error_source(5));
+
+    // Exactly N errors: no PP65.
+    auto r = run("--error-limit 5 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(count_lines_with(r.err, ": PP91:"), 5u) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("PP65"), std::string::npos) << "stderr: " << r.err;
+    // 0 = unlimited.
+    r = run("--error-limit 0 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(count_lines_with(r.err, ": PP91:"), 5u) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("PP65"), std::string::npos) << "stderr: " << r.err;
+}
+
+// The default (1000 in a normal build, 100 in a sandbox build) applies when
+// the option is absent. The RobustnessTest* fixture runs in both builds.
+TEST_F(RobustnessTestSmoke, ErrorLimitDefault) {
+    fs::path input = tmp_dir_ / "error_limit_default.iec";
+    write_file(input, repeated_error_source(1001));
+
+#ifdef JIEPP_SANDBOX
+    const std::size_t expected = 100;
+#else
+    const std::size_t expected = 1000;
+#endif
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(count_lines_with(r.err, ": PP91:"), expected);
+    EXPECT_EQ(count_lines_with(r.err, ": PP65:"), 1u);
+}
+
+// ---- --max-include-count (PP66) ----
+//
+// `{#include}` does not exist in sandbox builds (PP62), so these are normal
+// build tests.
+
+#ifndef JIEPP_SANDBOX
+// Only the NDEBUG tests below use FAN_OUT_SOURCE; defining it in a Debug build
+// would trigger -Wunused-const-variable (an error with warnings-as-errors).
+#ifdef NDEBUG
+namespace {
+
+// A self-include that fans out: every level includes the file twice until
+// __INCLUDE_LEVEL__ reaches 18, so about 2^19 includes. No {#ignore}: PP12
+// cannot be suppressed. Before PP66 this took 95 s on the development machine
+// (Release) and ended in PP64 (expansion steps); D=14 took 3.2 s and rc 0.
+const char* const FAN_OUT_SOURCE =
+    "{#if __INCLUDE_LEVEL__ < 18}\n"
+    "{#include 'fan2.iec'}\n"
+    "{#include 'fan2.iec'}\n"
+    "{#endif}\n";
+
+}  // namespace
+#endif
+
+#ifdef NDEBUG  // about 37 s in a Debug build
+// The default (10000) stops the fan-out with exactly one PP66.
+TEST_F(SmokeTest, IncludeFanOutStopsAtDefaultCount) {
+    fs::path input = tmp_dir_ / "fan2.iec";
+    write_file(input, FAN_OUT_SOURCE);
+
+    auto r = run("-P --max-include-depth 100 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(count_lines_with(r.err, ": PP66: Maximum include count exceeded"), 1u)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.err.find("limit 10000; use --max-include-count N to raise it (0 = no limit)"),
+              std::string::npos) << "stderr: " << r.err.substr(0, 2000);
+}
+#endif
+
+#ifdef NDEBUG
+// Timing guard. Before PP66 existed this input took 95 s, and before
+// --max-include-count existed the option itself was PP70 and the run ended at
+// once, so "under 3 s" alone would pass before the fix: the RED is that no
+// PP66 appears, hence rc 1 and exactly one PP66 are required as well. After
+// the fix 1000 includes take well under a second.
+TEST_F(SmokeTest, IncludeFanOut_TimingGuard) {
+    fs::path input = tmp_dir_ / "fan2.iec";
+    write_file(input, FAN_OUT_SOURCE);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    auto r = run("-P --max-include-count 1000 \"" + input.generic_string() + "\"");
+    const double secs =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(count_lines_with(r.err, ": PP66:"), 1u) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_LT(secs, 3.0) << "took " << secs << " s";
+}
+#endif
+
+TEST_F(SmokeTest, MaxIncludeCountOption) {
+    write_file(tmp_dir_ / "inc.iec", "X\n");
+    fs::path input = tmp_dir_ / "three.iec";
+    write_file(input, "{#include 'inc.iec'}\n{#include 'inc.iec'}\n{#include 'inc.iec'}\n");
+
+    for (const char* spelling : {"--max-include-count", "--max_include_count"}) {
+        SCOPED_TRACE(spelling);
+        auto r = run(std::string("-P ") + spelling + " 2 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+        EXPECT_EQ(count_lines_with(r.err, ": PP66:"), 1u) << "stderr: " << r.err;
+        // The PP66 is reported at the third directive (line 3).
+        EXPECT_NE(r.err.find("three.iec:3.0: error: PP66:"), std::string::npos) << "stderr: " << r.err;
+
+        r = run(std::string("-P ") + spelling + " 3 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+        EXPECT_EQ(r.out, "X\nX\nX\n");
+
+        r = run(std::string("-P ") + spelling + " 0 \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    }
+}
+
+// -include files are not counted, only executed {#include} directives.
+TEST_F(SmokeTest, MaxIncludeCountIgnoresCommandLineInclude) {
+    write_file(tmp_dir_ / "inc.iec", "X\n");
+    write_file(tmp_dir_ / "pre1.iec", "P1\n");
+    write_file(tmp_dir_ / "pre2.iec", "P2\n");
+    fs::path input = tmp_dir_ / "one.iec";
+    write_file(input, "{#include 'inc.iec'}\n");
+
+    auto r = run("-P --max-include-count 1 -include \"" + (tmp_dir_ / "pre1.iec").generic_string() +
+                 "\" -include \"" + (tmp_dir_ / "pre2.iec").generic_string() + "\" \"" +
+                 input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "P1\nP2\nX\n");
+}
+
+// A {#include} inside a -include file is an executed directive and is counted.
+TEST_F(SmokeTest, MaxIncludeCountCountsIncludeInsideCommandLineInclude) {
+    write_file(tmp_dir_ / "inc.iec", "X\n");
+    write_file(tmp_dir_ / "pre.iec", "{#include 'inc.iec'}\n");
+    fs::path input = tmp_dir_ / "body.iec";
+    write_file(input, "{#include 'inc.iec'}\n");
+
+    const std::string args = "-P -include \"" + (tmp_dir_ / "pre.iec").generic_string() +
+                             "\" \"" + input.generic_string() + "\"";
+    auto r = run("--max-include-count 1 " + args);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_EQ(count_lines_with(r.err, ": PP66:"), 1u) << "stderr: " << r.err;
+
+    r = run("--max-include-count 2 " + args);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+}
+#endif
+
+// ---- U1: re-lex diagnostics are reported at the file and line of the
+// directive or pragma being processed ----
+
+#ifndef JIEPP_SANDBOX
+// The pragma's PP20 is reported in the included file at its own '{' line,
+// and the includer's at its own line (not at line 1 of either).
+TEST_F(SmokeTest, RelexDiagnosticInIncludedFileAtPragmaLine) {
+    write_file(tmp_dir_ / "inc.iec", "x\n\n{ (* inc }\n");
+    fs::path input = tmp_dir_ / "o.iec";
+    write_file(input, "a\n{#include \"inc.iec\"}\n{ (* top }\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("inc.iec:3.0: error: PP20: Unclosed comment; '(* inc '"), std::string::npos)
+        << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("o.iec:3.0: error: PP20: Unclosed comment; '(* top '"), std::string::npos)
+        << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 2) << "stderr: " << r.err;
+}
+#endif
+
+// ---- PP10-PP14 cannot be suppressed by {#ignore} (SPEC 10) ----
+
+#ifndef JIEPP_SANDBOX
+TEST_F(SmokeTest, IgnoredPP10CannotHideUnopenableOutputFile) {
+    fs::path input = tmp_dir_ / "ign_o.iec";
+    write_file(input, "{#ignore PP10}\nx := 1;\n");
+    fs::path bad_out = tmp_dir_ / "no_such_dir" / "x.out";
+
+    auto r = run("-o \"" + bad_out.generic_string() + "\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP10"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_FALSE(fs::exists(bad_out));
+    EXPECT_FALSE(fs::exists(bad_out.parent_path()));
+}
+
+TEST_F(SmokeTest, IgnoredPP10CannotHideUnopenableDependencyFile) {
+    fs::path input = tmp_dir_ / "ign_mf.iec";
+    write_file(input, "{#ignore PP10}\nx := 1;\n");
+    fs::path bad_dep = tmp_dir_ / "no_such_dir" / "x.d";
+    fs::path out = tmp_dir_ / "ign_mf_out.iec";
+
+    auto r = run("-MD -MF \"" + bad_dep.generic_string() + "\" -o \"" + out.generic_string() +
+                 "\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP10"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_FALSE(fs::exists(bad_dep));
+    EXPECT_FALSE(fs::exists(bad_dep.parent_path()));
+    EXPECT_FALSE(fs::exists(out));
+}
+
+TEST_F(SmokeTest, IgnoredPP11CannotHideMissingInclude) {
+    fs::path input = tmp_dir_ / "ign_inc.iec";
+    write_file(input, "{#ignore PP11}\n{#include \"missing_header.iec\"}\nx := 1;\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP11"), std::string::npos) << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, IgnoredPP14CannotHideDirectoryInclude) {
+    fs::create_directories(tmp_dir_ / "adir");
+    fs::path input = tmp_dir_ / "ign_dir.iec";
+    write_file(input, "{#ignore PP14}\n{#include \"adir\"}\nx := 1;\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP14"), std::string::npos) << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, IgnoredPP12CannotHideIncludeDepthExceeded) {
+    fs::path input = tmp_dir_ / "ign_depth.iec";
+    write_file(input, "{#ignore PP12}\n{#include \"ign_depth.iec\"}\nx := 1;\n");
+
+    auto r = run("--max-include-depth 3 \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP12"), std::string::npos) << "stderr: " << r.err;
+}
+#endif
+
+// ---- P2-3: control characters in diagnostics (normal builds) ----
+
+#ifndef JIEPP_SANDBOX
+namespace {
+
+// True when s holds a byte a diagnostic must not carry: a C0 control other
+// than TAB and LF (on Windows a CR is allowed right before an LF: the CRT
+// text mode writes CR LF to stderr), DEL, or the UTF-8 C1 pair C2 80 - C2 9F.
+bool has_forbidden_diagnostic_byte(const std::string& s) {
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const auto c = static_cast<unsigned char>(s[i]);
+#ifdef _WIN32
+        // Only the Windows CRT text mode turns a diagnostic's LF into CR LF.
+        if (c == '\r' && i + 1 < s.size() && s[i + 1] == '\n')
+            continue;
+#endif
+        if ((c < 0x20 && c != '\t' && c != '\n') || c == 0x7F)
+            return true;
+        if (c == 0xC2 && i + 1 < s.size()) {
+            const auto n = static_cast<unsigned char>(s[i + 1]);
+            if (n >= 0x80 && n <= 0x9F)
+                return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+// Before the fix the raw ESC, DEL, C2 9B and the LF of the unclosed comment
+// reached stderr as they were.
+TEST_F(SmokeTest, DiagnosticsHaveNoControlBytes) {
+    fs::path input = tmp_dir_ / "ctl_bytes.iec";
+    write_file(input, "{#line a\x1B[31mX}\n"
+                      "{#define A\x7F" "b 1}\n"
+                      "{#line a\xC2\x9B" "b}\n"
+                      "{#error m\x1B" "x}\n"
+                      "(* unclosed\nmore\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_FALSE(has_forbidden_diagnostic_byte(r.err)) << "stderr: " << r.err;
+    // One diagnostic per line: PP20, PP41, PP38, PP41, PP91.
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 5) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP20: Unclosed comment; '(* unclosed$nmore$n'"), std::string::npos)
+        << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("'a$1B[31mX'"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("'A$7Fb 1'"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("'a$C2$9Bb'"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP91: 'm$1Bx'"), std::string::npos) << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, DiagnosticsPathLineBreakEscaped) {
+    fs::path input = tmp_dir_ / "ctl_path.iec";
+    write_file(input, "{#include 'no$nsuch.iec'}\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP11: No such file or directory; 'no$nsuch.iec'"), std::string::npos)
+        << "stderr: " << r.err;
+}
+#endif
+
+// ---- Windows: UTF-8 application manifest (activeCodePage) ----
+//
+// jiepp.exe embeds a manifest with activeCodePage=UTF-8, so on Windows 10
+// 1903+ its narrow strings (argv, std::filesystem paths, ifstream names) are
+// UTF-8 instead of the ANSI code page. These tests spawn jiepp.exe with
+// CreateProcessW so the command line can carry characters the ANSI code page
+// of jiepp_test itself (932 locally, 1252 on CI) cannot represent. File names
+// are built from u8 string literals holding raw UTF-8 characters, or universal
+// character names (\u form) for emoji and C1 controls, so that jiepp_test's own
+// ACP does not matter (the source file itself is UTF-8).
+//
+// CI note: .github/workflows/ci.yml has no Windows sandbox job, so the
+// sandbox builds of these tests are only exercised locally.
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+namespace {
+
+struct WinRunResult {
+    int exit_code = -1;
+    bool timed_out = false;
+    std::string out;
+    std::string err;
+};
+
+std::string u8_to_string(const std::u8string& s) {
+    return std::string(reinterpret_cast<const char*>(s.data()), s.size());
+}
+
+std::string slurp_file(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return {std::istreambuf_iterator<char>(f), {}};
+}
+
+// Runs `exe` through CreateProcessW. `args` is the command line after the
+// quoted executable path (the caller quotes arguments); it is copied into a
+// writable std::wstring because CreateProcessW may modify its buffer. `cwd`
+// (when not empty) becomes lpCurrentDirectory. stdout and stderr go to files
+// under `scratch` through inheritable handles (two pipes read one after the
+// other could deadlock); stdin is NUL. After 30 seconds the process is
+// terminated and timed_out is set.
+WinRunResult run_w(const fs::path& exe, const std::wstring& args,
+                   const fs::path& cwd, const fs::path& scratch) {
+    WinRunResult res;
+    fs::path out_f = scratch / "run_w_stdout.txt";
+    fs::path err_f = scratch / "run_w_stderr.txt";
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE h_in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE h_out = CreateFileW(out_f.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE h_err = CreateFileW(err_f.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h_in == INVALID_HANDLE_VALUE || h_out == INVALID_HANDLE_VALUE ||
+        h_err == INVALID_HANDLE_VALUE) {
+        for (HANDLE h : {h_in, h_out, h_err})
+            if (h != INVALID_HANDLE_VALUE)
+                CloseHandle(h);
+        res.err = "run_w: cannot open the redirection handles";
+        return res;
+    }
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = h_in;
+    si.hStdOutput = h_out;
+    si.hStdError = h_err;
+    PROCESS_INFORMATION pi{};
+
+    std::wstring cmd = L"\"" + exe.wstring() + L"\" " + args;
+    BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, 0, nullptr,
+                             cwd.empty() ? nullptr : cwd.c_str(), &si, &pi);
+    // The child holds its own copies of the handles.
+    CloseHandle(h_in);
+    CloseHandle(h_out);
+    CloseHandle(h_err);
+    if (!ok) {
+        res.err = "run_w: CreateProcessW failed, error " + std::to_string(GetLastError());
+        return res;
+    }
+
+    const DWORD waited = WaitForSingleObject(pi.hProcess, 30000);
+    if (waited == WAIT_FAILED) {
+        res.err = "run_w: WaitForSingleObject failed, error " + std::to_string(GetLastError());
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return res;
+    }
+    if (waited == WAIT_TIMEOUT) {
+        res.timed_out = true;
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 5000);
+    }
+    DWORD code = 0;
+    if (GetExitCodeProcess(pi.hProcess, &code))
+        res.exit_code = static_cast<int>(code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    res.out = slurp_file(out_f);
+    res.err = slurp_file(err_f);
+    return res;
+}
+
+} // namespace
+
+TEST_F(RobustnessTestSmoke, WindowsManifestActiveCodePageUtf8) {
+    HMODULE h = LoadLibraryExW(exe_.c_str(), nullptr,
+                               LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    ASSERT_NE(h, nullptr) << "LoadLibraryExW failed, error " << GetLastError();
+    std::string manifest;
+    // RT_MANIFEST (24) is an ANSI-typed macro in a non-UNICODE build.
+    HRSRC rsrc = FindResourceW(h, MAKEINTRESOURCEW(1), MAKEINTRESOURCEW(24));
+    if (rsrc != nullptr) {
+        HGLOBAL g = LoadResource(h, rsrc);
+        const DWORD size = SizeofResource(h, rsrc);
+        if (g != nullptr) {
+            const void* data = LockResource(g);
+            if (data != nullptr)
+                manifest.assign(static_cast<const char*>(data), size);
+        }
+    }
+    FreeLibrary(h);
+
+    ASSERT_FALSE(manifest.empty()) << "no RT_MANIFEST resource with ID 1 in " << exe_;
+    EXPECT_NE(manifest.find("activeCodePage"), std::string::npos) << manifest;
+    EXPECT_NE(manifest.find(">UTF-8</activeCodePage>"), std::string::npos) << manifest;
+    // Windows silently ignores a setting in a wrong namespace.
+    EXPECT_NE(manifest.find("http://schemas.microsoft.com/SMI/2019/WindowsSettings"),
+              std::string::npos)
+        << manifest;
+}
+
+TEST_F(RobustnessTestSmoke, WindowsArgvNonAnsiPath) {
+    // Hangul and an emoji: neither exists in CP932 or CP1252.
+    const std::u8string name8 = u8"한\U0001F600.iec";
+    const std::string name = u8_to_string(name8);
+    write_file(tmp_dir_ / fs::path(name8), "F __FILE__\n");
+
+    // 1. -P: __FILE__ is the argv bytes, as UTF-8.
+    auto r = run_w(exe_, L"-P \"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_FALSE(r.timed_out);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "F '" + name + "'\n") << "stderr: " << r.err;
+
+    // 2. Without -P the line marker carries the UTF-8 name.
+    r = run_w(exe_, L"\"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("'" + name + "'"), std::string::npos) << r.out;
+
+    // 3. -D values are UTF-8 too (a CP932 value could contain a '{' byte).
+    write_file(tmp_dir_ / "v.iec", "V\n");
+    r = run_w(exe_, L"-P \"-DV=한\" v.iec", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, u8_to_string(u8"한") + "\n") << "stderr: " << r.err;
+
+    // 4. -o with a non-ANSI name creates that file.
+    const std::u8string out8 = u8"out_한.txt";
+    r = run_w(exe_, L"-P -o \"" + fs::path(out8).wstring() + L"\" v.iec", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_TRUE(fs::exists(tmp_dir_ / fs::path(out8)));
+    EXPECT_EQ(slurp_file(tmp_dir_ / fs::path(out8)), "V\n");
+}
+
+TEST_F(RobustnessTestSmoke, WindowsArgvNoBestFit) {
+    // Guard on code page 1252 (every character below exists there, so it
+    // passes before and after the manifest); it fails on code page 932,
+    // where the ANSI conversion of argv replaced the characters.
+    write_file(tmp_dir_ / "u.iec", "DECOY\n");
+    const std::u8string uuml8 = u8"ü.iec";
+    write_file(tmp_dir_ / fs::path(uuml8), "REAL\n");
+    auto r = run_w(exe_, L"-P \"" + fs::path(uuml8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "REAL\n") << "stderr: " << r.err;
+
+    // A yen sign must stay a character: best-fit conversion to a backslash
+    // would turn this into the path sub\..\a.iec, which resolves to a.iec.
+    write_file(tmp_dir_ / "a.iec", "A\n");
+    r = run_w(exe_, L"-P \"sub¥..¥" L"a.iec\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 1) << "stdout: " << r.out;
+    EXPECT_NE(r.err.find("PP11"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.out.find('A'), std::string::npos) << "stdout: " << r.out;
+}
+
+#ifndef JIEPP_SANDBOX
+TEST_F(SmokeTest, WindowsSourceIncludeNonAsciiName) {
+    // The file name comes from the source text (UTF-8), not from argv.
+    const std::u8string inc8 = u8"日本語.inc";
+    const std::string inc = u8_to_string(inc8);
+    write_file(tmp_dir_ / fs::path(inc8), "JP_INC\n");
+    write_file(tmp_dir_ / "main.iec",
+               "{#include '" + inc + "'}\n"
+               "{#if __has_include('" + inc + "')}HAS{#endif}\n");
+    auto r = run_w(exe_, L"-P main.iec", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "JP_INC\nHAS\n") << "stderr: " << r.err;
+}
+
+TEST_F(SmokeTest, WindowsCwdNonAsciiDir) {
+    // fs::current_path() converts through the ANSI code page: a working
+    // directory the code page cannot represent made the run fail with PP01.
+    const std::u8string dir8 = u8"cwd_한";
+    const std::u8string sub8 = u8"sub_한";
+    const std::string sub = u8_to_string(sub8);
+    fs::path cwd = tmp_dir_ / fs::path(dir8);
+    fs::create_directories(cwd / fs::path(sub8));
+    write_file(cwd / fs::path(sub8) / "x.inc", "X_INC\n");
+    write_file(cwd / "main.iec", "{#include '" + sub + "/x.inc'}\nM\n");
+    auto r = run_w(exe_, L"-P main.iec", cwd, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "X_INC\nM\n") << "stderr: " << r.err;
+}
+
+// P2-3 (review O3): the jiepp.exe manifest makes the narrow path UTF-8, so
+// the C1 rule applies to the file name too: the U+009B (CSI) in it must not
+// reach stderr and is shown as $C2$9B. (The in-process tests run in an ANSI
+// code page and take the other branch, so only this CLI test covers it.)
+TEST_F(SmokeTest, WindowsDiagnosticPathC1Escaped) {
+    const std::u8string name8 = u8"x\u009By.iec";
+    write_file(tmp_dir_ / fs::path(name8), "{#line abc}\n");
+    auto r = run_w(exe_, L"-P \"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("x$C2$9By.iec:"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP41"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("\xC2\x9B"), std::string::npos) << "stderr: " << r.err;
+}
+#endif
+
+#ifdef JIEPP_SANDBOX
+// The jiepp.exe manifest makes its paths UTF-8, so a sandbox diagnostic
+// applies the UTF-8 C1 rule to the path: the U+009B (CSI) in the file name
+// below must not reach stderr. (The in-process tests run in an ANSI code
+// page and take the other branch of the rule, so only this CLI test covers
+// it.) The fixture name matches the sandbox presets' ^(Sandbox|RobustnessTest)
+// filter; CI has no Windows sandbox job, so this runs locally only.
+class SandboxCliUtf8PathC1Test : public SmokeTest {};
+
+TEST_F(SandboxCliUtf8PathC1Test, PathC1PairRemoved) {
+    const std::u8string name8 = u8"x\u009By.iec";
+    write_file(tmp_dir_ / fs::path(name8), "{#line abc}\n");
+    auto r = run_w(exe_, L"-P \"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("xy.iec:"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP41"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("\xC2\x9B"), std::string::npos) << "stderr: " << r.err;
+}
+
+// PP11 quotes the missing input path in its text (a sandbox build has no
+// {#include}, so the missing file comes from the command line), and the
+// diagnostic removes the C1 pair from that text too.
+TEST_F(SandboxCliUtf8PathC1Test, Pp11QuotedTextC1PairRemoved) {
+    const std::u8string name8 = u8"missing\u009B.iec";
+    auto r = run_w(exe_, L"-P \"" + fs::path(name8).wstring() + L"\"", tmp_dir_, tmp_dir_);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP11"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("missing.iec"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_EQ(r.err.find("\xC2\x9B"), std::string::npos) << "stderr: " << r.err;
+}
+#endif
+
+#endif // _WIN32
