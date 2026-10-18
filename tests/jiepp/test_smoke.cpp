@@ -965,6 +965,9 @@ TEST_F(RobustnessTestSmoke, ErrorLimitDefault) {
 // build tests.
 
 #ifndef JIEPP_SANDBOX
+// Only the NDEBUG tests below use FAN_OUT_SOURCE; defining it in a Debug build
+// would trigger -Wunused-const-variable (an error with warnings-as-errors).
+#ifdef NDEBUG
 namespace {
 
 // A self-include that fans out: every level includes the file twice until
@@ -978,6 +981,7 @@ const char* const FAN_OUT_SOURCE =
     "{#endif}\n";
 
 }  // namespace
+#endif
 
 #ifdef NDEBUG  // about 37 s in a Debug build
 // The default (10000) stops the fan-out with exactly one PP66.

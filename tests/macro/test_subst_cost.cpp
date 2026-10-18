@@ -36,14 +36,6 @@ std::string repeat(const std::string& s, int n) {
     return r;
 }
 
-// "z z z ... z" (n tokens separated by one space).
-std::string spaced_z(int n) {
-    std::string r = "z";
-    for (int i = 1; i < n; ++i)
-        r += " z";
-    return r;
-}
-
 const char* const kNested =
     "<unknown location>:1.0: error: PP37: Invalid __VA_OPT__; 'nested __VA_OPT__ is not allowed'";
 const char* const kNeedsParen =
@@ -295,6 +287,15 @@ TEST_F(SubstCostTest, VariadicBracketedArgumentIsOneArgument_Guard) {
 // pp() on the e644f7d Release build; each was RED (> 3 s).
 #ifdef NDEBUG
 namespace {
+
+// "z z z ... z" (n tokens separated by one space). Defined here, with its
+// only users, so a Debug build does not hit -Wunused-function.
+std::string spaced_z(int n) {
+    std::string r = "z";
+    for (int i = 1; i < n; ++i)
+        r += " z";
+    return r;
+}
 
 std::pair<std::string, double> timed_pp(const std::string& src) {
     auto t0 = std::chrono::steady_clock::now();
