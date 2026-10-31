@@ -2,7 +2,7 @@
 
 1.0.0 以降の変更を記録します。0.8.0 以前は GitHub Releases（https://github.com/yunos0987/jiepp/releases）を参照してください。
 
-## Unreleased
+## 1.2.0 (2026-10-31)
 
 ### 互換性に影響する変更 / Breaking changes
 
@@ -54,6 +54,7 @@
 
 ### サンプルと性能測定 / Samples and benchmarks
 
+- サンプル `iec_61131-3/samples/xml_output.iec`（`__xmlattr`・`__xmltext`・`__arg_lhs`・`__arg_rhs`・`__arg_dir`。RUNGST 形式の LD の XML）を追加
 - `bench` に `has_include_probes`（`__assert` の中の多数の `__has_include`）と `has_include_nested_malformed`（入れ子の不正な `__has_include`）を追加
 - `bench` に `trailing_indent`（空行の後ろに長い字下げが続く入力）を追加
 
