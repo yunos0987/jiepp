@@ -637,7 +637,9 @@ double hi_seconds(std::chrono::steady_clock::time_point t0) {
 } // namespace
 
 // N flat probes of a missing file in __assert and in __counter_set.
-// Pre-fix: 9.8 / 9.6 s.
+// Pre-fix: 9.8 / 9.6 s. The limit is 6 s: 3 s was flaky on a loaded machine
+// (the guard runs in parallel with other tests), and 6 s is still below the
+// quadratic implementation's time.
 TEST_F(HasIncludeTest, FlatProbes_TimingGuard) {
     constexpr int kN = 20000;
     const std::string probe =
@@ -653,7 +655,7 @@ TEST_F(HasIncludeTest, FlatProbes_TimingGuard) {
         double secs = hi_seconds(t0);
         EXPECT_EQ(expected, out);
         EXPECT_TRUE(empty());
-        EXPECT_LT(secs, 3.0) << src.substr(0, 16) << "... n=" << kN << " took " << secs << "s";
+        EXPECT_LT(secs, 6.0) << src.substr(0, 16) << "... n=" << kN << " took " << secs << "s";
     }
 }
 

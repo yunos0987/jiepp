@@ -244,7 +244,22 @@ TEST_F(IssueTest, BlockingRAII) {
 }
 
 TEST_F(IssueTest, IgnoringRAII) {
-    EXPECT_FALSE(Issue::is_ignored(Issue::Code::FILE_NOT_FOUND));
+    Issue::push({1, "test.iec"});
+    EXPECT_FALSE(Issue::is_ignored(Issue::Code::EXPR_TYPE_ERROR));
+    {
+        // Scope: EXPR_TYPE_ERROR is ignorable; FILE_NOT_FOUND (PP11) is
+        // accepted by the guard but never reported as ignored (SPEC 10).
+        Issue::Ignoring guard({Issue::Code::EXPR_TYPE_ERROR, Issue::Code::FILE_NOT_FOUND});
+        EXPECT_TRUE(Issue::is_ignored(Issue::Code::EXPR_TYPE_ERROR));
+        EXPECT_FALSE(Issue::is_ignored(Issue::Code::FILE_NOT_FOUND));
+        // An ignored code emits nothing
+        EXPECT_NO_THROW(ISSUE(EXPR_TYPE_ERROR));
+        EXPECT_TRUE(empty());
+    }
+    // Restored: EXPR_TYPE_ERROR is reported again (ERROR codes block by default)
+    EXPECT_FALSE(Issue::is_ignored(Issue::Code::EXPR_TYPE_ERROR));
+    EXPECT_THROW(ISSUE(EXPR_TYPE_ERROR), Issue::Exception);
+    EXPECT_FALSE(empty());
     Issue::pop();
 }
 
