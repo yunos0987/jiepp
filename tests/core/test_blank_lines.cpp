@@ -1,6 +1,7 @@
 #include "test_helper.hpp"
 #include "core/line_compaction.hpp"
 
+#include <chrono>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -339,3 +340,81 @@ TEST_F(BlankLinesTest, CommentInsideBlankRegionSplitsRun) {
     EXPECT_NE(std::string::npos, output.find("B 23;")) << "output:\n" << output;
     EXPECT_TRUE(empty());
 }
+
+// ---- C4: the indentation after a compacted run is kept, in order ---------
+
+namespace {
+
+std::vector<Token> blank_run_then(std::initializer_list<const char*> indentation) {
+    std::vector<Token> ots;
+    ots.push_back(Token::create(Token::ANY, "x"));
+    ots.push_back(Token::newline(10));
+    for (const char* s : indentation)
+        ots.push_back(Token::create(Token::WS, s));
+    ots.push_back(Token::create(Token::ANY, "y"));
+    return ots;
+}
+
+} // namespace
+
+TEST_F(BlankLinesTest, TrailingIndentationOrderPreserved_Guard) {
+    // Both modes drop the 10 blank lines (Markers leaves a marker line, which
+    // is not under test here) and merge the tokens after the last newline
+    // into one WS token placed right before the content.
+    for (auto mode : {jiepp::BlankLineMode::Markers, jiepp::BlankLineMode::CollapseAll}) {
+        // Tabs and spaces, and a lone " " such as -nC leaves for a removed comment.
+        auto ots = blank_run_then({"\t", "  ", " "});
+        EXPECT_TRUE(jiepp::compact_blank_lines(ots, 7, mode, false));
+        ASSERT_GE(ots.size(), 3u);
+        EXPECT_EQ("y", ots.back().text);
+        EXPECT_EQ(Token::WS, ots[ots.size() - 2].type);
+        EXPECT_EQ("\t   ", ots[ots.size() - 2].text);
+        EXPECT_EQ(0, ots[ots.size() - 2].num_of_lines);
+
+        // The removed comment's single space comes last, after longer runs.
+        ots = blank_run_then({" ", "\t\t", " "});
+        EXPECT_TRUE(jiepp::compact_blank_lines(ots, 7, mode, false));
+        ASSERT_GE(ots.size(), 3u);
+        EXPECT_EQ(" \t\t ", ots[ots.size() - 2].text);
+
+        // A single trailing token is passed through unchanged.
+        ots = blank_run_then({"    "});
+        EXPECT_TRUE(jiepp::compact_blank_lines(ots, 7, mode, false));
+        ASSERT_GE(ots.size(), 3u);
+        EXPECT_EQ("    ", ots[ots.size() - 2].text);
+
+        // The run ends with a newline: no indentation, so no WS token is added.
+        ots = blank_run_then({});
+        EXPECT_TRUE(jiepp::compact_blank_lines(ots, 7, mode, false));
+        ASSERT_GE(ots.size(), 2u);
+        EXPECT_EQ("y", ots.back().text);
+        EXPECT_NE("    ", ots[ots.size() - 2].text);
+        EXPECT_NE(0, ots[ots.size() - 2].num_of_lines);
+    }
+}
+
+// Release-only, like SubstCostTest.*_TimingGuard: a Debug build is not
+// representative of real performance.
+#ifdef NDEBUG
+TEST_F(BlankLinesTest, LongTrailingIndentationRunIsLinear_TimingGuard) {
+    constexpr int kN = 800000;
+    for (auto mode : {jiepp::BlankLineMode::Markers, jiepp::BlankLineMode::CollapseAll}) {
+        std::vector<Token> ots;
+        ots.reserve(kN + 3);
+        ots.push_back(Token::create(Token::ANY, "x"));
+        ots.push_back(Token::newline(10));
+        for (int i = 0; i < kN; ++i)
+            ots.push_back(Token::create(Token::WS, i % 2 ? "\t" : " "));
+        ots.push_back(Token::create(Token::ANY, "y"));
+
+        auto t0 = std::chrono::steady_clock::now();
+        EXPECT_TRUE(jiepp::compact_blank_lines(ots, 7, mode, false));
+        double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+
+        ASSERT_GE(ots.size(), 3u);
+        EXPECT_EQ("y", ots.back().text);
+        EXPECT_EQ(static_cast<std::size_t>(kN), ots[ots.size() - 2].text.size());
+        EXPECT_LT(secs, 3.0) << "n=" << kN << " took " << secs << "s";
+    }
+}
+#endif

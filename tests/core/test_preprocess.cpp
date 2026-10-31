@@ -9,8 +9,8 @@ class PreprocessTest : public JieppTest {};
 TEST_F(PreprocessTest, Simple) {
     // Fact: plain IEC ST source passes through with {pragmas} wrapped in (*{...}*)
     EXPECT_EQ(
-        "program Main\nvar\n    v: int;\nend_var\n(*{st}*)\nv := 1 + 2;\n(*{end}*)\nend_program\n\nprogram Sub end_program",
-        pp("program Main\nvar\n    v: int;\nend_var\n{st}\nv := 1 + 2;\n{end}\nend_program\n\nprogram Sub end_program")
+        "program Main\nvar\n    v: int;\nend_var\n(*{my_pragma}*)\nv := 1 + 2;\n(*{my_pragma}*)\nend_program\n\nprogram Sub end_program",
+        pp("program Main\nvar\n    v: int;\nend_var\n{my_pragma}\nv := 1 + 2;\n{my_pragma}\nend_program\n\nprogram Sub end_program")
     );
     EXPECT_TRUE(empty());
 }

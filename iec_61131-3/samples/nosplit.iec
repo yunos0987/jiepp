@@ -16,7 +16,6 @@ end_var
 var
     gate, rejected: int;
 end_var
-{st}
 (* A call that spans several lines is output as one line; the blank lines  *)
 (* after it keep the line numbers of the following code unchanged.         *)
 WHEN_RUNNING(
@@ -27,5 +26,4 @@ else
 gate := 0; rejected := rejected + 1;
 end_case;
 )
-{end}
 end_function_block

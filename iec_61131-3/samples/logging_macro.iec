@@ -13,11 +13,9 @@ end_var
 var
     msg: string[255];
 end_var
-{st}
 if enable then
     LOG_INFO('System started');
     LOG_WARN('Low memory', ' threshold=', STR(1024));
     LOG_ERROR('Sensor failure');
 end_if;
-{end}
 end_function_block

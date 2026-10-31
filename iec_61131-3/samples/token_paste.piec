@@ -17,8 +17,6 @@ var
     ton_0: TON;
     ton_1: TON;
 end_var
-(*{st}*)
 sensor_1 := 100;
 sensor_2 := 200;
-(*{end}*)
 end_program

@@ -7,9 +7,7 @@ program Main
 var
     line_a, line_b: int;
 end_var
-(*{st}*)
-line_a := 106;
+line_a := 105;
 (*{#:199 'virtual.iec'}*)
 line_b := 200;
-(*{end}*)
 end_program

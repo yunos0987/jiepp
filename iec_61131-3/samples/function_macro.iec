@@ -7,8 +7,6 @@ program Main
 var
     x, y, result: int;
 end_var
-{st}
 result := MAX2(x, y);
 result := CLAMP(x, 0, 100);
-{end}
 end_program

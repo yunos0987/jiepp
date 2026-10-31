@@ -8,10 +8,8 @@ var
     s1, s2, s3: string[255];
     ws: wstring;
 end_var
-(*{st}*)
 s1 := 'Hello World';
 s2 := '123 + 456';
-s3 := '13';
+s3 := '12';
 ws := "Hello World";
-(*{end}*)
 end_program

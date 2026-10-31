@@ -34,6 +34,4 @@ var
     checks_active: bool := true;
     cycle_ms: int := 10;
 end_var
-(*{st}*)
-(*{end}*)
 end_program

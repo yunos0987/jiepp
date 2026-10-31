@@ -1,0 +1,37 @@
+(* xml_output.iec - Write LD XML through macros with __xmlattr, __xmltext and __arg_* *)
+
+(* CONTACT puts its operand into an XML attribute. __xmlattr quotes the text *)
+(* and escapes & < > " ' so that the attribute stays well-formed XML.        *)
+{#define CONTACT(op) <LdObject xsi:type="Contact" operand=__xmlattr(op)/>}
+
+(* NOTE puts its text into element content. __xmltext escapes & < > only. *)
+{#define NOTE(t) <Comment>__xmltext(t)</Comment>}
+
+(* ARG splits a call argument "pin := value" (input) or "pin => var" (output) *)
+(* at the first separator. __arg_lhs is the pin, __arg_rhs is the value or    *)
+(* the variable, and __arg_dir is 0 for ":=" and 1 for "=>". The __xmlattr    *)
+(* around each part quotes it, including the number from __arg_dir.           *)
+{#define ARG(a) <Arg name=__xmlattr(__arg_lhs(a)) dir=__xmlattr(__arg_dir(a)) value=__xmlattr(__arg_rhs(a))/>}
+
+(* CALL_TON is an FB call. The two arguments become two <Arg> elements. *)
+{#define CALL_TON(inst, pt, q) <Block xsi:type="FbCall" instance=__xmlattr(inst)>ARG(pt) ARG(q)</Block>}
+
+function_block Timer
+var_input
+    start: bool;
+    mode: string;
+end_var
+var_output
+    done: bool;
+end_var
+var
+    delay: time;
+    ton1: ton;
+end_var
+{ld}
+CONTACT(mode = 'RUN' & start)
+CONTACT(delay < T#10s)
+CALL_TON(ton1, PT := T#2s, Q => done)
+NOTE(done is set when delay < 2s & start = true)
+{end}
+end_function_block

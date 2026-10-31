@@ -6,7 +6,5 @@ var
     t1: TON;
     log_flag: int;
 end_var
-(*{st}*)
 log_flag := 0;
-(*{end}*)
 end_program

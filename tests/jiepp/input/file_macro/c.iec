@@ -1,4 +1,4 @@
 
 program c
-{st}__FILE__;{end}
+__FILE__;
 end

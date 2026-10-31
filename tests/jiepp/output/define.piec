@@ -8,12 +8,12 @@ program Main
 var
     i: dint;
 end
-(*{st}*)
+
 i := 2;
 i := 2 + 3;
 i := l + 7 + 5;
 i := l + 7;
-(*{end}*)
+
 end
 
 
@@ -23,17 +23,17 @@ end
 
 
 program DefUndef
-(*{st}*)
+
 3;
-(*{end}*)
+
 end
 
 
 
 
 program fff
-(*{st}*)
+
 __FUNC__;
 __NAME__;
-(*{end}*)
+
 end

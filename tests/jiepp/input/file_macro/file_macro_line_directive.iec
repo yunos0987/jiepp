@@ -1,5 +1,5 @@
 
-{st:}
+
 __FILE__;
 {#line 2 "a.iec"}
 __FILE__;
@@ -7,4 +7,3 @@ __FILE__;
 __FILE__;
 {#line 5 "./../a.iec"}
 __FILE__;
-{end:}

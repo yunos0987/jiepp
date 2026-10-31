@@ -12,11 +12,11 @@
 }
 
 program Main
-{st}
+
 __LINE__;
 M
 +
 N;
 __LINE__;
-{end}
+
 end_program

@@ -301,13 +301,13 @@ TEST_F(LinenoTest, FmacroLineInBody) {
 
 TEST_F(LinenoTest, FmacroInvalidPragma) {
     const auto test_case = TestCase{
-        "pragma-stops-at-inner-st",
+        "pragma-stops-at-inner-pragma",
         R"(
 {#define F() $
 	function f: int $
-	{st} $
+	{my_pragma} $
 	f := 2; $
-	{end} $
+	{my_pragma} $
 	end $
 }
 )",

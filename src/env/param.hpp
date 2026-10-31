@@ -69,6 +69,25 @@ public:
     std::uint64_t include_count() const { return include_count_; }
     void          reset_include_count() { include_count_ = 0; }
 
+    // ---- Input size budget (PP67; 0 = no limit) ----
+    // Counts the raw bytes the preprocessor reads from a source (main input
+    // file, stdin, -include files, {#include}/{#sinclude} files, a library
+    // caller's stream; BOM and CR included), per preprocess()/
+    // preprocess_text() call (reset on entry) or per jiepp run (one Env). A
+    // file served from the token cache is not read and not counted again.
+    // The count is 64-bit, so it cannot overflow while the limit is an int.
+    // No in-source directive, like the step and include-count budgets.
+    void charge_input_bytes(std::uint64_t n) {
+        input_bytes_ += n;
+        if (max_input_bytes_ != 0 &&
+            input_bytes_ > static_cast<std::uint64_t>(max_input_bytes_)) [[unlikely]]
+            raise_input_bytes_exceeded();
+    }
+    void          set_max_input_bytes(int n) { max_input_bytes_ = n; }
+    int           get_max_input_bytes() const { return max_input_bytes_; }
+    std::uint64_t input_bytes() const { return input_bytes_; }
+    void          reset_input_bytes() { input_bytes_ = 0; }
+
     // ---- Conditional nesting limit ----
     int  get_max_if_nesting() const { return max_if_nesting_; }
     bool set_max_if_nesting(int n);
@@ -116,9 +135,13 @@ public:
 private:
     [[noreturn]] void raise_expansion_steps_exceeded() const;
     [[noreturn]] void raise_include_count_exceeded() const;
+    [[noreturn]] void raise_input_bytes_exceeded() const;
 
     std::uint64_t include_count_         = 0;
     int           max_include_count_     = DEFAULT_MAX_INCLUDE_COUNT;
+
+    std::uint64_t input_bytes_           = 0;
+    int           max_input_bytes_       = 0;
 
     std::uint64_t expansion_steps_       = 0;
     std::uint64_t max_expansion_steps_   = DEFAULT_MAX_EXPANSION_STEPS;

@@ -19,7 +19,6 @@ var
     door_alarm, overload_alarm: int;
     used_slots: int;
 end_var
-(*{st}*)
 edge_trig[0](CLK := start_button); start_pressed := edge_trig[0].Q;
 edge_trig[1](CLK := stop_button); stop_pressed := edge_trig[1].Q;
 edge_trig[2](CLK := door_switch); door_opened := edge_trig[2].Q;
@@ -28,5 +27,4 @@ overload_alarm := 101;
 (* __counter_peek reads a counter without advancing it *)
 used_slots := 3;
 
-(*{end}*)
 end_program

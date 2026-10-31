@@ -507,10 +507,10 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
     return subst(repl, {}, no_params, no_actuals, nullptr, new_hs, env);
 }
 
-// The call of a built-in function macro (__error/__assert/__counter*/__nosplit)
-// on its collected, flattened, unexpanded arguments. Out of line and never
-// inlined so its locals do not enlarge expand()'s frame (on the stack once per
-// nesting level). No hide set is added: __nosplit returns its arguments'
+// The call of a built-in function macro (__error/__assert/__counter*/__nosplit/
+// __xml*/__arg_*) on its collected, flattened, unexpanded arguments. Out of
+// line and never inlined so its locals do not enlarge expand()'s frame (on the
+// stack once per nesting level). No hide set is added: __nosplit returns its arguments'
 // expansion, whose tokens keep the hide sets that expansion gave them; the
 // others return no identifiers.
 [[gnu::noinline]] std::vector<Token> invoke_builtin_call(const BuiltinFunctionMacro& bm,
@@ -657,8 +657,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             }
 
             // Case: T is a "()'d macro" → expand(subst(ts(T), fp(T), actuals, (HS∩HS')∪{T}, {}) • TS'')
-            // Built-in function macros (__error, __assert, __counter*, __nosplit) share
-            // the call handling below (opening parenthesis, argument collection,
+            // Built-in function macros (__error, __assert, __counter*, __nosplit, __xml*,
+            // __arg_*) share the call handling below (opening parenthesis, argument collection,
             // PP34 recovery, line accounting); only the final step differs:
             // invoke() on the unexpanded arguments instead of subst().
             auto* fm = dynamic_cast<FunctionMacro*>(macro);

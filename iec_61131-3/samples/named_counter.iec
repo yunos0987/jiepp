@@ -18,7 +18,6 @@ var
     door_alarm, overload_alarm: int;
     used_slots: int;
 end_var
-{st}
 DETECT(start_button, start_pressed);
 DETECT(stop_button, stop_pressed);
 DETECT(door_switch, door_opened);
@@ -27,5 +26,4 @@ overload_alarm := NEXT_ALARM();
 (* __counter_peek reads a counter without advancing it *)
 used_slots := __counter_peek(edge);
 __assert(__counter_peek(edge) <= EDGE_SLOTS, more DETECT uses than EDGE_SLOTS)
-{end}
 end_program

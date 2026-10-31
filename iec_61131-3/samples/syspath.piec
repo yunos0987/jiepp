@@ -14,7 +14,5 @@ program Main
 var
     v: int;
 end_var
-(*{st}*)
 v := SEL((-10) >= 0, -(-10), (-10));
-(*{end}*)
 end_program

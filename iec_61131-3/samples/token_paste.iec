@@ -16,8 +16,6 @@ var
     UNIQUE(ton_): TON;
     UNIQUE(ton_): TON;
 end_var
-{st}
 VAR_NAME(sensor, 1) := 100;
 VAR_NAME(sensor, 2) := 200;
-{end}
 end_program

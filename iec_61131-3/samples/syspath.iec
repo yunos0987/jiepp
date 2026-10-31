@@ -8,7 +8,5 @@ program Main
 var
     v: int;
 end_var
-{st}
 v := ABS_OF(-10);
-{end}
 end_program

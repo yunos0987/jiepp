@@ -305,6 +305,14 @@ static bool va_args_non_empty(
 // scan did, and charges one step per report. Returns the index of the
 // matching ')' (the content is body[i + next + 1, that index)), or
 // body.size() if no parenthesized argument follows or it is unclosed.
+// A function-like macro with a nested, unparenthesized or unclosed
+// __VA_OPT__ is rejected when it is defined (handle_define() is the only
+// place in src/ that builds a FunctionMacro), and a macro without parameters
+// never calls this (there __VA_OPT__ is an ordinary identifier). subst() is
+// called from expand.cpp only for object macros and built-in replacements
+// (no parameters) and for the FunctionMacros in the symbol table, so none of
+// these reports is reached from preprocessing input; they are kept for a
+// FunctionMacro built directly in code.
 static std::size_t va_opt_close(std::span<const Token> body,
                                 std::span<const VaOptSpan> va_opt,
                                 std::size_t i,
@@ -468,8 +476,9 @@ std::vector<Token> subst(
     // token has been produced, the position just before the first GLUE) is a
     // placemarker (C17 6.10.3.3p2): an empty token sequence that participates in
     // `@@` pasting as if it were an actual, invisible token. Set when a formal
-    // parameter adjacent to `@@` substitutes to zero tokens; cleared whenever any
-    // other token is pushed to `result`.
+    // parameter adjacent to `@@` substitutes to zero tokens, or a __VA_OPT__(...)
+    // produces no token other than blanks; cleared whenever any other token is
+    // pushed to `result`.
     bool pending_placemarker = false;
     // A formal parameter is an `@@` operand iff a direct neighbour within
     // this body (or __VA_OPT__ content) is GLUE: normalize_glue() leaves no
@@ -501,9 +510,10 @@ std::vector<Token> subst(
         // §subst case: IS is ## • T • IS' (paste)
         if (t.type == Token::GLUE) {
             // The left operand is a placemarker (an empty formal-param substitution
-            // adjacent to this @@) when `pending_placemarker` is set. In that case the
-            // whitespace preceding it belongs to the surrounding text, not to the
-            // (nonexistent) left operand, so it must not be stripped.
+            // or an empty __VA_OPT__ adjacent to this @@) when `pending_placemarker`
+            // is set. In that case the whitespace preceding it belongs to the
+            // surrounding text, not to the (nonexistent) left operand, so it must
+            // not be stripped.
             bool left_is_placemarker = pending_placemarker;
             if (!left_is_placemarker) {
                 while (!result.empty() && (result.back().type & Token::MASK_WS))
@@ -517,16 +527,25 @@ std::vector<Token> subst(
 
             std::vector<Token> item;
             bool nb_is_param = false;
+            // True when item is __VA_OPT__ content, which the inner subst()
+            // has charged already.
+            bool item_charged = false;
             const Token& nb = body[j];
-            if (nb.type == Token::ANY && nb.text == FunctionMacro::VA_OPT) {
+            if (nb.type == Token::ANY && nb.text == FunctionMacro::VA_OPT &&
+                !formal_params.empty()) {
                 // Handle:  X @@ __VA_OPT__(content)
+                // (A macro without parameters has no variable arguments to
+                // test, so there __VA_OPT__ is an ordinary identifier: it
+                // takes the else branch and is pasted like one.)
                 ensure_va_opt();
                 std::size_t k = va_opt_close(body, va_opt, j, env);
                 if (k < body.size()) {
-                    if (va_args_non_empty(formal_params, actual_params))
+                    if (va_args_non_empty(formal_params, actual_params)) {
                         item = ts_flatten(subst_va_opt_content(body, va_opt, j, k, formal_params,
                                                                actual_params, actual_ws, env,
                                                                va_sep_ws, memo));
+                        item_charged = true;
+                    }
                     // Empty item → glue_tokens is a no-op → left side preserved unchanged.
                     i = k;
                 } else {
@@ -561,6 +580,8 @@ std::vector<Token> subst(
                 for (auto& tk : item)
                     result.push_back(std::move(tk));
                 pending_placemarker = item.empty();
+                if (item_charged)
+                    charged = result.size();
             } else {
                 // Work budget (PP64): the one token merged by @@ (item[0]
                 // into result.back()) is charged before it is merged (a merge
@@ -569,13 +590,17 @@ std::vector<Token> subst(
                 // -- item[1..] of a valid paste, the whole of item when the
                 // paste fails (PP32) or result is empty -- is charged once,
                 // by the next charge_new(); charging it here as well would
-                // count it twice.
+                // count it twice. __VA_OPT__ content is the exception: the
+                // inner subst() has charged all of it, so neither the merge
+                // nor the next charge_new() may charge it again.
                 std::uint64_t merge_cost = 0;
-                if (!result.empty() && !item.empty() &&
+                if (!item_charged && !result.empty() && !item.empty() &&
                     paste_is_valid(result.back(), item.front()))
                     merge_cost = step_cost(item.front());
                 env.charge_expansion_steps(merge_cost);
                 glue_tokens(result, item);
+                if (item_charged)
+                    charged = result.size();
                 pending_placemarker = false;
             }
             continue;
@@ -597,6 +622,13 @@ std::vector<Token> subst(
                 while (j < body.size() && (body[j].type & Token::MASK_WS)) ++j;
             }
             if (j < body.size() && body[j].type == Token::ANY) {
+                if (body[j].text == FunctionMacro::VA_OPT && formal_params.empty()) {
+                    // No parameters: __VA_OPT__ is an ordinary identifier, and
+                    // like clang's `#__VA_OPT__` in such a macro the '@' before
+                    // it stays as written, with no PP31.
+                    result.push_back(t.clone());
+                    continue;
+                }
                 if (body[j].text == FunctionMacro::VA_OPT) {
                     // Handle: @ __VA_OPT__(content) → stringize VA_OPT content or ''
                     ensure_va_opt();
@@ -637,16 +669,20 @@ std::vector<Token> subst(
 
         // §subst case: IS is T • IS' and T is FP[i] (formal param → expand or flatten)
         if (t.type == Token::ANY) {
-            // Handle standalone __VA_OPT__(content)
-            if (t.text == FunctionMacro::VA_OPT) {
+            // Handle standalone __VA_OPT__(content). In a macro without
+            // parameters (F(), an object macro) __VA_OPT__ is an ordinary
+            // identifier and goes the generic way below. A non-variadic macro
+            // with parameters has no variable arguments, so the content is
+            // dropped, as for an empty __VA_ARGS__. A __VA_OPT__ that produces
+            // no token other than blanks is a placemarker for a following `@@`.
+            if (t.text == FunctionMacro::VA_OPT && !formal_params.empty()) {
                 pending_placemarker = false;
-                if (formal_params.find(FunctionMacro::VA_SYM) == formal_params.end()) {
-                    ISSUE(INVALID_VA_OPT, "__VA_OPT__ used outside variadic macro");
-                    result.push_back(t.clone());
-                    continue;
-                }
+                bool va_opt_produced = false;
                 ensure_va_opt();
                 std::size_t j = va_opt_close(body, va_opt, i, env);
+                // Not reached from input: a function-like macro with a
+                // __VA_OPT__ lacking '(' or ')' is not defined (see
+                // va_opt_close()).
                 if (j >= body.size()) {
                     ISSUE(INVALID_VA_OPT, "__VA_OPT__ requires parenthesized argument");
                     result.push_back(t.clone());
@@ -656,8 +692,15 @@ std::vector<Token> subst(
                     auto inner = subst_va_opt_content(body, va_opt, i, j, formal_params,
                                                       actual_params, actual_ws, env, va_sep_ws,
                                                       memo);
-                    for (auto& et : inner) result.push_back(std::move(et));
+                    for (auto& et : inner) {
+                        if (!(et.type & Token::MASK_WS))
+                            va_opt_produced = true;
+                        result.push_back(std::move(et));
+                    }
+                    // Already charged by the inner subst().
+                    charged = result.size();
                 }
+                pending_placemarker = !va_opt_produced;
                 i = j; // advance past closing ')'
                 continue;
             }

@@ -9,10 +9,8 @@ program Main
 var
     n: int;
 end_var
-{st}
 PRINT(1, 2, 3);
 n := COUNT(a, b, c);
 n := FIRST(10, 20, 30);
 PRINT(REST(1, 2, 3));
-{end}
 end_program

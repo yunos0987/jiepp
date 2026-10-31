@@ -10,6 +10,7 @@
 #include "../util/text.hpp"
 #include "../util/iec_61131-3.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
@@ -146,6 +147,53 @@ bool is_builtin_operator_name(const std::string& name) {
     return name == "__has_builtin";
 }
 
+bool is_va_opt_token(const Token& t) {
+    return t.type == Token::ANY && t.text == FunctionMacro::VA_OPT;
+}
+
+// A malformed __VA_OPT__: the text of its PP37, and how many __VA_OPT__
+// tokens of the body clang has read when it notices the problem (the
+// offending token included), which decides where the PP80 warnings of
+// handle_define() go around the PP37.
+struct MalformedVaOpt {
+    const char* what;
+    std::size_t tokens;
+};
+
+// The first malformed __VA_OPT__ in the body of function-like macro `m`, if
+// any. Like clang, the body is checked left to right and the first problem
+// wins: a __VA_OPT__ not followed by '(' (or ending the body), a __VA_OPT__
+// inside the parentheses of another one, or a __VA_OPT__( without its ')'.
+// A well-formed __VA_OPT__(...) is skipped as a whole, so a __VA_OPT__ inside
+// it is always "nested". Reads the VaOptSpan table the macro already holds,
+// so there is no second body scan.
+std::optional<MalformedVaOpt> malformed_va_opt(const FunctionMacro& m) {
+    const auto& body = m.body();
+    const auto& spans = m.va_opt_spans();
+    std::size_t seen = 0; // __VA_OPT__ tokens up to and including body[i]
+    for (std::size_t i = 0; i < spans.size();) {
+        if (!is_va_opt_token(body[i])) {
+            ++i;
+            continue;
+        }
+        ++seen;
+        const std::size_t lp = i + spans[i].next;
+        if (lp >= body.size() || body[lp].type != Token::LP) {
+            // The token after __VA_OPT__ is read before the problem is seen.
+            const bool next_is_va_opt = lp < body.size() && is_va_opt_token(body[lp]);
+            return MalformedVaOpt{"__VA_OPT__ requires parenthesized argument",
+                                  seen + (next_is_va_opt ? 1 : 0)};
+        }
+        // The first __VA_OPT__ inside the parentheses is the one that is read.
+        if (spans[i].nested > 0)
+            return MalformedVaOpt{"nested __VA_OPT__ is not allowed", seen + 1};
+        if (spans[i].close == 0)
+            return MalformedVaOpt{"__VA_OPT__ requires parenthesized argument", seen};
+        i += spans[i].close + 1;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 namespace jiepp::preprocessor_detail {
@@ -160,6 +208,28 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     // the checks below (Token::C has MASK_WS), so the definition is the same.
     auto ts = lex_operand(raw_arg, env.get_remove_comments());
     ts = ts_ltrim(std::move(ts));
+
+    // PP80 (__VA_OPT__ outside a variadic macro), one per __VA_OPT__ token,
+    // placed around the other diagnostics of this directive as clang does:
+    // it warns for every __VA_OPT__ it reads from the macro name on, up to the
+    // end of the parameter list, and for the body of a non-variadic macro.
+    // When it finds an error it reports it right after the token it was
+    // reading, and then reads (and warns about) the rest of the line while
+    // discarding it. The body of a variadic macro never warns here, unlike
+    // clang, which also warns about a GNU named variadic (`args...`) and
+    // about the rest of a rejected variadic body: those say "outside a
+    // variadic macro" about a macro that is variadic.
+    // ts[0, warned) is settled: warned about or deliberately skipped. The
+    // context is the macro name (or the first token, when that is not a
+    // valid name).
+    std::size_t warned = 0;
+    auto warn_until = [&](std::size_t end) {
+        for (; warned < end && warned < ts.size(); ++warned)
+            if (is_va_opt_token(ts[warned]))
+                ISSUE(VA_OPT_OUTSIDE_VARIADIC_MACRO, ts[0].text);
+    };
+    auto warn_rest = [&]() { warn_until(ts.size()); };
+
     // C1: like gcc/clang, the macro name must be an identifier (comments
     // are whitespace, already stripped by ts_ltrim above). A missing name
     // and a non-identifier name are separate diagnoses so the message names
@@ -171,6 +241,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     if (ts[0].type != Token::ANY || !iec3_is_identifier(ts[0].text)) {
         ISSUE(INVALID_DEFINE_SYNTAX,
               "macro name must be an identifier: " + Util::escape_line_breaks(raw_arg));
+        warn_rest();
         return false;
     }
 
@@ -179,6 +250,8 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
         ISSUE(OPERATION_NOT_ALLOWED, "redefine 'defined'");
         return false;
     }
+    // A macro named __VA_OPT__ warns for its name token, variadic or not.
+    warn_until(1);
 
     // Like gcc/clang ("ISO C99 requires whitespace after the macro name"),
     // NAME directly followed by a token other than '(' -- e.g.
@@ -210,16 +283,21 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     // would silently let the variadic entry win), so it is a duplicate too.
     // A GNU named variadic `args...` introduces only __VA_ARGC__ (`args`
     // replaces __VA_ARGS__), so there __VA_ARGS__ is an ordinary name.
-    auto variadic_name_clash = [&](bool named) -> bool {
-        if (!named && seen_params.count(FunctionMacro::VA_ARGS)) {
-            ISSUE(DUPLICATE_MACRO_PARAMETER, FunctionMacro::VA_ARGS);
-            return true;
-        }
-        if (seen_params.count(FunctionMacro::VA_ARGC)) {
-            ISSUE(DUPLICATE_MACRO_PARAMETER, FunctionMacro::VA_ARGC);
-            return true;
-        }
-        return false;
+    // `n` tokens of '...' start at ts[i]. clang accepts such a macro as a
+    // variadic one, so only the tokens up to the '...' warn (PP80) and the
+    // body, which jiepp does not read, does not.
+    auto variadic_name_clash = [&](bool named, std::size_t n) -> bool {
+        const char* clash = nullptr;
+        if (!named && seen_params.count(FunctionMacro::VA_ARGS))
+            clash = FunctionMacro::VA_ARGS;
+        else if (seen_params.count(FunctionMacro::VA_ARGC))
+            clash = FunctionMacro::VA_ARGC;
+        if (!clash)
+            return false;
+        warn_until(i + n);
+        ISSUE(DUPLICATE_MACRO_PARAMETER, clash);
+        warned = ts.size();
+        return true;
     };
 
     if (is_function) {
@@ -237,9 +315,19 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
             while (i < ts.size() && (ts[i].type & Token::MASK_WS))
                 ++i;
         };
+        // ts[i] is the token the error is found at (i == ts.size() at the
+        // end of the line); clang has read it, and warned about it, by then.
         auto list_error = [&](const std::string& what) {
+            warn_until(i + 1);
             ISSUE(INVALID_DEFINE_SYNTAX,
                   what + " in macro parameter list: " + Util::escape_line_breaks(raw_arg));
+            warn_rest();
+        };
+        // '...' not last (PP33), found at ts[i]; same order as list_error.
+        auto placement_error = [&]() {
+            warn_until(i + 1);
+            ISSUE(INVALID_VARIADIC_PLACEMENT, Util::escape_line_breaks(raw_arg));
+            warn_rest();
         };
         ++i; // '('
         skip_ws();
@@ -253,7 +341,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
                     return false;
                 }
                 if (std::size_t n = ellipsis_at(ts, i)) {
-                    if (variadic_name_clash(false))
+                    if (variadic_name_clash(false, n))
                         return false;
                     param_names.push_back(FunctionMacro::VA_SYM);
                     i += n;
@@ -263,7 +351,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
                         return false;
                     }
                     if (ts[i].type != Token::RP) {
-                        ISSUE(INVALID_VARIADIC_PLACEMENT, Util::escape_line_breaks(raw_arg));
+                        placement_error();
                         return false;
                     }
                     ++i; // ')'
@@ -274,7 +362,9 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
                     return false;
                 }
                 if (!seen_params.insert(ts[i].text).second) {
+                    warn_until(i + 1);
                     ISSUE(DUPLICATE_MACRO_PARAMETER, ts[i].text);
+                    warn_rest();
                     return false;
                 }
                 param_names.push_back(ts[i].text);
@@ -295,7 +385,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
                         // takes the variable arguments instead of
                         // __VA_ARGS__. As after a plain '...', only ')' may
                         // follow.
-                        if (variadic_name_clash(true))
+                        if (variadic_name_clash(true, n))
                             return false;
                         named_variadic = true;
                         i += n;
@@ -305,7 +395,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
                             return false;
                         }
                         if (ts[i].type != Token::RP) {
-                            ISSUE(INVALID_VARIADIC_PLACEMENT, Util::escape_line_breaks(raw_arg));
+                            placement_error();
                             return false;
                         }
                         ++i; // ')'
@@ -319,6 +409,12 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
             }
         }
     }
+    // The macro name and the parameter list are read; clang warns for a
+    // __VA_OPT__ there whether or not the macro turns out to be variadic.
+    warn_until(i);
+    const bool variadic =
+        named_variadic ||
+        std::find(param_names.begin(), param_names.end(), FunctionMacro::VA_SYM) != param_names.end();
 
     while (i < ts.size() && (ts[i].type & Token::MASK_WS))
         ++i;
@@ -335,15 +431,45 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
         while (last > 0 && (body[last - 1].type & Token::MASK_WS))
             --last;
         if (last > 0 && (body.front().type == Token::GLUE || body[last - 1].type == Token::GLUE)) {
+            // The whole line is read before this is noticed: the body of a
+            // non-variadic macro has warned, that of a variadic one has not.
+            if (variadic)
+                warned = ts.size();
+            else
+                warn_rest();
             ISSUE(INVALID_TOKEN_PASTING,
                   "'@@' cannot appear at either end of a macro expansion: " + Util::escape_line_breaks(raw_arg));
             return false;
         }
     }
 
+    // Returns false (nothing defined) for a function-like macro whose body
+    // has a malformed __VA_OPT__. Like the checks above this abandons the
+    // whole {#define}: an existing definition of `name`, user or built-in,
+    // stays, and there is no PP35. Object-like macros are not checked.
+    // The PP80 warnings of the body come first, so before a PP37 (up to the
+    // token clang is reading when it finds the problem, and the rest of the
+    // line after it) and before a PP35.
     auto make_and_define = [&]() {
         if (is_function) {
             auto nm = std::make_unique<FunctionMacro>(param_names, body, named_variadic);
+            if (auto bad = malformed_va_opt(*nm)) {
+                if (variadic) {
+                    warned = ts.size();
+                } else {
+                    // ts index just past the bad->tokens-th __VA_OPT__ of the body.
+                    std::size_t cut = i;
+                    for (std::size_t seen = 0; seen < bad->tokens && cut < ts.size(); ++cut)
+                        if (is_va_opt_token(ts[cut]))
+                            ++seen;
+                    warn_until(cut);
+                }
+                ISSUE(INVALID_VA_OPT, bad->what);
+                warn_rest();
+                return false;
+            }
+            if (!variadic)
+                warn_rest();
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
                 if (!existing->equal(*nm))
@@ -354,6 +480,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
             env.define(name, std::move(nm));
         } else {
             auto nm = std::make_unique<UserDefinedObjectMacro>(body);
+            warn_rest();
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
                 if (!existing->equal(*nm))
@@ -363,8 +490,10 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
             }
             env.define(name, std::move(nm));
         }
+        return true;
     };
-    make_and_define();
+    if (!make_and_define())
+        return false;
     if (defined_name)
         *defined_name = name;
     return true;

@@ -11,12 +11,10 @@ end_var
 var
     pressure: real;
 end_var
-(*{st}*)
-trace('trace_macro.iec', 14, 'cycle start' );
-trace('trace_macro.iec', 15, 'pressure' , pressure);
+trace('trace_macro.iec', 13, 'cycle start' );
+trace('trace_macro.iec', 14, 'pressure' , pressure);
 if not start then
     raise_alarm(16#0101 );
     raise_alarm(16#0102 , 'door open', pressure);
 end_if;
-(*{end}*)
 end_function_block

@@ -1,5 +1,5 @@
 
 
 program b{### __COUNTER__}
-{st}__COUNTER__;{end}
+__COUNTER__;
 end_program

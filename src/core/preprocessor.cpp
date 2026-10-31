@@ -5,7 +5,9 @@
 #include "preprocessor_internal.hpp"
 
 #include "../loader/lexer.hpp"
+#include "../loader/loader.hpp"
 
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -23,7 +25,12 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     env.reset_expansion_steps();
     // Same for the executed-include count (PP66).
     env.reset_include_count();
-    auto its = iec3_tokens(input, env.get_remove_comments(), 1);
+    // Same for the input size (PP67). The stream is read through the
+    // bounded reader; a read error is PP10 '<input>' (the stream has no
+    // path; the location is the caller's current Issue location).
+    env.reset_input_bytes();
+    const std::optional<std::string> text = Loader::read_stream(input, env, "<input>");
+    auto its = iec3_tokens_from_string(text ? *text : std::string(), env.get_remove_comments(), 1);
     std::vector<Token> ots;
     // No leading line marker here (unlike the jiepp command line), so tell
     // the compaction which line the stream starts on.
@@ -155,6 +162,11 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     env.define("__counter_peek",        std::make_unique<CounterBuiltin>(CounterBuiltin::Kind::peek));
     env.define("__counter_set",         std::make_unique<CounterSetBuiltin>());
     env.define("__nosplit",             std::make_unique<NosplitBuiltin>());
+    env.define("__xmlattr",             std::make_unique<XmlBuiltin>(XmlBuiltin::Kind::attr));
+    env.define("__xmltext",             std::make_unique<XmlBuiltin>(XmlBuiltin::Kind::text));
+    env.define("__arg_lhs",             std::make_unique<ArgSplitBuiltin>(ArgSplitBuiltin::Kind::lhs));
+    env.define("__arg_rhs",             std::make_unique<ArgSplitBuiltin>(ArgSplitBuiltin::Kind::rhs));
+    env.define("__arg_dir",             std::make_unique<ArgSplitBuiltin>(ArgSplitBuiltin::Kind::dir));
     // NOTE: "defined" is NOT installed permanently; it is installed temporarily
     // by eval_cond_str during #if/#elif condition evaluation only.
 

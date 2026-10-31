@@ -10,12 +10,10 @@ end_var
 var
     pressure: real;
 end_var
-{st}
 TRACE('cycle start');
 TRACE('pressure', pressure);
 if not start then
     ALARM(16#0101);
     ALARM(16#0102, 'door open', pressure);
 end_if;
-{end}
 end_function_block

@@ -43,13 +43,13 @@ protected:
     // Shared input/output shape for the deeply-nested function-macro tests
     // below: I(I(...I(0)...)) at the given depth, inside a program body.
     static std::string nested_macro_source(int depth) {
-        std::string src = "{#define I(a) (a)+1}\nprogram Main\n{st}\n";
+        std::string src = "{#define I(a) (a)+1}\nprogram Main\n";
         for (int i = 0; i < depth; ++i)
             src += "I(";
         src += "0";
         for (int i = 0; i < depth; ++i)
             src += ")";
-        src += ";\n{end}\nend_program\n";
+        src += ";\nend_program\n";
         return src;
     }
 
@@ -784,15 +784,18 @@ TEST_F(SmokeTest, UnclosedDirectiveInDeepRelexKeepsPP23) {
 }
 #endif
 
-// ---- F2: deeply nested __VA_OPT__ reports PP63 instead of crashing ----
+// ---- deeply nested __VA_OPT__ is rejected once, at the definition ----
 //
-// Nested __VA_OPT__ is PP37, but with PP37 ignored or in continue mode its
-// content is still substituted, recursing subst() -> subst() once per level
-// without passing through expand()'s stack check. 5000 levels exhaust a
-// 1 MiB stack (--recursion-limit 128) in both Debug and Release on every OS
-// (768 KiB / 5000 is about 157 bytes per level); before the fix the process
-// crashed. --max-expansion-steps 0 keeps PP64 (the k(k-1)/2 PP37 step
-// charges) from stopping the run first.
+// A nested __VA_OPT__ in a function-like macro is rejected when the macro is
+// defined: one PP37, the macro is not defined, the call stays as text. Before,
+// the macro was defined, and with PP37 ignored or in continue mode its content
+// was still substituted, recursing subst() -> subst() once per level without
+// passing through expand()'s stack check: 5000 levels exhausted a 1 MiB stack
+// (--recursion-limit 128) in both Debug and Release on every OS. That path is
+// no longer reachable from input; the stack check in subst() stays and is
+// covered in-process by RobustnessTestStackGuard.VaOptContentRecursionReportsPP63,
+// CLI-level PP63 by the __nosplit and function-macro nesting tests.
+// --max-expansion-steps 0 keeps PP64 from stopping the run first.
 
 namespace {
 
@@ -809,45 +812,188 @@ std::string nested_va_opt_source(const std::string& prefix, int k) {
 } // namespace
 
 #ifndef JIEPP_SANDBOX
-TEST_F(SmokeTest, NestedVaOptIgnoredPP37ReportsPP63NotCrash) {
+TEST_F(SmokeTest, NestedVaOptIgnoredPP37IsNotDefined) {
     fs::path input = tmp_dir_ / "nested_va_opt_ignored.iec";
     write_file(input, nested_va_opt_source("{#ignore PP37}", 5000));
 
     auto r = run("--recursion-limit 128 --max-expansion-steps 0 \"" + input.generic_string() + "\"");
-    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
-    // The depth figure counts expand() nesting only, so it is not pinned.
-    EXPECT_NE(r.err.find("PP63: Stack nearly exhausted; 'expansion depth "), std::string::npos)
-        << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_NE(r.err.find("retry with --recursion-limit greater than 128'"), std::string::npos)
-        << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_EQ(r.err.find("PP37"), std::string::npos) << "stderr: " << r.err.substr(0, 2000);
-    // The run stopped inside M(1): nothing after it was output.
-    EXPECT_EQ(r.out.find("after_m"), std::string::npos);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.out.find("M(1) after_m"), std::string::npos) << "stdout: " << r.out.substr(0, 2000);
 }
 #endif
 
 // Same input without {#ignore} (restricted in sandbox builds): the CLI's
-// continue mode counts each PP37 and keeps substituting, so a sandboxed web
-// deployment crashed too. --silent keeps the PP37 lines (millions of them
-// before the stack runs low) off stderr. The RobustnessTest* fixture name
-// matches the sandbox test presets' filter ^(Sandbox|RobustnessTest), so
-// this runs in both normal and sandbox builds.
-// --error-limit 0 (P2-4) keeps the PP63 path exercised: with the default
-// limit (100 in a sandbox build) the run would stop at PP65 before the stack
-// runs low, which also gives rc=1 and is indistinguishable under --silent.
+// continue mode counts the one PP37 and goes on. The RobustnessTest* fixture
+// name matches the sandbox test presets' filter ^(Sandbox|RobustnessTest), so
+// this runs in both normal and sandbox builds. --error-limit 0 keeps the
+// default limit (100 in a sandbox build) out of the way.
 class RobustnessTestSmoke : public SmokeTest {};
 
-TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsPP63NotCrash) {
+TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsOnePP37) {
     fs::path input = tmp_dir_ / "nested_va_opt_continue.iec";
     write_file(input, nested_va_opt_source("", 5000));
 
-    auto r = run("--silent --error-limit 0 --recursion-limit 128 --max-expansion-steps 0 \"" +
+    auto r = run("--error-limit 0 --recursion-limit 128 --max-expansion-steps 0 \"" +
                  input.generic_string() + "\"");
-    EXPECT_EQ(r.exit_code, 1);
-    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_EQ(r.out.find("after_m"), std::string::npos);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.err.find("PP37: Invalid __VA_OPT__; 'nested __VA_OPT__ is not allowed'"),
+              std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.out.find("M(1) after_m"), std::string::npos) << "stdout: " << r.out.substr(0, 2000);
 }
+
+// -D goes through the same {#define} check, and a -D error stops the command
+// like the other -D errors (no output, rc 1): exactly one PP37 line, after the
+// PP80 warnings for the __VA_OPT__ tokens of a non-variadic macro up to the
+// problem.
+TEST_F(RobustnessTestSmoke, RejectedVaOptDefinitionOnCommandLine) {
+    fs::path input = tmp_dir_ / "d_va_opt.iec";
+    write_file(input, "M(1) after_d\n");
+
+    const struct {
+        const char* define;
+        int warnings; // PP80 lines before the PP37 line
+        const char* text;
+    } cases[] = {
+        {"M(...)=__VA_OPT__(__VA_OPT__(x))", 0, "nested __VA_OPT__ is not allowed"},
+        {"F(a)=__VA_OPT__(__VA_OPT__(x))", 2, "nested __VA_OPT__ is not allowed"},
+        {"M(...)=x @@ __VA_OPT__ y", 0, "__VA_OPT__ requires parenthesized argument"},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.define);
+        auto r = run(std::string("-D \"") + c.define + "\" \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+        std::string err = r.err;
+        err.erase(std::remove(err.begin(), err.end(), '\r'), err.end());
+        // A Debug build appends "@<source file>:<line>" to every diagnostic.
+        for (auto at = err.find("'@"); at != std::string::npos; at = err.find("'@", at + 1))
+            err.erase(at + 1, err.find('\n', at) - at - 1);
+        std::string expected;
+        for (int i = 0; i < c.warnings; ++i)
+            expected += "jiepp: warning: PP80: __VA_OPT__ outside a variadic macro; 'F'\n";
+        expected += std::string("jiepp: error: PP37: Invalid __VA_OPT__; '") + c.text + "'\n";
+        EXPECT_EQ(err, expected);
+        EXPECT_TRUE(r.out.empty()) << "stdout: " << r.out;
+    }
+}
+
+// The definition-time report carries the line of the {#define} (the same
+// rule as PP36).
+TEST_F(RobustnessTestSmoke, RejectedVaOptDefinitionReportsItsLine) {
+    fs::path input = tmp_dir_ / "line_va_opt.iec";
+    write_file(input, "\n{#define M(...) __VA_OPT__ x}\nM(1)\n");
+    fs::path input36 = tmp_dir_ / "line_pp36.iec";
+    write_file(input36, "\n{#define M(a, a) x}\nM(1)\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find(":2.0: error: PP37"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("M(1)"), std::string::npos) << "stdout: " << r.out;
+
+    auto r36 = run("\"" + input36.generic_string() + "\"");
+    EXPECT_NE(r36.err.find(":2.0: error: PP36"), std::string::npos) << "stderr: " << r36.err;
+}
+
+// Watchpoint: the same definition on the command line and in the source is an
+// identical redefinition, silent.
+TEST_F(RobustnessTestSmoke, VaOptIdenticalRedefinitionWithDOptionStaysSilent_Guard) {
+    fs::path input = tmp_dir_ / "d_va_opt_same.iec";
+    write_file(input, "{#define V(...) __VA_OPT__(<__VA_ARGS__>)}\nV(a[x,y])\n");
+
+    auto r = run("-D \"V(...)=__VA_OPT__(<__VA_ARGS__>)\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("<a[x,y]>"), std::string::npos) << "stdout: " << r.out;
+}
+
+// stderr without CR and without the "@<source file>:<line>" suffix that a
+// Debug build appends to every diagnostic.
+static std::string plain_stderr(std::string err) {
+    err.erase(std::remove(err.begin(), err.end(), '\r'), err.end());
+    for (auto at = err.find("'@"); at != std::string::npos; at = err.find("'@", at + 1))
+        err.erase(at + 1, err.find('\n', at) - at - 1);
+    return err;
+}
+
+// __VA_OPT__ in a non-variadic macro is a warning (PP80) at the definition:
+// rc 0, nothing at the use, and the macro expands as if the variable
+// arguments were empty.
+TEST_F(RobustnessTestSmoke, VaOptOutsideVariadicIsAWarning) {
+    fs::path input = tmp_dir_ / "vo_warn.iec";
+    write_file(input, "{#define F(a) __VA_OPT__(x)}\n[F(1)] [F(2)]\n");
+    const std::string in = "\"" + input.generic_string() + "\"";
+
+    auto r = run(in);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err;
+    EXPECT_NE(plain_stderr(r.err).find(":1.0: warning: PP80: __VA_OPT__ outside a variadic macro; 'F'\n"),
+              std::string::npos)
+        << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("[] []"), std::string::npos) << "stdout: " << r.out;
+
+    // -Werror: an error (rc 1); -w and --silent: nothing shown.
+    auto rw = run("-Werror " + in);
+    EXPECT_EQ(rw.exit_code, 1) << "stderr: " << rw.err;
+    EXPECT_NE(rw.err.find(": error: PP80: "), std::string::npos) << "stderr: " << rw.err;
+    for (const char* opt : {"-w ", "--silent "}) {
+        SCOPED_TRACE(opt);
+        auto rs = run(std::string(opt) + in);
+        EXPECT_EQ(rs.exit_code, 0) << "stderr: " << rs.err;
+        EXPECT_TRUE(rs.err.empty()) << "stderr: " << rs.err;
+        EXPECT_NE(rs.out.find("[] []"), std::string::npos) << "stdout: " << rs.out;
+    }
+}
+
+// -D goes through the same definition: a warning on the command line, and
+// with -Werror an error that stops the command like a promoted PP35 does.
+TEST_F(RobustnessTestSmoke, VaOptOutsideVariadicOnCommandLine) {
+    fs::path input = tmp_dir_ / "d_vo_warn.iec";
+    write_file(input, "[F(1)]\n");
+    const std::string in = "\"" + input.generic_string() + "\"";
+
+    auto r = run("-D \"F(a)=__VA_OPT__(x)\" " + in);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(plain_stderr(r.err),
+              "jiepp: warning: PP80: __VA_OPT__ outside a variadic macro; 'F'\n");
+    EXPECT_NE(r.out.find("[]"), std::string::npos) << "stdout: " << r.out;
+
+    auto rw = run("-Werror -D \"F(a)=__VA_OPT__(x)\" " + in);
+    EXPECT_EQ(rw.exit_code, 1) << "stderr: " << rw.err;
+    EXPECT_EQ(plain_stderr(rw.err),
+              "jiepp: error: PP80: __VA_OPT__ outside a variadic macro; 'F'\n");
+    EXPECT_TRUE(rw.out.empty()) << "stdout: " << rw.out;
+}
+
+// The same macro on the command line and in the source: still no PP35, but
+// each definition warns (clang warns at every #define).
+TEST_F(RobustnessTestSmoke, VaOptOutsideVariadicIdenticalRedefinitionNoPP35) {
+    fs::path input = tmp_dir_ / "d_vo_same.iec";
+    write_file(input, "{#define O a @@ __VA_OPT__(b)}\nO\n");
+
+    auto r = run("-D \"O=a @@ __VA_OPT__(b)\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    const std::string err = plain_stderr(r.err);
+    EXPECT_EQ(std::count(err.begin(), err.end(), '\n'), 2) << "stderr: " << err;
+    EXPECT_EQ(err.find("PP35"), std::string::npos) << "stderr: " << err;
+    EXPECT_NE(r.out.find("a__VA_OPT__(b)"), std::string::npos) << "stdout: " << r.out;
+}
+
+#ifndef JIEPP_SANDBOX
+// {#ignore PP80}: no stderr (normal build only; {#ignore} is restricted in a
+// sandbox build).
+TEST_F(SmokeTest, VaOptOutsideVariadicIgnored) {
+    fs::path input = tmp_dir_ / "vo_ignore.iec";
+    write_file(input, "{#ignore PP80}\n{#define F(a) __VA_OPT__(x)}\n[F(1)]\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("[]"), std::string::npos) << "stdout: " << r.out;
+}
+#endif
 
 // __nosplit (SPEC 12.11) nested 1000 deep: each level is one expand() call
 // (invoke() expands the joined arguments), so the stack guard reports PP63
@@ -1218,6 +1364,505 @@ TEST_F(SmokeTest, DiagnosticsPathLineBreakEscaped) {
 }
 #endif
 
+// ---- A8: output write failures (CLI) ----
+//
+// RobustnessTestSmoke, so the sandbox ctest runs these too (-o, -MF and -MD
+// work in a sandbox build). The helpers in this first block are used by
+// both the Linux tests below and the Windows closed-pipe test further down.
+#if defined(__linux__) || defined(_WIN32)
+namespace {
+
+// An input whose output is about 60 bytes per line, so 2000 lines give an
+// output far above 64 KiB.
+std::string a8_big_source(int lines) {
+    std::string s;
+    for (int i = 0; i < lines; ++i)
+        s += "x" + std::to_string(i) + " := 12345678901234567890123456789012345678901234567890;\n";
+    return s;
+}
+
+// The diagnostic lines of `err`, without a CR and without the "@file:line"
+// suffix of a Debug build.
+std::vector<std::string> a8_diag_lines(const std::string& err) {
+    std::vector<std::string> lines;
+    std::istringstream in(err);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        lines.push_back(PlainTextMessage::strip_source_location(line));
+    }
+    return lines;
+}
+
+const std::string A8_STDOUT_PP10 = "jiepp: error: PP10: An error occurred with the file; '<stdout>'";
+
+} // namespace
+#endif
+
+// Linux: stdout is /dev/full, closed, or a regular file under RLIMIT_FSIZE.
+// SmokeTest::run() appends its own >stdout 2>stderr, so these tests build
+// their own /bin/sh command (run_sh()).
+#if defined(__linux__)
+namespace {
+
+std::string a8_q(const std::string& s) {
+    std::string q = "'";
+    for (char c : s) {
+        if (c == '\'')
+            q += "'\\''";
+        else
+            q += c;
+    }
+    return q + "'";
+}
+
+std::string a8_q(const fs::path& p) {
+    return a8_q(p.string());
+}
+
+struct ShResult {
+    int exit_code = -1;
+    std::string err;
+};
+
+// Runs `script` in a /bin/sh subshell (std::system) with the subshell's
+// stderr in `err_file`. The exit code is the exit status, or 128 + the
+// signal number when the process was killed by a signal.
+ShResult run_sh(const std::string& script, const fs::path& err_file) {
+    const std::string cmd = "( " + script + " ) 2>" + a8_q(err_file);
+    const int status = std::system(cmd.c_str());
+    ShResult r;
+    if (status != -1 && WIFEXITED(status))
+        r.exit_code = WEXITSTATUS(status);
+    else if (status != -1 && WIFSIGNALED(status))
+        r.exit_code = 128 + WTERMSIG(status);
+    std::ifstream f(err_file, std::ios::binary);
+    r.err.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return r;
+}
+
+// Prefix of a run limited by RLIMIT_FSIZE. SIGXFSZ is ignored, so a write
+// past the limit fails with EFBIG instead of killing jiepp. dash counts
+// `ulimit -f` in 512-byte blocks; the limit also applies to the file that
+// captures stderr, so the diagnostics of these tests stay far below it.
+const std::string A8_ULIMIT = "trap '' XFSZ; ulimit -f 1; ";
+
+std::string a8_file_pp10(const fs::path& p) {
+    return "jiepp: error: PP10: An error occurred with the file; '" + p.generic_string() + "'";
+}
+
+} // namespace
+
+TEST_F(RobustnessTestSmoke, StdoutToDevFullReportsPP10) {
+    if (!fs::exists("/dev/full"))
+        GTEST_SKIP() << "/dev/full is missing";
+    fs::path in = tmp_dir_ / "a8_l1_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path err = tmp_dir_ / "a8_l1_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " " + a8_q(in) + " >/dev/full", err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{A8_STDOUT_PP10}, a8_diag_lines(r.err)) << r.err;
+
+    r = run_sh("exec " + a8_q(exe_) + " --silent " + a8_q(in) + " >/dev/full", err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ("", r.err);
+}
+
+TEST_F(RobustnessTestSmoke, ClosedStdoutReportsPP10) {
+    fs::path in = tmp_dir_ / "a8_l2_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path err = tmp_dir_ / "a8_l2_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " " + a8_q(in) + " >&-", err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{A8_STDOUT_PP10}, a8_diag_lines(r.err)) << r.err;
+}
+
+TEST_F(RobustnessTestSmoke, OutputFileToDevFullKeepsDevice) {
+    if (!fs::exists("/dev/full"))
+        GTEST_SKIP() << "/dev/full is missing";
+    fs::path in = tmp_dir_ / "a8_l3_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path err = tmp_dir_ / "a8_l3_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " " + a8_q(in) + " -o /dev/full", err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{a8_file_pp10("/dev/full")}, a8_diag_lines(r.err)) << r.err;
+    // Guard part: a non-root process cannot unlink /dev/full, so this
+    // assertion cannot fail; the symlink tests below test the removal rule.
+    EXPECT_TRUE(fs::is_character_file("/dev/full"));
+}
+
+TEST_F(RobustnessTestSmoke, DepFileToDevFullLeavesOutputUntouched) {
+    if (!fs::exists("/dev/full"))
+        GTEST_SKIP() << "/dev/full is missing";
+    fs::path in = tmp_dir_ / "a8_l4_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path out = tmp_dir_ / "a8_l4_out.iec";
+    fs::path err = tmp_dir_ / "a8_l4_err.txt";
+    const std::string cmd = "exec " + a8_q(exe_) + " " + a8_q(in) + " -MD -MF /dev/full -o " + a8_q(out);
+
+    // (a) no -o file yet: it is not created.
+    std::error_code ec;
+    fs::remove(out, ec);
+    auto r = run_sh(cmd, err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{a8_file_pp10("/dev/full")}, a8_diag_lines(r.err)) << r.err;
+    EXPECT_FALSE(fs::exists(out));
+
+    // (b) an existing -o file stays byte-identical.
+    write_file(out, "OLD\n");
+    r = run_sh(cmd, err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{a8_file_pp10("/dev/full")}, a8_diag_lines(r.err)) << r.err;
+    EXPECT_EQ("OLD\n", read_file(out));
+    // Guard part, as in OutputFileToDevFullKeepsDevice.
+    EXPECT_TRUE(fs::is_character_file("/dev/full"));
+}
+
+TEST_F(RobustnessTestSmoke, OutputFileWriteFailureRemovesPartialRegularFile) {
+    fs::path in = tmp_dir_ / "a8_l5_big.iec";
+    write_file(in, a8_big_source(2000));
+    fs::path out = tmp_dir_ / "a8_l5_out.iec";
+    fs::path err = tmp_dir_ / "a8_l5_err.txt";
+    const std::string cmd = A8_ULIMIT + "exec " + a8_q(exe_) + " " + a8_q(in) + " -o " + a8_q(out);
+
+    // (a) a new -o file, (b) an existing one (truncated by the open).
+    for (bool existing : {false, true}) {
+        std::error_code ec;
+        fs::remove(out, ec);
+        if (existing)
+            write_file(out, "OLD\n");
+        auto r = run_sh(cmd, err);
+        EXPECT_EQ(1, r.exit_code) << "existing=" << existing << ": " << r.err;
+        EXPECT_EQ(std::vector<std::string>{a8_file_pp10(out)}, a8_diag_lines(r.err)) << r.err;
+        EXPECT_FALSE(fs::exists(out)) << "existing=" << existing;
+    }
+}
+
+TEST_F(RobustnessTestSmoke, DepFileWriteFailureRemovesPartialRegularFile) {
+    fs::path in = tmp_dir_ / "a8_l6_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path dep = tmp_dir_ / "a8_l6.d";
+    fs::path out = tmp_dir_ / "a8_l6_out.iec";
+    fs::path err = tmp_dir_ / "a8_l6_err.txt";
+    const std::string target(4000, 'T');
+
+    auto r = run_sh(A8_ULIMIT + "exec " + a8_q(exe_) + " " + a8_q(in) + " -MD -MF " + a8_q(dep) +
+                    " -MT " + target + " -o " + a8_q(out), err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{a8_file_pp10(dep)}, a8_diag_lines(r.err)) << r.err;
+    EXPECT_FALSE(fs::exists(dep));
+    EXPECT_FALSE(fs::exists(out)) << "-o must not be opened after a dep-file failure";
+}
+
+TEST_F(RobustnessTestSmoke, ShellRedirectedStdoutFileIsNotRemoved) {
+    fs::path in = tmp_dir_ / "a8_l7_big.iec";
+    write_file(in, a8_big_source(2000));
+    fs::path out = tmp_dir_ / "a8_l7_out.txt";
+    fs::path err = tmp_dir_ / "a8_l7_err.txt";
+
+    auto r = run_sh(A8_ULIMIT + "exec " + a8_q(exe_) + " " + a8_q(in) + " >" + a8_q(out), err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{A8_STDOUT_PP10}, a8_diag_lines(r.err)) << r.err;
+    EXPECT_TRUE(fs::exists(out)) << "a file the shell opened for stdout is never removed";
+}
+
+TEST_F(RobustnessTestSmoke, StdoutToDevFullRemovesDepFile) {
+    if (!fs::exists("/dev/full"))
+        GTEST_SKIP() << "/dev/full is missing";
+    fs::path in = tmp_dir_ / "a8_l8_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path dep = tmp_dir_ / "a8_l8.d";
+    fs::path err = tmp_dir_ / "a8_l8_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " " + a8_q(in) + " -MD -MF " + a8_q(dep) + " >/dev/full", err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{A8_STDOUT_PP10}, a8_diag_lines(r.err)) << r.err;
+    EXPECT_FALSE(fs::exists(dep)) << "the dep file written by this failed run must be removed";
+}
+
+TEST_F(RobustnessTestSmoke, VersionAndHelpToDevFullExitOne) {
+    if (!fs::exists("/dev/full"))
+        GTEST_SKIP() << "/dev/full is missing";
+    fs::path err = tmp_dir_ / "a8_l9_err.txt";
+
+    for (const char* arg : {"--version", "--help"}) {
+        auto r = run_sh("exec " + a8_q(exe_) + " " + arg + " >/dev/full", err);
+        EXPECT_EQ(1, r.exit_code) << arg << ": " << r.err;
+        EXPECT_EQ("", r.err) << arg;
+    }
+}
+
+// Guard: passes before and after A8.
+TEST_F(RobustnessTestSmoke, OutputToDevNullSucceeds) {
+    fs::path in = tmp_dir_ / "a8_l10_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path err = tmp_dir_ / "a8_l10_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " " + a8_q(in) + " -o /dev/null", err);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("", r.err);
+
+    r = run_sh("exec " + a8_q(exe_) + " " + a8_q(in) + " >/dev/null", err);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("", r.err);
+}
+
+TEST_F(RobustnessTestSmoke, DepSymlinkToDeviceKeptWhenOutputOpenFails) {
+    fs::path in = tmp_dir_ / "a8_l11_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path link = tmp_dir_ / "a8_l11_null_link";
+    fs::create_symlink("/dev/null", link);
+    fs::path out = tmp_dir_ / "a8_l11_nodir" / "out.iec";
+    fs::path err = tmp_dir_ / "a8_l11_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " " + a8_q(in) + " -MD -MF " + a8_q(link) + " -o " + a8_q(out), err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{a8_file_pp10(out)}, a8_diag_lines(r.err)) << r.err;
+    EXPECT_TRUE(fs::is_symlink(link)) << "a symlink to a device must not be removed";
+}
+
+TEST_F(RobustnessTestSmoke, OutputSymlinkToDeviceKept) {
+    if (!fs::exists("/dev/full"))
+        GTEST_SKIP() << "/dev/full is missing";
+    fs::path in = tmp_dir_ / "a8_l12_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path link = tmp_dir_ / "a8_l12_full_link";
+    fs::create_symlink("/dev/full", link);
+    fs::path err = tmp_dir_ / "a8_l12_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " " + a8_q(in) + " -o " + a8_q(link), err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{a8_file_pp10(link)}, a8_diag_lines(r.err)) << r.err;
+    EXPECT_TRUE(fs::is_symlink(link)) << "a symlink to a device must not be removed";
+}
+
+TEST_F(RobustnessTestSmoke, DepSymlinkToDeviceKeptWhenStdoutFails) {
+    if (!fs::exists("/dev/full"))
+        GTEST_SKIP() << "/dev/full is missing";
+    fs::path in = tmp_dir_ / "a8_l13_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path link = tmp_dir_ / "a8_l13_null_link";
+    fs::create_symlink("/dev/null", link);
+    fs::path err = tmp_dir_ / "a8_l13_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " " + a8_q(in) + " -MD -MF " + a8_q(link) + " >/dev/full", err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{A8_STDOUT_PP10}, a8_diag_lines(r.err)) << r.err;
+    EXPECT_TRUE(fs::is_symlink(link)) << "a symlink to a device must not be removed";
+}
+
+TEST_F(RobustnessTestSmoke, OutputSymlinkToRegularFileRemovedAsLink) {
+    fs::path in = tmp_dir_ / "a8_l14_big.iec";
+    write_file(in, a8_big_source(2000));
+    fs::path target = tmp_dir_ / "a8_l14_target.txt";
+    write_file(target, "T\n");
+    fs::path link = tmp_dir_ / "a8_l14_reg_link";
+    fs::create_symlink(target.filename(), link);
+    fs::path err = tmp_dir_ / "a8_l14_err.txt";
+
+    auto r = run_sh(A8_ULIMIT + "exec " + a8_q(exe_) + " " + a8_q(in) + " -o " + a8_q(link), err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{a8_file_pp10(link)}, a8_diag_lines(r.err)) << r.err;
+    EXPECT_FALSE(fs::exists(fs::symlink_status(link))) << "the link itself is removed";
+    EXPECT_TRUE(fs::is_regular_file(target)) << "the (truncated) target stays";
+}
+#endif // __linux__
+
+// ---- C11: --max-input-bytes (PP67) and input read errors (CLI) ----
+//
+// RobustnessTestSmoke, so the sandbox ctest runs these too (stdin, -include
+// and file operands work in a sandbox build).
+
+namespace {
+
+// The diagnostic lines of `err`, without a CR and without the "@file:line"
+// suffix of a Debug build.
+std::vector<std::string> c11_diag_lines(const std::string& err) {
+    std::vector<std::string> lines;
+    std::istringstream in(err);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        lines.push_back(PlainTextMessage::strip_source_location(line));
+    }
+    return lines;
+}
+
+std::string c11_pp67(const std::string& location, int limit) {
+    return location + ":1.0: error: PP67: Maximum input size exceeded; 'limit " + std::to_string(limit) +
+           " bytes; use --max-input-bytes N to raise it (0 = no limit)'";
+}
+
+} // namespace
+
+TEST_F(RobustnessTestSmoke, MaxInputBytesStdin) {
+    // Exactly 100 raw bytes with CRLF line ends and one 0x1A byte: on
+    // Windows stdin is read in binary mode, so every byte is counted.
+    std::string text = "a := 1;\r\nb := 2;\x1a\r\n";
+    while (text.size() < 98)
+        text += "c";
+    text += "\r\n";
+    ASSERT_EQ(100u, text.size());
+    fs::path in = tmp_dir_ / "c11_13_stdin.iec";
+    write_file(in, text);
+
+    for (const char* operand : {" -", ""}) {
+        const auto plain = run(std::string("-P") + operand, in.generic_string());
+        ASSERT_EQ(0, plain.exit_code) << plain.err;
+        for (const char* spelling : {"--max-input-bytes", "--max_input_bytes"}) {
+            const std::string opt = std::string("-P ") + spelling;
+            auto r = run(opt + " 100" + operand, in.generic_string());
+            EXPECT_EQ(0, r.exit_code) << spelling << operand << ": " << r.err;
+            EXPECT_EQ(plain.out, r.out) << spelling << operand;
+            EXPECT_EQ("", r.err) << spelling << operand;
+
+            r = run(opt + " 99" + operand, in.generic_string());
+            EXPECT_EQ(1, r.exit_code) << spelling << operand;
+            EXPECT_EQ(std::vector<std::string>{c11_pp67("<stdin>", 99)}, c11_diag_lines(r.err))
+                << spelling << operand << ": " << r.err;
+
+            r = run(opt + " 50" + operand, in.generic_string());
+            EXPECT_EQ(1, r.exit_code) << spelling << operand;
+            EXPECT_EQ(std::vector<std::string>{c11_pp67("<stdin>", 50)}, c11_diag_lines(r.err))
+                << spelling << operand << ": " << r.err;
+        }
+    }
+}
+
+TEST_F(RobustnessTestSmoke, MaxInputBytesCountsIncludeOptionAndMainFile) {
+    const std::string inc_text = "INC_LINE := 1;\n";
+    const std::string main_text = "MAIN_LINE := 2;\n";
+    fs::path inc = tmp_dir_ / "c11_14_inc.iec";
+    fs::path main_in = tmp_dir_ / "c11_14_main.iec";
+    write_file(inc, inc_text);
+    write_file(main_in, main_text);
+    const int total = static_cast<int>(inc_text.size() + main_text.size());
+    const std::string files = "-include \"" + inc.generic_string() + "\" \"" + main_in.generic_string() + "\"";
+
+    auto r = run("-P --max-input-bytes " + std::to_string(total) + " " + files);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_NE(std::string::npos, r.out.find("MAIN_LINE")) << r.out;
+
+    r = run("-P --max-input-bytes " + std::to_string(total - 1) + " " + files);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{c11_pp67(main_in.generic_string(), total - 1)}, c11_diag_lines(r.err))
+        << r.err;
+    // Partial-output rule: what was built before the stop goes to stdout.
+    EXPECT_NE(std::string::npos, r.out.find("INC_LINE")) << r.out;
+    EXPECT_EQ(std::string::npos, r.out.find("MAIN_LINE")) << r.out;
+
+    fs::path out = tmp_dir_ / "c11_14_out.iec";
+    r = run("-P --max-input-bytes " + std::to_string(total - 1) + " -o \"" + out.generic_string() + "\" " + files);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_FALSE(fs::exists(out));
+}
+
+TEST_F(RobustnessTestSmoke, MaxInputBytesSilent) {
+    fs::path in = tmp_dir_ / "c11_15_in.iec";
+    write_file(in, std::string(99, 'x') + "\n");
+
+    auto r = run("--silent --max-input-bytes 10 \"" + in.generic_string() + "\"");
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_EQ("", r.err);
+}
+
+// Guard: passes before and after C11. The default is 0 (no limit) in the
+// normal and the sandbox build.
+TEST_F(RobustnessTestSmoke, MaxInputBytesDefaultIsUnlimited) {
+    std::string text;
+    while (text.size() < 2u * 1024 * 1024)
+        text += "x := 1234567890123456789012345678901234567890123456789012345678;\n";
+    fs::path in = tmp_dir_ / "c11_16_stdin.iec";
+    write_file(in, text);
+
+    auto r = run("-P -", in.generic_string());
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("", r.err);
+}
+
+TEST_F(RobustnessTestSmoke, HelpListsMaxInputBytes) {
+    auto r = run("--help");
+    EXPECT_EQ(0, r.exit_code);
+    EXPECT_NE(std::string::npos, r.out.find("--max-input-bytes N")) << r.out;
+    EXPECT_NE(std::string::npos, r.out.find("0 = no limit")) << r.out;
+}
+
+// Linux: stdin is a directory, stdin is closed, /dev/zero with a limit, and
+// a file whose read fails after a successful open (/proc/self/mem). Windows
+// has no such tests: cmd.exe cannot redirect stdin from a directory, and no
+// portable file fails to read after it opened; the std::FILE read path is
+// the same code as FileReadErrorReportsPP10.
+#if defined(__linux__)
+namespace {
+
+const std::string C11_STDIN_PP10 = "<stdin>:1.0: error: PP10: An error occurred with the file; '<stdin>'";
+
+} // namespace
+
+TEST_F(RobustnessTestSmoke, StdinIsDirectoryReportsPP10) {
+    fs::path out = tmp_dir_ / "c11_l1_out.txt";
+    fs::path err = tmp_dir_ / "c11_l1_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " -P <" + a8_q(tmp_dir_) + " >" + a8_q(out), err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{C11_STDIN_PP10}, c11_diag_lines(r.err)) << r.err;
+    EXPECT_EQ("", read_file(out));
+}
+
+TEST_F(RobustnessTestSmoke, ClosedStdinReportsPP10) {
+    fs::path out = tmp_dir_ / "c11_l2_out.txt";
+    fs::path err = tmp_dir_ / "c11_l2_err.txt";
+
+    auto r = run_sh("exec " + a8_q(exe_) + " -P <&- >" + a8_q(out), err);
+    EXPECT_EQ(1, r.exit_code) << r.err;
+    EXPECT_EQ(std::vector<std::string>{C11_STDIN_PP10}, c11_diag_lines(r.err)) << r.err;
+    EXPECT_EQ("", read_file(out));
+}
+
+TEST_F(RobustnessTestSmoke, StdinDevZeroStopsAtLimit) {
+    if (!fs::exists("/dev/zero"))
+        GTEST_SKIP() << "/dev/zero is missing";
+    if (std::system("command -v timeout >/dev/null 2>&1") != 0)
+        GTEST_SKIP() << "timeout is missing";
+    fs::path err = tmp_dir_ / "c11_l3_err.txt";
+
+    auto r = run_sh("exec timeout 20 " + a8_q(exe_) + " -P --max-input-bytes 1048576 </dev/zero >/dev/null", err);
+    EXPECT_EQ(1, r.exit_code) << "124 means the read did not stop: " << r.err;
+    EXPECT_EQ(std::vector<std::string>{c11_pp67("<stdin>", 1048576)}, c11_diag_lines(r.err)) << r.err;
+}
+
+TEST_F(RobustnessTestSmoke, FileReadErrorReportsPP10) {
+    if (std::FILE* f = std::fopen("/proc/self/mem", "rb"))
+        std::fclose(f);
+    else
+        GTEST_SKIP() << "/proc/self/mem cannot be opened";
+    fs::path in = tmp_dir_ / "c11_l4_in.iec";
+    write_file(in, "x := 1;\n");
+    fs::path err = tmp_dir_ / "c11_l4_err.txt";
+    const std::string marker = "PP10: An error occurred with the file; '";
+
+    for (const std::string& args : {std::string("/proc/self/mem"), "-include /proc/self/mem " + a8_q(in)}) {
+        auto r = run_sh("exec " + a8_q(exe_) + " -P " + args + " >/dev/null", err);
+        EXPECT_EQ(1, r.exit_code) << args << ": " << r.err;
+        EXPECT_EQ(std::string::npos, r.err.find("PP01")) << args << ": " << r.err;
+        auto lines = c11_diag_lines(r.err);
+        ASSERT_EQ(1u, lines.size()) << args << ": " << r.err;
+        const auto at = lines[0].find(marker);
+        ASSERT_NE(std::string::npos, at) << lines[0];
+        ASSERT_EQ('\'', lines[0].back()) << lines[0];
+        const std::string context = lines[0].substr(at + marker.size(),
+                                                    lines[0].size() - 1 - (at + marker.size()));
+        EXPECT_EQ(0u, context.rfind("/proc/", 0)) << context;
+        EXPECT_TRUE(context.size() >= 4 && context.compare(context.size() - 4, 4, "/mem") == 0) << context;
+    }
+}
+#endif // __linux__
+
 // ---- Windows: UTF-8 application manifest (activeCodePage) ----
 //
 // jiepp.exe embeds a manifest with activeCodePage=UTF-8, so on Windows 10
@@ -1329,6 +1974,82 @@ WinRunResult run_w(const fs::path& exe, const std::wstring& args,
     CloseHandle(pi.hProcess);
 
     res.out = slurp_file(out_f);
+    res.err = slurp_file(err_f);
+    return res;
+}
+
+// Like run_w(), but stdout is the write end of an anonymous pipe whose read
+// end is closed before the child starts, so every write to stdout fails
+// (Windows has no SIGPIPE; the CRT write reports the error). stdin is NUL,
+// stderr goes to a file under `scratch`, the working directory is inherited,
+// and the 30-second timeout is the same as run_w()'s. `out` stays empty.
+WinRunResult run_w_closed_stdout_pipe(const fs::path& exe, const std::wstring& args,
+                                      const fs::path& scratch) {
+    WinRunResult res;
+    fs::path err_f = scratch / "run_w_pipe_stderr.txt";
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE h_read = nullptr;
+    HANDLE h_write = nullptr;
+    if (!CreatePipe(&h_read, &h_write, &sa, 0)) {
+        res.err = "run_w_closed_stdout_pipe: CreatePipe failed, error " + std::to_string(GetLastError());
+        return res;
+    }
+    // No reader is left, so the child's writes to stdout fail.
+    CloseHandle(h_read);
+    HANDLE h_in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE h_err = CreateFileW(err_f.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h_in == INVALID_HANDLE_VALUE || h_err == INVALID_HANDLE_VALUE) {
+        for (HANDLE h : {h_in, h_err})
+            if (h != INVALID_HANDLE_VALUE)
+                CloseHandle(h);
+        CloseHandle(h_write);
+        res.err = "run_w_closed_stdout_pipe: cannot open the redirection handles";
+        return res;
+    }
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = h_in;
+    si.hStdOutput = h_write;
+    si.hStdError = h_err;
+    PROCESS_INFORMATION pi{};
+
+    std::wstring cmd = L"\"" + exe.wstring() + L"\" " + args;
+    BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
+    // The child holds its own copies of the handles.
+    CloseHandle(h_in);
+    CloseHandle(h_write);
+    CloseHandle(h_err);
+    if (!ok) {
+        res.err = "run_w_closed_stdout_pipe: CreateProcessW failed, error " + std::to_string(GetLastError());
+        return res;
+    }
+
+    const DWORD waited = WaitForSingleObject(pi.hProcess, 30000);
+    if (waited == WAIT_FAILED) {
+        res.err = "run_w_closed_stdout_pipe: WaitForSingleObject failed, error " + std::to_string(GetLastError());
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return res;
+    }
+    if (waited == WAIT_TIMEOUT) {
+        res.timed_out = true;
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 5000);
+    }
+    DWORD code = 0;
+    if (GetExitCodeProcess(pi.hProcess, &code))
+        res.exit_code = static_cast<int>(code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
     res.err = slurp_file(err_f);
     return res;
 }
@@ -1488,5 +2209,41 @@ TEST_F(SandboxCliUtf8PathC1Test, Pp11QuotedTextC1PairRemoved) {
     EXPECT_EQ(r.err.find("\xC2\x9B"), std::string::npos) << "stderr: " << r.err;
 }
 #endif
+
+// ---- A8: output write failures (Windows CLI) ----
+//
+// A write failure to a regular -o file cannot be produced portably on
+// Windows; it goes through the same stream-state check as the Linux
+// RLIMIT_FSIZE test (OutputFileWriteFailureRemovesPartialRegularFile).
+
+TEST_F(RobustnessTestSmoke, ClosedStdoutPipeReportsPP10) {
+    fs::path small = tmp_dir_ / "a8_w1_small.iec";
+    write_file(small, "abcdefghi\n");  // -P output: 10 bytes
+    fs::path big = tmp_dir_ / "a8_w1_big.iec";
+    write_file(big, a8_big_source(15000));  // about 900 KB of output
+
+    for (const fs::path& in : {small, big}) {
+        auto r = run_w_closed_stdout_pipe(exe_, L"-P \"" + in.wstring() + L"\"", tmp_dir_);
+        ASSERT_FALSE(r.timed_out) << in;
+        EXPECT_EQ(1, r.exit_code) << in << ": " << r.err;
+        EXPECT_EQ(std::vector<std::string>{A8_STDOUT_PP10}, a8_diag_lines(r.err)) << r.err;
+    }
+    for (const wchar_t* arg : {L"--version", L"--help"}) {
+        auto r = run_w_closed_stdout_pipe(exe_, arg, tmp_dir_);
+        ASSERT_FALSE(r.timed_out);
+        EXPECT_EQ(1, r.exit_code) << r.err;
+        EXPECT_EQ("", r.err);
+    }
+}
+
+// Guard: passes before and after A8.
+TEST_F(RobustnessTestSmoke, OutputToNulSucceeds) {
+    fs::path in = tmp_dir_ / "a8_w2_in.iec";
+    write_file(in, "x := 1;\n");
+
+    auto r = run("\"" + in.generic_string() + "\" -o NUL");
+    EXPECT_EQ(0, r.exit_code) << "stderr: " << r.err;
+    EXPECT_EQ("", r.err);
+}
 
 #endif // _WIN32
