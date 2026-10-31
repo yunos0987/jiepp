@@ -78,6 +78,7 @@ JIEPP_ISSUE_CODE(STACK_EXHAUSTED,              63, SEVERE,  "Stack nearly exhaus
 JIEPP_ISSUE_CODE(MAX_EXPANSION_STEPS_EXCEEDED, 64, SEVERE,  "Maximum expansion steps exceeded")
 JIEPP_ISSUE_CODE(TOO_MANY_ERRORS,              65, SEVERE,  "Too many errors emitted, stopping now")
 JIEPP_ISSUE_CODE(MAX_INCLUDE_COUNT_EXCEEDED,   66, SEVERE,  "Maximum include count exceeded")
+JIEPP_ISSUE_CODE(MAX_INPUT_BYTES_EXCEEDED,     67, SEVERE,  "Maximum input size exceeded")
 
 // --- CLI/Option (70-79) ---
 JIEPP_ISSUE_CODE(UNKNOWN_OPTION,               70, ERROR,   "Unknown command-line option")

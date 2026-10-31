@@ -2960,3 +2960,202 @@ TEST_F(JieppCommandTest, WerrorUndefCli) {
     fs::remove(src, ec);
     fs::remove(out_path, ec);
 }
+
+// ---- A8: output write failures are PP10 '<stdout>' ----
+//
+// The fixture name starts with RobustnessTest, so the sandbox ctest runs
+// these too (they need no {#include}). The failure is injected through
+// std::cout's streambuf (CoutRedirect), so these tests exercise only the
+// std::cout-state branch of the stdout check; the fflush(stdout) /
+// ferror(stdout) branch is exercised by the Linux /dev/full tests and the
+// Windows closed-pipe test in test_smoke.cpp. Every test ends with std::cout
+// good again (CoutRedirect's rdbuf() swap clears the stream state).
+
+namespace {
+
+// Rejects every byte: overflow() returns eof, xsputn() returns 0 and sync()
+// returns -1, so the first write already sets badbit on std::cout.
+class RejectingStreambuf : public std::streambuf {
+protected:
+    int_type overflow(int_type) override { return traits_type::eof(); }
+    std::streamsize xsputn(const char*, std::streamsize) override { return 0; }
+    int sync() override { return -1; }
+};
+
+// Accepts and records every byte; only the flush (sync()) fails.
+class FlushFailingStreambuf : public std::streambuf {
+public:
+    std::string data;
+protected:
+    int_type overflow(int_type c) override {
+        if (traits_type::eq_int_type(c, traits_type::eof()))
+            return traits_type::not_eof(c);
+        data.push_back(traits_type::to_char_type(c));
+        return c;
+    }
+    std::streamsize xsputn(const char* s, std::streamsize n) override {
+        data.append(s, static_cast<std::size_t>(n));
+        return n;
+    }
+    int sync() override { return -1; }
+};
+
+// Runs jiepp_command() with std::cout writing into `buf`.
+int run_with_cout_buf(const JieppOptions& opts, std::streambuf& buf) {
+    std::ostream sink(&buf);
+    CoutRedirect cout_guard(sink);
+    return jiepp_command(opts);
+}
+
+const std::string STDOUT_PP10 = "jiepp: error: PP10: An error occurred with the file; '<stdout>'";
+
+} // namespace
+
+class RobustnessTestOutputFailure : public JieppTest {};
+
+TEST_F(RobustnessTestOutputFailure, StdoutWriteFailureReportsPP10) {
+    fs::path src = write_temp_iec("rtof_write", "x := 1;\n");
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    RejectingStreambuf buf;
+    EXPECT_EQ(1, run_with_cout_buf(opts, buf));
+    EXPECT_EQ(STDOUT_PP10, message());
+    EXPECT_TRUE(std::cout.good());
+}
+
+TEST_F(RobustnessTestOutputFailure, StdoutFlushFailureDoesNotDuplicateOutput) {
+    fs::path src = write_temp_iec("rtof_flush", "{#define X 42}\nr := X;\n");
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = -1;
+    const std::string expected = run_capturing_stdout(opts, rc);
+    ASSERT_EQ(0, rc);
+    ASSERT_TRUE(empty());
+    ASSERT_FALSE(expected.empty());
+
+    Issue::initialize(output());
+    FlushFailingStreambuf buf;
+    EXPECT_EQ(1, run_with_cout_buf(opts, buf));
+    EXPECT_EQ(STDOUT_PP10, message());
+    // The error path must not write the output a second time.
+    EXPECT_EQ(expected, buf.data);
+    EXPECT_TRUE(std::cout.good());
+}
+
+TEST_F(RobustnessTestOutputFailure, StdoutFailureWithDumpMacrosAndDepRules) {
+    fs::path src = write_temp_iec("rtof_dm_m", "{#define X 42}\nr := X;\n");
+
+    // (a) -dM
+    {
+        JieppOptions opts;
+        opts.input_filepaths = {src.generic_string()};
+        opts.dM = true;
+        RejectingStreambuf buf;
+        EXPECT_EQ(1, run_with_cout_buf(opts, buf)) << "-dM";
+        EXPECT_EQ(STDOUT_PP10, message()) << "-dM";
+    }
+    // (b) -M without -MF: the rules go to stdout.
+    {
+        Issue::initialize(output());
+        JieppOptions opts;
+        opts.input_filepaths = {src.generic_string()};
+        opts.dep_mode = DepMode::ALL;
+        RejectingStreambuf buf;
+        EXPECT_EQ(1, run_with_cout_buf(opts, buf)) << "-M";
+        EXPECT_EQ(STDOUT_PP10, message()) << "-M";
+    }
+    EXPECT_TRUE(std::cout.good());
+}
+
+TEST_F(RobustnessTestOutputFailure, StdoutFailureRemovesDepFileWrittenThisRun) {
+    fs::path src = write_temp_iec("rtof_dep", "x := 1;\n");
+    fs::path dep = fs::temp_directory_path() / "rtof_dep.d";
+    std::error_code ec;
+    fs::remove(dep, ec);
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = dep.generic_string();
+
+    FlushFailingStreambuf buf;
+    EXPECT_EQ(1, run_with_cout_buf(opts, buf));
+    EXPECT_EQ(STDOUT_PP10, message());
+    EXPECT_FALSE(fs::exists(dep)) << "the dep file written by this failed run must be removed";
+    EXPECT_TRUE(std::cout.good());
+    fs::remove(dep, ec);
+}
+
+TEST_F(RobustnessTestOutputFailure, StdoutFailureAfterErrorsAddsPP10) {
+    fs::path src = write_temp_iec("rtof_e3", "BEFORE;\n{#error x}\nAFTER;\n");
+
+    for (bool dump : {false, true}) {
+        Issue::initialize(output());
+        JieppOptions opts;
+        opts.input_filepaths = {src.generic_string()};
+        opts.dM = dump;
+        RejectingStreambuf buf;
+        EXPECT_EQ(1, run_with_cout_buf(opts, buf)) << "dM=" << dump;
+        auto lines = messages();
+        ASSERT_EQ(2u, lines.size()) << "dM=" << dump;
+        EXPECT_NE(std::string::npos, lines[0].find("PP91")) << lines[0];
+        EXPECT_EQ(STDOUT_PP10, lines[1]);
+    }
+    EXPECT_TRUE(std::cout.good());
+}
+
+TEST_F(RobustnessTestOutputFailure, StdoutFailureAfterAbortAddsPP10) {
+    fs::path src = write_temp_iec("rtof_e4", "BEFORE;\n{#severe x}\nAFTER;\n");
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    RejectingStreambuf buf;
+    EXPECT_EQ(1, run_with_cout_buf(opts, buf));
+    auto lines = messages();
+    ASSERT_EQ(2u, lines.size());
+    EXPECT_NE(std::string::npos, lines[0].find("PP90")) << lines[0];
+    EXPECT_EQ(STDOUT_PP10, lines[1]);
+    EXPECT_TRUE(std::cout.good());
+}
+
+TEST_F(RobustnessTestOutputFailure, DepOpenFailureThenStdoutFailureReportsBoth) {
+    // As DepFileOpenFailureAfterBuildPrintsFullOutputToStdout: the
+    // auto-named dep file (CWD/rtof_e4b.d) is blocked by a directory, so the
+    // E4b path prints the built output to stdout, which fails here as well.
+    fs::path scratch_dir = fs::temp_directory_path() / "jiepp_rtof_e4b";
+    std::error_code ec;
+    fs::remove_all(scratch_dir, ec);
+    fs::create_directories(scratch_dir);
+    fs::path src = scratch_dir / "rtof_e4b.iec";
+    {
+        std::ofstream f(src, std::ios::binary);
+        f << "BEFORE;\nAFTER;\n";
+    }
+    fs::path dep_out = scratch_dir / "rtof_e4b.d";
+    fs::create_directory(dep_out, ec);
+    ASSERT_TRUE(fs::is_directory(dep_out));
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.MD = true;
+    opts.dep_mode = DepMode::ALL;
+
+    RejectingStreambuf buf;
+    int rc = 0;
+    {
+        CwdGuard cwd_guard(scratch_dir);
+        rc = run_with_cout_buf(opts, buf);
+    }
+    EXPECT_EQ(1, rc);
+    auto lines = messages();
+    ASSERT_EQ(2u, lines.size());
+    EXPECT_EQ("jiepp: error: PP10: An error occurred with the file; 'rtof_e4b.d'", lines[0]);
+    EXPECT_EQ(STDOUT_PP10, lines[1]);
+    EXPECT_TRUE(fs::is_directory(dep_out)) << "the blocking directory must be left alone";
+    EXPECT_TRUE(std::cout.good());
+
+    fs::remove_all(scratch_dir, ec);
+}

@@ -53,7 +53,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 - `Symtab`（`symtab.hpp/cpp`）— マクロシンボルテーブル。`undef()`/再定義で置き換えられた `Macro` は `retired_` に退避し破棄しない（取得済み `Macro*` を有効に保つため。1 回の実行内の退避でリークではない）
 - `FileContext`（`file_context.hpp/cpp`）— インクルードスタック・検索パス・行番号・依存関係追跡・`once_files_`（`{#pragma once}` の処理済みパスセット）。行番号は `LineNo`（`env/lineno.hpp`、64 ビット格納・32 ビットラップ、`Issue::LocationEntry`/`Token::line_pragma`/`LineMarker` も同じ型）
-- `Param`（`param.hpp/cpp`, `param_constants.hpp`）— リミット値・プラグマスタイル・トークンキャッシュ・`dd_mode_`（`-dD` フラグ）・名前付きカウンタの値（`counters_`、`counter_value()`/`counter_slot()`。SPEC §12.10）。カウンタはマクロとは別の名前空間で、`Env` の寿命の間残る（`preprocess()` ごとにはリセットしない。`-include` のファイルと主入力で共有）。値をマクロのオブジェクトではなく `Env` に置くので、`{#undef __counter}` しても値は消えない
+- `Param`（`param.hpp/cpp`, `param_constants.hpp`）— リミット値・プラグマスタイル・トークンキャッシュ・`dd_mode_`（`-dD` フラグ）・入力サイズの上限と読んだバイト数（`max_input_bytes_`・`input_bytes_`、`charge_input_bytes()`、`PP67`。`preprocess()` ごとに `reset_input_bytes()`）・名前付きカウンタの値（`counters_`、`counter_value()`/`counter_slot()`。SPEC §12.10）。カウンタはマクロとは別の名前空間で、`Env` の寿命の間残る（`preprocess()` ごとにはリセットしない。`-include` のファイルと主入力で共有）。値をマクロのオブジェクトではなく `Env` に置くので、`{#undef __counter}` しても値は消えない
 
 診断出力（`Issue`, `IssueMessage`）も `env/` が担当（詳細は「[エラー処理 (Issue)](#エラー処理-issue)」）。
 
@@ -66,6 +66,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `{` と `#` の間に空白・改行・コメントがあると通常のプラグマとして扱われる。空白/改行なら `PP28`（`WHITESPACE_BEFORE_DIRECTIVE`）警告（`lexer_pragma.cpp`）
 - 閉じていない文字列リテラルは `tokenize()` が `Token::unterminated` を立て（後続リテラルと結合しない）、`PP29`（`UNTERMINATED_STRING_LITERAL`）警告は core がトークンを処理するとき（`expand()` 主ループ・関数マクロ引数収集・`preprocessor_detail::lex_operand()`）に 1 回だけ出してフラグを下ろす。無効なグループとメッセージディレクティブでは出さない
 - `preprocessor_detail::lex_operand()`（ディレクティブのオペランド・プラグマ本体・マクロが作ったテキストの再字句解析）は `iec3_relex()` を使う。このとき字句解析器は自分の行カウンタで位置を積まず（`LexOptions::at_current_location`、`lexer_helpers.hpp` の `report_lex_issue()`）、`PP20`・`PP22`・`PP23` をその時点の `Issue` の位置（処理中のディレクティブ/プラグマの位置）に出す。ソースファイルの字句解析（`iec3_tokens()` / `iec3_tokens_from_string()`）は従来どおり自分の行カウンタで位置を積む。両者は `lexer.cpp` の `lex_text()` を共有する
+- 入力の読み込み（`loader.hpp/cpp`）: プリプロセッサが読むソースは、すべて上限付きの読み込み関数を通る。ファイル（主入力、`-include`、`{#include}`/`{#sinclude}`）は `Loader::tokens()` のキャッシュに無いときだけ `Loader::read_file()` で読む。OS を問わず `std::FILE`（Windows は `_fsopen(path, "rb", _SH_DENYNO)`、ほかは `std::fopen(path, "rb")`、`std::fread`、`std::ferror`、`std::fclose`）で読む。MSVC STL の `std::ifstream` は読み取りエラーを EOF としか伝えないためで、`_fsopen` は MSVC の `ifstream` が内部で使う `_Fiopen` と同じ呼び出し（狭い文字列のパス、`_SH_DENYNO`）。標準入力（`jiepp.cpp`）とライブラリの `preprocess()` のストリームは `Loader::read_stream()` で `rdbuf()->sgetn` を `sgetn` が 0 を返すまで呼んで読む（ストリームの状態は見ない。try で囲むのは `sgetn` の呼び出しだけで、`std::bad_alloc` はそのまま伝わる）。どちらも 64 KiB（`Loader::READ_CHUNK`）ずつ読んで `Param::charge_input_bytes()` に数え（`--max-input-bytes`、`PP67`）、読み取りエラーは `PP10`（ファイルはパス、標準入力は `<stdin>`、ライブラリのストリームは `<input>`）。標準入力では `std::ferror(stdin)` も調べる（libstdc++ の `std::cin` は stdio と同期していて、読み取りエラーで badbit を立てないため）。ストリームバッファがエラーを入力の終わりとしてしか伝えない場合（呼び出し元が渡した MSVC の `std::ifstream` など）は検出できない。`iec3_tokens(std::istream&)` は上限なしの読み込みのまま残り、これらの読み込み経路では使わない
 - `Token`（`token.hpp`）はトークン 1 個を表す構造体（`text`, `kind` 等のフィールド）
 - `Token::relexed_pragma` は、プラグマ本体の再字句解析（`core/expand.cpp` の `expand_pragma_token()` → `preprocessor_detail::expand_operand_tokens()`）で字句解析器が作った PRAGMA トークンに立つ印で、テキストは字句解析器が作ったままのものに限る。印の付いたトークンの本体を再字句解析するときは、`read_pragma_body()` が本体の中の生の `{` に対する `PP22` だけを出さない（外側の段で同じ文字を報告済みのため。入れ子の `{` N 個で N(N+1)/2 行だった報告が線形になる）。閉じていないプラグマの `PP22`・閉じ記号の不一致・`PP23` は常に出す。テキストを書き換える `expand_pragma_token()` の出力と `@@` 連結（`glue_tokens()`）の結果では印を下ろす。印を下ろすのは連結に成功したときだけで、連結に失敗した（`PP32`）ときは左辺の字句を書き換えず（印・テキスト・ハイドセットとも）、右辺の字句を別の字句としてその後ろに残すので、どちらの印も変わらない（失敗の条件は異なる字句の種類、または `(` `)` `,` `[` `]` どうし。§4.3）
 - Prosser の hide set（`Token::hs`）は `hideset.hpp/cpp` の `HideSet` が実装する。中身はインターン済みマクロ名 id 上の永続的（immutable、構造共有）ビットマップ基数トライで、値はポインタ 1 個のハンドル（コピーは参照カウントの加算のみ。カウントは atomic ではないため、HideSet の値をスレッド間で共有しない）。名前→id のテーブルはプロセス全体で 1 つ・一度登録した名前は解放されず・`Issue` 同様スレッドセーフではない
@@ -97,6 +98,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 - `main.cpp` — `parse_args()` を呼び `jiepp_command()` を実行するエントリポイント
 - `jiepp.hpp/cpp` — `int jiepp_command(const JieppOptions& opts)`: `JieppOptions` に基づく前処理の実行
 - `option.hpp/cpp` — `JieppOptions` 構造体 + `DepMode` enum + `parse_args()` + `define_macro_option()`
+- 出力段階の検査（`jiepp.cpp`）— `-o` と依存ファイルはクローズ後のストリームの状態を、stdout は `std::cout` の状態・`std::fflush(stdout)`・`std::ferror(stdout)` を確かめ、失敗は `PP10`（stdout は `<stdout>`）。中断・エラーありの経路でも stdout に出した後に同じ検査をし、出した内容を再び出すことはない。この実行が書き込み用に開いた出力ファイルは、失敗時にストリームを閉じ（結果は見ない）、`fs::is_regular_file(path, ec)` が真のときだけ `fs::remove(path, ec)` で消す（catch の中で動くので `std::error_code` 版だけを使う）。`--help`/`--version`（`option.cpp`）も stdout を確かめ、書けなければ終了コード 1
 
 `main.cpp` は `main()` 本体に加え次を担う。
 
@@ -109,7 +111,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 - 入出力: `input_filepaths`, `output_filepath`, `disppath`（表示用パス。既定値・stdin 時の挙動は [SPECIFICATION.md §13](SPECIFICATION.md#13-cli-リファレンス--cli-reference)）
 - マクロ: `define_macros`(`-D`), `undef_macros`(`-U`), `include_filepaths`(`-include`), `syspaths`(`-I`)
-- 上限値: `max_include_depth`, `max_expansion_depth`, `max_expansion_steps`(`--max-expansion-steps`、展開の仕事量の上限・`PP64`・ディレクティブなし), `max_include_count`(`--max-include-count`、実行した `{#include}`/`{#sinclude}` の回数の上限・`PP66`・ディレクティブなし。`Param::count_include()` を `handle_include()` が strip_path と NUL 検査の後、`expand()` の前に 1 回呼ぶ。`{#pragma once}` で飛ばすものも数える。カウンタは `preprocess()` ごとに `reset_include_count()`。CLI は Env 1 個で全体を数え、`-include` と `__has_include` は数えない), `error_limit`(`--error-limit`、エラー件数の上限・`PP65`・ディレクティブなし。`Issue::error_limit_` に設定する), `max_if_nesting`, `max_blank_lines`, `recursion_limit`
+- 上限値: `max_include_depth`, `max_expansion_depth`, `max_expansion_steps`(`--max-expansion-steps`、展開の仕事量の上限・`PP64`・ディレクティブなし), `max_include_count`(`--max-include-count`、実行した `{#include}`/`{#sinclude}` の回数の上限・`PP66`・ディレクティブなし。`Param::count_include()` を `handle_include()` が strip_path と NUL 検査の後、`expand()` の前に 1 回呼ぶ。`{#pragma once}` で飛ばすものも数える。カウンタは `preprocess()` ごとに `reset_include_count()`。CLI は Env 1 個で全体を数え、`-include` と `__has_include` は数えない), `max_input_bytes`(`--max-input-bytes`、読み込む入力の合計バイト数の上限・`PP67`・ディレクティブなし・既定 0 で無制限。`-include` を読む前に `Env::set_max_input_bytes()` へ設定する), `error_limit`(`--error-limit`、エラー件数の上限・`PP65`・ディレクティブなし。`Issue::error_limit_` に設定する), `max_if_nesting`, `max_blank_lines`, `recursion_limit`
 - 依存関係: `dep_mode`(`-M`/`-MM`), `dep_file`(`-MF`), `dep_target`(`-MT`), `MD`/`MMD`(`-MD`/`-MMD`)
 - 出力形式: `pp_output_pragma_style`, `no_line_markers`(`-P`), `dM`(`-dM`), `dD`(`-dD`), `remove_comments`(`-nC`)
 - 診断: `silent`, `suppress_warnings`(`-w`), `werror`(`-Werror`), `warn_undef`(`-Wundef`。`jiepp_command()` が `-D`/`-U` を処理する前に `Issue::enable(UNDEFINED_IDENTIFIER)` を呼ぶ), `werror_undef`(`-Werror=undef`。同じ位置で `Issue::add_werror(UNDEFINED_IDENTIFIER)` を呼ぶ。`-Werror=` に続けられるのは `undef` だけ)
@@ -169,11 +171,11 @@ GCC/cpp 同様、組み込みマクロの定義責務をプリプロセッサと
 入力（ファイル or stdin）→ `lexer` → `core::expand()`（ディレクティブ処理・マクロ展開）→ `line_compaction`（空行圧縮）→ 出力（ファイル or stdout）。処理の流れ:
 
 1. `jiepp/main.cpp` が `parse_args()` で引数を解析して `jiepp_command()` を呼ぶ（スタック確保・標準出力のバイナリモード化は「jiepp/」節参照）
-2. `jiepp_command()` が `Env` を構築し、`Issue::ContinueMode` ガードの下で `-include` の展開とトップレベル入力の `expand()`（ファイルパス版。標準入力ならトークン列版）を呼ぶ
+2. `jiepp_command()` が `Env` を構築し、`Issue::ContinueMode` ガードの下で `-include` の展開とトップレベル入力の `expand()`（ファイルパス版。標準入力ならトークン列版）を呼ぶ。入力の読み込みは上限付き（`Loader::read_file()` / `Loader::read_stream()`。上記「loader/ の内部構成」）
 3. `core/expand.cpp` がトークン列を走査する。ディレクティブは `directive_parser` → `directive_handlers` が、`#include`/`#sinclude` は `handle_include()`（`directive_handlers.cpp`。再帰的に `expand()` を呼ぶ）が、`#if` 条件式は `constfold` が（`__has_include` は事前解決）処理する。ディレクティブのオペランド（`#include` のパス、`#if` の条件式文字列、`{#error}`/`{#warning}` のメッセージ文字列）は `preprocessor_detail::expand_operand_text()` が 1 往復再展開する（内部で `expand()` を呼ぶだけで空行圧縮はしない。使用元: `directive_handlers.cpp`/`expand.cpp`/`expand_ctrl.cpp`）。マクロ参照は `Env` のシンボルテーブルで展開する
 4. `-include`/トップレベル入力の展開が中断コード（`SEVERE` または PP10〜14, 60, 61）で止まった場合、および中断せず終えても `Issue::error_count_ >= 1` の場合の、標準出力・`-o`・依存ファイルの出し分けと終了コードは [SPECIFICATION.md §16](SPECIFICATION.md#16-エラーコード一覧--issue-code-reference) を参照（`jiepp_command()`/`src/jiepp/jiepp.cpp` が実施。中断時はそれまでの `ots` に空行圧縮をかけたうえで判定する）
 5. 中断も未処理エラーもなければ `jiepp::compact_blank_lines()`（`core/line_compaction.cpp`）が `ots` 全体に後処理として 1 回走り、8 行以上連続する空行を行マーカー 1 行に圧縮する（`-P` 指定時は空行を全除去。上限は `--max-blank-lines`、既定 7）。`Token::output_only_lines`（マクロ展開が出力する `$n` 等の改行、`token.hpp`）が立った改行はソースの行として数えない。それにより出力がソースより先に進んだ場合、次のソース行の先頭に再同期用の行マーカーを 1 行挿入する（この再同期は空行圧縮とは独立で、`--max-blank-lines 0` でも行う。`-P` では行わない）
-6. 出力トークン列をテキスト化して書き出す（`output_filepath` 指定時はファイルへ、なければ stdout へ）。依存ファイル（`-MF`/`-MD`/`-MMD` 自動命名）は `-o` を開く前に書く
+6. 出力トークン列をテキスト化して書き出す（`output_filepath` 指定時はファイルへ、なければ stdout へ）。依存ファイル（`-MF`/`-MD`/`-MMD` 自動命名）は `-o` を開く前に書く。書いた後、ファイルはクローズ、stdout はフラッシュして結果を確かめ、失敗は `PP10`（[SPECIFICATION.md §16](SPECIFICATION.md#16-エラーコード一覧--issue-code-reference)）
 
 ## サンドボックスモード (`JIEPP_SANDBOX`)
 

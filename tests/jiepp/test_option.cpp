@@ -244,6 +244,43 @@ TEST_F(OptionTest, ParseArgsMaxIncludeCountMissingValue) {
     }
 }
 
+// C11: --max-input-bytes N / --max_input_bytes N; 0 (no limit) is valid,
+// the 2^24 cap of the depth options (PP04) does not apply.
+TEST_F(OptionTest, ParseArgsMaxInputBytesBothSpellings) {
+    for (const char* spelling : {"--max-input-bytes", "--max_input_bytes"}) {
+        for (const char* value : {"0", "1", "2147483647"}) {
+            char* argv[] = {const_cast<char*>("jiepp"),
+                            const_cast<char*>(spelling), const_cast<char*>(value)};
+            auto opts = parse_args(3, argv);
+            ASSERT_TRUE(opts.max_input_bytes.has_value()) << spelling << " " << value;
+            EXPECT_EQ(*opts.max_input_bytes, std::stoi(value)) << spelling;
+        }
+    }
+    char* argv[] = {const_cast<char*>("jiepp")};
+    EXPECT_FALSE(parse_args(1, argv).max_input_bytes.has_value());
+}
+
+TEST_F(OptionTest, ParseArgsMaxInputBytesInvalidValues) {
+    for (const char* spelling : {"--max-input-bytes", "--max_input_bytes"}) {
+        for (const char* bad : {"-1", "x", "3abc", "2147483648"}) {
+            char* argv[] = {const_cast<char*>("jiepp"),
+                            const_cast<char*>(spelling), const_cast<char*>(bad)};
+            EXPECT_THROW(parse_args(3, argv), Issue::Exception) << spelling << " " << bad;
+            auto msgs = messages();
+            ASSERT_EQ(1u, msgs.size()) << bad;
+            EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << bad << ": " << msgs[0];
+        }
+    }
+}
+
+TEST_F(OptionTest, ParseArgsMaxInputBytesMissingValue) {
+    for (const char* spelling : {"--max-input-bytes", "--max_input_bytes"}) {
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(spelling)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception) << spelling;
+        EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code()) << spelling;
+    }
+}
+
 TEST_F(OptionTest, ParseArgsSnakeCaseVariants) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("--max_include_depth"), const_cast<char*>("5")};

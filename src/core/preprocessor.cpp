@@ -5,7 +5,9 @@
 #include "preprocessor_internal.hpp"
 
 #include "../loader/lexer.hpp"
+#include "../loader/loader.hpp"
 
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -23,7 +25,12 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     env.reset_expansion_steps();
     // Same for the executed-include count (PP66).
     env.reset_include_count();
-    auto its = iec3_tokens(input, env.get_remove_comments(), 1);
+    // Same for the input size (PP67). The stream is read through the
+    // bounded reader; a read error is PP10 '<input>' (the stream has no
+    // path; the location is the caller's current Issue location).
+    env.reset_input_bytes();
+    const std::optional<std::string> text = Loader::read_stream(input, env, "<input>");
+    auto its = iec3_tokens_from_string(text ? *text : std::string(), env.get_remove_comments(), 1);
     std::vector<Token> ots;
     // No leading line marker here (unlike the jiepp command line), so tell
     // the compaction which line the stream starts on.

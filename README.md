@@ -165,6 +165,7 @@ cat input.iec | jiepp -
 | `--max-expansion-steps N` | マクロ展開の仕事量の上限（`0` で無制限。超えると `PP64` で中断） | 16777216 |
 | `--max-include-count N` / `--max_include_count N` | 実行した `{#include}` / `{#sinclude}` の回数の上限（`0` で無制限。超えると `PP66` で中断） | 10000 |
 | `--error-limit N` / `--error_limit N` | エラー件数の上限（`0` で無制限。N 件に達した後の次のエラーは出さずに `PP65` で中断） | 1000（サンドボックスビルドは 100） |
+| `--max-input-bytes N` / `--max_input_bytes N` | 読み込む入力の合計バイト数の上限（`0` で無制限。超えると `PP67` で中断） | 0（サンドボックスビルドも同じ） |
 | `--` | オプション終端 | — |
 | `--help` / `-h` | ヘルプ表示 | — |
 
@@ -233,7 +234,9 @@ ctest --preset windows-clang-ninja-sandbox-debug
 
 サンドボックス専用プリセット（`*-sandbox-debug` / `*-sandbox-release`）は独自のビルドディレクトリを持ち、`JIEPP_SANDBOX=ON` を設定します。通常のプリセットは `JIEPP_SANDBOX=OFF` を明示します。通常プリセットに `-DJIEPP_SANDBOX=ON` を付けるとキャッシュに値が残るため、使用しないでください。サンドボックス用 `ctest` は `Sandbox` / `RobustnessTest` のみを実行します（通常テストはサンドボックスビルドでは失敗が想定されます）。
 
-詳細は [`SPECIFICATION.md` §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode) を参照してください。
+信頼できない入力を処理するときは、運用側で上限も指定してください。入力サイズの上限 `--max-input-bytes` は、サンドボックスビルドでも既定が `0`（無制限）です。展開の仕事量の上限（`--max-expansion-steps`、既定 16777216）などの展開の上限も、環境に合わせて小さくできます。
+
+詳細は [`SPECIFICATION.md` §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode) と [SECURITY.md](SECURITY.md) を参照してください。
 
 ### サーバーへのデプロイ / Server Deployment
 

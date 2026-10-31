@@ -111,6 +111,19 @@ void Param::raise_include_count_exceeded() const {
 }
 
 // ---------------------------------------------------------------------------
+// Input size budget
+// ---------------------------------------------------------------------------
+
+void Param::raise_input_bytes_exceeded() const {
+    ISSUE(MAX_INPUT_BYTES_EXCEEDED,
+          "limit " + std::to_string(max_input_bytes_) +
+          " bytes; use --max-input-bytes N to raise it (0 = no limit)");
+    // SEVERE: happen() always throws; this keeps the [[noreturn]] contract
+    // honest, like raise_include_count_exceeded() above.
+    throw Issue::Exception(Issue::Code::MAX_INPUT_BYTES_EXCEEDED);
+}
+
+// ---------------------------------------------------------------------------
 // Expansion work budget
 // ---------------------------------------------------------------------------
 

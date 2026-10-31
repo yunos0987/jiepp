@@ -5,10 +5,12 @@
 #include "../env/env.hpp"
 #include "../loader/token.hpp"
 #include "../loader/lexer.hpp"
+#include "../loader/loader.hpp"
 #include "../macro/macro.hpp"
 #include "../env/issue.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -136,6 +138,60 @@ std::set<Issue::Code> jiepp_continue_abort_codes() {
     };
 }
 
+// Context of a PP10 for a failed write to stdout (also for "-o -").
+const char* const STDOUT_CONTEXT = "<stdout>";
+
+// A8: an output (-o, the dependency file or stdout) could not be written,
+// flushed or closed: PP10 with the path (or STDOUT_CONTEXT) at the CLI
+// location. PP10 is blocked by default and aborts in continue mode, so
+// ISSUE throws; the explicit throw covers a caller that unblocked it.
+[[noreturn]] void output_failure(const std::string& context) {
+    ISSUE(FILE_ERROR, context);
+    throw Issue::Exception(Issue::Code::FILE_ERROR);
+}
+
+// output_failure() for the paths that are already failing (E3, E4, the E4b
+// catch): the diagnostic is printed and the exception is swallowed, since
+// the caller returns 1 anyway.
+void report_output_failure(const std::string& context) {
+    try {
+        output_failure(context);
+    } catch (const Issue::Exception&) {
+    }
+}
+
+// Flushes stdout and reports whether everything written to it so far got
+// out: std::cout's state (a failed write or a failed flush through its
+// streambuf sets badbit), then the C stdio stream it is synced with
+// (fflush(stdout), ferror(stdout)). std::cout is flushed first so its
+// buffered bytes reach stdout before stdout itself is flushed. stdout is
+// never closed here, so an error that only close(2) at exit reports (NFS)
+// is not seen (SPECIFICATION.md section 16).
+bool flush_stdout() {
+    std::cout.flush();
+    bool ok = !std::cout.fail();
+    if (std::fflush(stdout) != 0)
+        ok = false;
+    if (std::ferror(stdout))
+        ok = false;
+    return ok;
+}
+
+// Removes an output file this run opened for writing, after a failure. The
+// stream is closed first (its result is ignored: Windows cannot delete an
+// open file, and the failure is already being reported). Only a regular
+// file is removed: is_regular_file() follows symlinks (stat), like gcc's
+// delete_if_ordinary, so "-o /dev/full", a FIFO, a symlink to either and a
+// dangling symlink are all kept, while a symlink to a regular file is
+// removed as a link. Only the error_code overloads are used: this runs
+// inside catch blocks, where a filesystem_error would escape as PP01.
+void remove_if_regular(std::ofstream& stream, const std::string& path) {
+    stream.close();
+    std::error_code ec;
+    if (fs::is_regular_file(path, ec))
+        fs::remove(path, ec);
+}
+
 } // namespace
 
 int jiepp_command(const JieppOptions& opts)
@@ -149,20 +205,31 @@ int jiepp_command(const JieppOptions& opts)
 
     std::ostream* output_stream = &std::cout;
     std::ofstream output_file;
+    // A8: true from the moment -o was opened successfully. output_file's own
+    // is_open() cannot be used for the cleanup below: it is false again
+    // after a close() that failed.
+    bool output_file_opened = false;
     // Path of a separate dependency file (-MF / -MD / -MMD auto-named) that
-    // this run has fully written, if any -- remembered so the catch block
-    // below can remove it if a *later* step (typically opening -o) fails:
-    // otherwise a correctly-written .d file naming an output that was never
-    // produced (or never updated) would be left behind for a Make-based
-    // build to trust incorrectly. See the "remove only what this run wrote"
-    // rule documented at the catch site.
-    std::string dep_file_written;
+    // this run has opened for writing, if any (set as soon as the open
+    // succeeds) -- remembered so the catch blocks below can remove it if its
+    // own write/close fails or a *later* step (opening or writing -o,
+    // writing stdout) fails: otherwise a truncated .d file, or a
+    // correctly-written one naming an output that was never produced (or
+    // never updated), would be left behind for a Make-based build to trust
+    // incorrectly. See the "remove only what this run wrote" rule documented
+    // at the catch site. Declared here, not inside the try, so the catch
+    // blocks can close it before removing the file (remove_if_regular()).
+    std::ofstream dep_output;
+    std::string dep_file_opened;
+    // A8: set before anything is written to std::cout, so an error path
+    // never sends the output a second time.
+    bool stdout_attempted = false;
 
     // E4a: hoisted above the outer try (along with `ots` and `emit_tokens`
     // below) so a partial-output path reached via a nested catch --
-    // "aborted mid-expand" (E4a) or "-o/dep-file open failed after the
-    // output was already built" (E4b) -- can still see and print whatever
-    // of `ots` was produced. Both depend only on `opts`, not on anything
+    // "aborted mid-expand" (E4a) or "-o/dep-file open, write or close
+    // failed after the output was already built" (E4b) -- can still see
+    // and print whatever of `ots` was produced. Both depend only on `opts`, not on anything
     // computed inside the try (in particular, not on `env`), so they can be
     // decided this early.
     bool not_out = opts.dM || (opts.dep_mode != DepMode::NONE && !opts.MD && !opts.MMD);
@@ -231,6 +298,7 @@ int jiepp_command(const JieppOptions& opts)
                 output_file.open(*opts.output_filepath, std::ios::out | std::ios::binary);
                 if (!output_file)
                     ISSUE(FILE_ERROR, *opts.output_filepath);
+                output_file_opened = output_file.is_open();
                 output_stream = &output_file;
             }
         };
@@ -281,6 +349,10 @@ int jiepp_command(const JieppOptions& opts)
             env.set_max_expansion_steps(static_cast<std::uint64_t>(*opts.max_expansion_steps));
         if (opts.max_include_count)
             env.set_max_include_count(*opts.max_include_count);
+        // C11: before the -include files are read; 0 (the default in every
+        // build) is no limit.
+        if (opts.max_input_bytes)
+            env.set_max_input_bytes(*opts.max_input_bytes);
         if (opts.max_if_nesting)
             env.fix_max_if_nesting(*opts.max_if_nesting);
         if (opts.max_blank_lines)
@@ -341,8 +413,9 @@ int jiepp_command(const JieppOptions& opts)
         // check above, -D/-U, env fixups, the stdin+-MD/-MMD-without--MF
         // check just above) is CLI-shaped misuse that should keep aborting
         // unconditionally, the way it always has; everything after it (E4b's
-        // -o/dep-file open) raises only PP10, already in the abort set
-        // regardless of continue_mode_, so where this guard's scope ends
+        // -o/dep-file open, write and close, the stdout checks) raises only
+        // PP10, already in the abort set regardless of continue_mode_, so
+        // where this guard's scope ends
         // does not change behavior there either.
         bool aborted = false;
         {
@@ -382,7 +455,12 @@ int jiepp_command(const JieppOptions& opts)
                     Issue::LineGuard line_guard(1, dispath);
                     ots.push_back(Token::line_pragma(0, dispath, env.is_standard_pragma_style()));
                     ots.push_back(Token::newline());
-                    auto its = iec3_tokens(std::cin, env.get_remove_comments(), 1);
+                    // C11: bounded read (PP67); a read error, including
+                    // std::ferror(stdin), is PP10 '<stdin>' at this location.
+                    const std::optional<std::string> text =
+                        Loader::read_stream(std::cin, env, "<stdin>", /*check_stdio_stdin=*/true);
+                    auto its = iec3_tokens_from_string(text ? *text : std::string(),
+                                                       env.get_remove_comments(), 1);
                     expand(its, ots, env);
                 } else {
                     // Exactly one input file here: more than one was already
@@ -406,12 +484,16 @@ int jiepp_command(const JieppOptions& opts)
             // processing stopped before the macro table could reach its
             // final state). Neither -o nor any dependency file is ever
             // opened/written in this branch, and no existing file at either
-            // path is touched.
+            // path is touched. A8: a failed write of that partial output adds
+            // PP10 '<stdout>' after the diagnostic that stopped processing.
             if (pp_output_to_stdout && !not_out) {
                 jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
                     opts.no_line_markers ? jiepp::BlankLineMode::CollapseAll : jiepp::BlankLineMode::Markers,
                     env.is_standard_pragma_style());
+                stdout_attempted = true;
                 emit_tokens(ots);
+                if (!flush_stdout())
+                    report_output_failure(STDOUT_CONTEXT);
             }
             return 1;
         }
@@ -441,26 +523,34 @@ int jiepp_command(const JieppOptions& opts)
             // nothing. -M/-MM without -MF (not_out, but not opts.dM) prints
             // nothing on either destination: a partial dependency list
             // would mislead a Make-based build into thinking it has every
-            // prerequisite when it does not.
+            // prerequisite when it does not. A8: a failed write of what was
+            // printed adds PP10 '<stdout>' after the counted errors.
             if (pp_output_to_stdout) {
-                if (opts.dM)
+                if (opts.dM) {
+                    stdout_attempted = true;
                     dump_macros(env, std::cout);
-                else if (!not_out)
+                } else if (!not_out) {
+                    stdout_attempted = true;
                     emit_tokens(ots);
+                }
+                if (stdout_attempted && !flush_stdout())
+                    report_output_failure(STDOUT_CONTEXT);
             }
             return 1;
         }
 
         bool dep_has_separate_file = dep && effective_dep_file.has_value() && !effective_dep_file->empty();
 
-        // E4b: the dependency-file write and -o open are wrapped in their
-        // own try -- gcc has already flushed its preprocessed output before
-        // either of these can fail, so a PP10 here gets the same
-        // partial-output treatment as E4/E4a (plus the same "remove only
-        // what this run wrote" cleanup as the outer catch below, duplicated
-        // here rather than shared with it: by the time the outer catch
-        // runs, `ots`/`env` are already out of scope, so it cannot print
-        // anything itself).
+        // E4b: the dependency-file write and the -o open and write are
+        // wrapped in their own try -- gcc has already flushed its
+        // preprocessed output before any of these can fail, so a PP10 here
+        // gets the same partial-output treatment as E4/E4a (plus the same
+        // "remove only what this run wrote" cleanup as the outer catch
+        // below, duplicated here rather than shared with it: by the time the
+        // outer catch runs, `ots`/`env` are already out of scope, so it
+        // cannot print anything itself). A8: besides open failures this
+        // covers a failed write/close of the dependency file or -o and a
+        // failed write/flush of stdout.
         try {
             // Write the separate dependency file (-MF / -MD / -MMD auto-named)
             // before -o is opened: this write is completely independent of the
@@ -471,13 +561,17 @@ int jiepp_command(const JieppOptions& opts)
             // "dependency-file Make escaping" subsection).
             if (dep_has_separate_file) {
                 const std::string dep_target_text = format_dep_target(opts);
-                std::ofstream dep_output;
                 dep_output.open(*effective_dep_file, std::ios::out | std::ios::binary);
                 if (!dep_output)
                     ISSUE(FILE_ERROR, *effective_dep_file);
+                if (dep_output.is_open())
+                    dep_file_opened = *effective_dep_file;
                 write_dep_rules(dep_target_text, opts.dep_mode, dep_output, env);
+                // A8: close() flushes; a failed write leaves badbit and a
+                // failed flush or close sets failbit.
                 dep_output.close();
-                dep_file_written = *effective_dep_file;
+                if (dep_output.fail())
+                    output_failure(*effective_dep_file);
             }
 
             // -o (or stdout) is only needed when something will actually be
@@ -493,6 +587,9 @@ int jiepp_command(const JieppOptions& opts)
 
             if (need_output_stream) {
                 open_output();
+                const bool to_stdout = output_stream == &std::cout;
+                if (to_stdout)
+                    stdout_attempted = true;
                 emit_tokens(ots);
 
                 if (opts.dM) {
@@ -503,22 +600,36 @@ int jiepp_command(const JieppOptions& opts)
                     // No dep file: write dep rules to main output stream (-M / -MM without -MF)
                     write_dep_rules(format_dep_target(opts), opts.dep_mode, *output_stream, env);
                 }
-            }
-        } catch (const Issue::Exception&) {
-            // E4b: -o or the dependency file could not be opened (PP10).
-            if (output_file.is_open()) {
-                output_file.close();
-                if (opts.output_filepath) {
-                    std::error_code ec;
-                    fs::remove(*opts.output_filepath, ec);
+
+                // A8: check that everything got out. -o is closed here (not
+                // by its destructor) so a failed flush or close is seen.
+                if (to_stdout) {
+                    if (!flush_stdout())
+                        output_failure(STDOUT_CONTEXT);
+                } else {
+                    output_file.close();
+                    if (output_file.fail())
+                        output_failure(*opts.output_filepath);
                 }
             }
-            if (!dep_file_written.empty()) {
-                std::error_code ec;
-                fs::remove(dep_file_written, ec);
-            }
-            if (pp_output_to_stdout && !not_out)
+        } catch (const Issue::Exception&) {
+            // E4b: -o or the dependency file could not be opened, written or
+            // closed, or stdout could not be written (PP10). Remove what this
+            // run opened for writing (regular files only, see
+            // remove_if_regular()).
+            if (output_file_opened)
+                remove_if_regular(output_file, *opts.output_filepath);
+            if (!dep_file_opened.empty())
+                remove_if_regular(dep_output, dep_file_opened);
+            // A stdout destination still gets the full output when the
+            // failure was elsewhere (a dependency-file failure) -- but never
+            // a second copy when stdout itself was already written.
+            if (pp_output_to_stdout && !not_out && !stdout_attempted) {
+                stdout_attempted = true;
                 emit_tokens(ots);
+                if (!flush_stdout())
+                    report_output_failure(STDOUT_CONTEXT);
+            }
             return 1;
         }
         return 0;
@@ -530,14 +641,9 @@ int jiepp_command(const JieppOptions& opts)
         // guard above (e.g. a malformed -D/-U, an env-fixup failure, or the
         // stdin+-MD/-MMD-without--MF check): `ots` is always still empty
         // here, unlike the E4a/E4b catches above, so there is nothing to
-        // print.
-        if (output_file.is_open()) {
-            output_file.close();
-            if (opts.output_filepath) {
-                std::error_code ec;
-                fs::remove(*opts.output_filepath, ec);
-            }
-        }
+        // print. Removal is regular-files-only, as in the E4b catch.
+        if (output_file_opened)
+            remove_if_regular(output_file, *opts.output_filepath);
         // Likewise, remove only what *this run* wrote: if a separate
         // dependency file was successfully written earlier in this same run
         // but a later step (e.g. opening -o) then failed, the .d file now
@@ -548,10 +654,8 @@ int jiepp_command(const JieppOptions& opts)
         // *earlier*, unrelated run that this run never touched is left
         // alone, matching gcc's convention of not scrubbing stale files it
         // did not itself just write.
-        if (!dep_file_written.empty()) {
-            std::error_code ec;
-            fs::remove(dep_file_written, ec);
-        }
+        if (!dep_file_opened.empty())
+            remove_if_regular(dep_output, dep_file_opened);
         return 1;
     }
 }

@@ -2,6 +2,7 @@
 #include "../env/issue.hpp"
 #include "../env/param_constants.hpp"
 
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -65,6 +66,20 @@ void require_value(int i, int argc, const std::string& opt_name) {
         ISSUE(MISSING_OPTION_VALUE, opt_name);
 }
 
+// A8: --help and --version exit with `exit_code` only when their text got
+// out: std::cout's state after a flush, then fflush(stdout) and
+// ferror(stdout) of the C stream it is synced with. Otherwise exit 1
+// without a diagnostic (clang 22 also exits nonzero without a message).
+[[noreturn]] void exit_after_stdout(int exit_code) {
+    std::cout.flush();
+    bool ok = !std::cout.fail();
+    if (std::fflush(stdout) != 0)
+        ok = false;
+    if (std::ferror(stdout))
+        ok = false;
+    std::exit(ok ? exit_code : 1);
+}
+
 void display_help_and_exit(int exit_code = 0) {
     std::cout <<
         "Usage: jiepp [filepath] [options]\n"
@@ -88,6 +103,7 @@ void display_help_and_exit(int exit_code = 0) {
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
         "  --max-expansion-steps N  Maximum macro expansion work in steps (default: 16777216; 0 = no limit)\n"
         "  --max-include-count N    Maximum number of executed {#include} directives (default: 10000; 0 = no limit)\n"
+        "  --max-input-bytes N      Maximum total input size in bytes (default: 0 = no limit)\n"
 #ifdef JIEPP_SANDBOX
         "  --error-limit N          Stop at the first error beyond N (default: 100; 0 = no limit)\n"
 #else
@@ -106,7 +122,7 @@ void display_help_and_exit(int exit_code = 0) {
         "  --                       End of options\n"
         "  --help / -h              Show this help\n"
         "  --version                Show version\n";
-    std::exit(exit_code);
+    exit_after_stdout(exit_code);
 }
 
 } // namespace
@@ -166,7 +182,7 @@ JieppOptions parse_args(int argc, char* argv[]) {
 
         if (arg == "--version") {
             std::cout << "jiepp " << JIEPP_VERSION << "\n";
-            std::exit(0);
+            exit_after_stdout(0);
         }
 
         if (arg == "-o") {
@@ -299,6 +315,12 @@ JieppOptions parse_args(int argc, char* argv[]) {
         if (arg == "--max-include-count" || arg == "--max_include_count") {
             require_value(i, argc, arg);
             opts.max_include_count = parse_nonnegative_int(argv[++i], arg);
+            ++i; continue;
+        }
+
+        if (arg == "--max-input-bytes" || arg == "--max_input_bytes") {
+            require_value(i, argc, arg);
+            opts.max_input_bytes = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
