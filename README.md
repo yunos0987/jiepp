@@ -71,6 +71,8 @@ echo '{#define X 42} VAR x : INT := X; END_VAR' | .\build\windows-clang-ninja-de
 | `__error(...)` / `__assert(expr, ...)` | マクロ展開中に `PP91` を出す（`__assert` は条件が偽のとき） / Report PP91 during macro expansion (`__assert`: when the condition is false) |
 | `__counter(name)` / `__counter_peek(name)` / `__counter_set(name, value)` | 名前ごとに独立したカウンタ / Named counters, independent per name |
 | `__nosplit(...)` | 結果のカンマが後のマクロ呼び出しの引数を区切らない / Commas in the result do not separate macro arguments later |
+| `__xmlattr(...)` / `__xmltext(...)` | 引数のテキストを XML の属性値（`"` で囲む）/ 要素内容にする。`$` エスケープなし / Argument text as an XML attribute value (double-quoted) or element content; no `$` escaping |
+| `__arg_lhs(...)` / `__arg_rhs(...)` / `__arg_dir(...)` | 引数を最初の最上位の `:=` / `=>` で分け、左辺・右辺・方向（`:=` が 0、`=>` が 1）を返す。なければ `PP81` / Split the argument at the first top-level `:=` or `=>` and return the left side, right side or direction (0 for `:=`, 1 for `=>`); `PP81` if none |
 | `_JIEPP` | jiepp 識別マクロ / jiepp identification |
 | `__VA_ARGS__` | 可変長引数 / Variadic macro arguments |
 

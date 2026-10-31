@@ -30,7 +30,8 @@ TEST_F(HasBuiltinTest, InitialBuiltinsAreOne) {
         "__COUNTER__", "__LINE__", "__FILE__", "__DATE__", "__TIME__",
         "__TIMESTAMP__", "__INCLUDE_LEVEL__", "__BASE_FILE__", "__FILE_NAME__",
         "__error", "__assert", "__counter", "__counter_peek", "__counter_set",
-        "__nosplit", "__has_builtin", "defined",
+        "__nosplit", "__xmlattr", "__xmltext", "__arg_lhs", "__arg_rhs", "__arg_dir",
+        "__has_builtin", "defined",
 #ifndef JIEPP_SANDBOX
         "__has_include",
 #endif

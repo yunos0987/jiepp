@@ -246,8 +246,8 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Built-in function-like macros (__error, __assert; named counters and
-// __nosplit below)
+// Built-in function-like macros (__error, __assert; named counters,
+// __nosplit, __xml* and __arg_* below)
 // ---------------------------------------------------------------------------
 
 // Called like a function macro (needs an opening parenthesis, PP34 on an
@@ -366,9 +366,66 @@ public:
                               Env& env) const override;
 };
 
+// __xmlattr(args...) / __xmltext(args...): the arguments joined like
+// @__VA_ARGS__ and macro-expanded once, turned into text like `@` and escaped
+// for XML (no IEC '$' escaping; SPEC 12.12). __xmlattr escapes & < > " ' and
+// expands to one WSTRING token holding the double-quoted result (an attribute
+// value). __xmltext escapes only & < > and expands to the bare text as one
+// token that is neither a macro name nor rescanned (element content).
+class XmlBuiltin : public BuiltinFunctionMacro {
+public:
+    enum class Kind { attr, text };
+    explicit XmlBuiltin(Kind kind) : kind_(kind) {}
+    bool equal(const Macro& other) const override {
+        auto* o = dynamic_cast<const XmlBuiltin*>(&other);
+        return o != nullptr && o->kind_ == kind_;
+    }
+    std::string str() const override {
+        return kind_ == Kind::attr ? "__xmlattr" : "__xmltext";
+    }
+    int min_args() const override { return 0; }
+    int max_args() const override { return FunctionMacro::NUM_OF_MAX_ARGS; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+
+private:
+    Kind kind_;
+};
+
+// __arg_lhs(args...) / __arg_rhs(args...) / __arg_dir(args...): the arguments
+// joined like __VA_ARGS__ and macro-expanded once, then split at the first
+// ':=' or '=>' outside (...)/[...] (SPEC 12.13). lhs and rhs give the tokens
+// before and after the separator without the whitespace at their ends; dir
+// gives one integer token, 0 for ':=' and 1 for '=>'. No separator is
+// ARG_SEPARATOR_MISSING (PP81) and no output.
+class ArgSplitBuiltin : public BuiltinFunctionMacro {
+public:
+    enum class Kind { lhs, rhs, dir };
+    explicit ArgSplitBuiltin(Kind kind) : kind_(kind) {}
+    bool equal(const Macro& other) const override {
+        auto* o = dynamic_cast<const ArgSplitBuiltin*>(&other);
+        return o != nullptr && o->kind_ == kind_;
+    }
+    std::string str() const override {
+        return kind_ == Kind::lhs ? "__arg_lhs"
+             : kind_ == Kind::rhs ? "__arg_rhs"
+                                  : "__arg_dir";
+    }
+    int min_args() const override { return 0; }
+    int max_args() const override { return FunctionMacro::NUM_OF_MAX_ARGS; }
+    std::vector<Token> invoke(std::vector<std::vector<Token>>& args,
+                              const std::vector<jiepp::expand_detail::ArgWs>& ws,
+                              Env& env) const override;
+
+private:
+    Kind kind_;
+};
+
 // A built-in macro: a symbol-table entry whose replacement jiepp computes
 // (__COUNTER__, __LINE__, __FILE__, __DATE__, ..., __error, __assert, the
-// named counters, __nosplit) -- anything that is neither a value macro
+// named counters, __nosplit, __xmlattr, __xmltext, __arg_lhs, __arg_rhs,
+// __arg_dir) -- anything that is neither a value macro
 // (UserDefinedObjectMacro: user definitions, -D, and the predefined values
 // such as __INT_MAX__ or _JIEPP_VER) nor a FunctionMacro, nor the transient
 // 'defined' operator. Undefining or redefining one warns PP35, like clang

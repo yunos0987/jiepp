@@ -162,6 +162,11 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     env.define("__counter_peek",        std::make_unique<CounterBuiltin>(CounterBuiltin::Kind::peek));
     env.define("__counter_set",         std::make_unique<CounterSetBuiltin>());
     env.define("__nosplit",             std::make_unique<NosplitBuiltin>());
+    env.define("__xmlattr",             std::make_unique<XmlBuiltin>(XmlBuiltin::Kind::attr));
+    env.define("__xmltext",             std::make_unique<XmlBuiltin>(XmlBuiltin::Kind::text));
+    env.define("__arg_lhs",             std::make_unique<ArgSplitBuiltin>(ArgSplitBuiltin::Kind::lhs));
+    env.define("__arg_rhs",             std::make_unique<ArgSplitBuiltin>(ArgSplitBuiltin::Kind::rhs));
+    env.define("__arg_dir",             std::make_unique<ArgSplitBuiltin>(ArgSplitBuiltin::Kind::dir));
     // NOTE: "defined" is NOT installed permanently; it is installed temporarily
     // by eval_cond_str during #if/#elif condition evaluation only.
 

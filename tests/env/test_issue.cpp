@@ -16,6 +16,7 @@ TEST_F(IssueTest, IsSevere) {
 TEST_F(IssueTest, IsError) {
     EXPECT_TRUE(Issue::is_error(Issue::Code::FILE_NOT_FOUND));
     EXPECT_TRUE(Issue::is_error(Issue::Code::EXPR_TYPE_ERROR));
+    EXPECT_TRUE(Issue::is_error(Issue::Code::ARG_SEPARATOR_MISSING));
     EXPECT_FALSE(Issue::is_error(Issue::Code::FATAL));
     EXPECT_FALSE(Issue::is_error(Issue::Code::WARNING_MESSAGE));
     EXPECT_FALSE(Issue::is_error(Issue::Code::INFO_MESSAGE));

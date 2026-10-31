@@ -2,9 +2,10 @@
 // macros __error(msg...) and __assert(expr, msg...) (SPEC 12.9) and the
 // named counters __counter(name), __counter_peek(name) and
 // __counter_set(name, value) (SPEC 12.10) and __nosplit(args...)
-// (SPEC 12.11) (macro.hpp). They are called from
-// expand()'s function-macro call branch (expand.cpp) with the collected,
-// flattened, NOT pre-expanded arguments.
+// (SPEC 12.11) and __xmlattr(args...) / __xmltext(args...) (SPEC 12.12)
+// and __arg_lhs / __arg_rhs / __arg_dir(args...) (SPEC 12.13) (macro.hpp).
+// They are called from expand()'s function-macro call branch (expand.cpp)
+// with the collected, flattened, NOT pre-expanded arguments.
 
 #include "expand_helpers.hpp"
 #include "preprocessor.hpp"
@@ -279,4 +280,118 @@ std::vector<Token> NosplitBuiltin::invoke(std::vector<std::vector<Token>>& args,
             t.type = Token::ANY;
     }
     return out;
+}
+
+namespace {
+
+// Raw LF, CR and TAB become one space each; & < > become entity references,
+// and so do " and ' when `quotes` is set (an attribute value). Everything
+// else (including '$' and bytes >= 0x80) is copied unchanged.
+std::string xml_escape(const std::string& text, bool quotes) {
+    std::string out;
+    out.reserve(text.size());
+    for (char c : text) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += quotes ? "&quot;" : "\""; break;
+        case '\'': out += quotes ? "&apos;" : "'"; break;
+        case '\n':
+        case '\r':
+        case '\t': out += ' '; break;
+        default: out += c; break;
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+std::vector<Token> XmlBuiltin::invoke(std::vector<std::vector<Token>>& args,
+                                      const std::vector<ArgWs>& ws,
+                                      Env& env) const {
+    // Joined like @__VA_ARGS__ and expanded once (like __nosplit), then the
+    // text is built like `@` and escaped. __xmlattr gives one WSTRING token
+    // holding the double-quoted text; __xmltext gives the text itself.
+    std::vector<Token> joined = select_arg(0, args, /*is_va=*/true, &ws, VaJoin::stringize);
+    std::vector<Token> expanded;
+    expand(joined, expanded, env);
+    const bool attr = kind_ == Kind::attr;
+    std::string text = xml_escape(stringize_text(expanded), attr);
+    std::vector<Token> out;
+    if (attr)
+        out.push_back(Token::create(Token::WSTRING, "\"" + text + "\""));
+    else if (!text.empty())
+        out.push_back(Token::create(Token::STRING, std::move(text)));
+    return out;
+}
+
+namespace {
+
+struct ArgSeparator {
+    std::size_t begin; // index of the first separator token
+    std::size_t end;   // index just past the separator
+    bool arrow;        // '=>' rather than ':='
+};
+
+// The first ':=' or '=>' outside (...)/[...]. The lexer gives ':' '=' and
+// '=' '>' as separate tokens, so two adjacent tokens (no whitespace between
+// them) match as well as one token of that spelling (a glued ':=').
+// String, comment and pragma tokens never match: they are other token types.
+std::optional<ArgSeparator> find_arg_separator(const std::vector<Token>& ts) {
+    int depth = 0;
+    for (std::size_t i = 0; i < ts.size(); ++i) {
+        const Token& t = ts[i];
+        if (t.type == Token::LP || t.type == Token::LB) {
+            ++depth;
+        } else if ((t.type == Token::RP || t.type == Token::RB) && depth > 0) {
+            --depth;
+        } else if (depth == 0 && t.type == Token::ANY) {
+            if (t.text == ":=")
+                return ArgSeparator{i, i + 1, false};
+            if (t.text == "=>")
+                return ArgSeparator{i, i + 1, true};
+            if (i + 1 < ts.size() && ts[i + 1].type == Token::ANY) {
+                if (t.text == ":" && ts[i + 1].text == "=")
+                    return ArgSeparator{i, i + 2, false};
+                if (t.text == "=" && ts[i + 1].text == ">")
+                    return ArgSeparator{i, i + 2, true};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+// ts[from, to) without the whitespace and comment tokens at both ends.
+std::vector<Token> trim_ws(const std::vector<Token>& ts, std::size_t from, std::size_t to) {
+    while (from < to && (ts[from].type & Token::MASK_WS))
+        ++from;
+    while (to > from && (ts[to - 1].type & Token::MASK_WS))
+        --to;
+    return std::vector<Token>(ts.begin() + static_cast<std::ptrdiff_t>(from),
+                              ts.begin() + static_cast<std::ptrdiff_t>(to));
+}
+
+} // namespace
+
+std::vector<Token> ArgSplitBuiltin::invoke(std::vector<std::vector<Token>>& args,
+                                           const std::vector<ArgWs>& ws,
+                                           Env& env) const {
+    // Joined like __VA_ARGS__ and expanded once, like __nosplit; the
+    // result is rescanned like any built-in result.
+    std::vector<Token> joined = select_arg(0, args, /*is_va=*/true, &ws, VaJoin::plain);
+    std::vector<Token> expanded;
+    expand(joined, expanded, env);
+    auto sep = find_arg_separator(expanded);
+    if (!sep) {
+        ISSUE(ARG_SEPARATOR_MISSING, str() + ": no ':=' or '=>' at the top level");
+        return {};
+    }
+    switch (kind_) {
+    case Kind::lhs: return trim_ws(expanded, 0, sep->begin);
+    case Kind::rhs: return trim_ws(expanded, sep->end, expanded.size());
+    case Kind::dir: break;
+    }
+    return {Token::create(Token::ANY, sep->arrow ? "1" : "0")};
 }

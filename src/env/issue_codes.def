@@ -91,6 +91,7 @@ JIEPP_ISSUE_CODE(STACK_LIMIT_FAILED,           76, ERROR,   "Failed to set stack
 
 // --- Macro, continued (80-89) ---
 JIEPP_ISSUE_CODE(VA_OPT_OUTSIDE_VARIADIC_MACRO, 80, WARNING, "__VA_OPT__ outside a variadic macro")
+JIEPP_ISSUE_CODE(ARG_SEPARATOR_MISSING,        81, ERROR,   "No ':=' or '=>' in the argument of a built-in macro")
 
 // --- Message passthrough (90-99) ---
 JIEPP_ISSUE_CODE(SEVERE_MESSAGE,               90, SEVERE,  "#severe")

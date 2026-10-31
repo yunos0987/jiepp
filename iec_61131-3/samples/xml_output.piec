@@ -1,0 +1,38 @@
+(*{#:0 'iec_61131-3/samples/xml_output.iec'}*)
+(* xml_output.iec - Write LD XML through macros with __xmlattr, __xmltext and __arg_* *)
+
+(* CONTACT puts its operand into an XML attribute. __xmlattr quotes the text *)
+(* and escapes & < > " ' so that the attribute stays well-formed XML.        *)
+
+
+(* NOTE puts its text into element content. __xmltext escapes & < > only. *)
+
+
+(* ARG splits a call argument "pin := value" (input) or "pin => var" (output) *)
+(* at the first separator. __arg_lhs is the pin, __arg_rhs is the value or    *)
+(* the variable, and __arg_dir is 0 for ":=" and 1 for "=>". The __xmlattr    *)
+(* around each part quotes it, including the number from __arg_dir.           *)
+
+
+(* CALL_TON is an FB call. The two arguments become two <Arg> elements. *)
+
+
+function_block Timer
+var_input
+    start: bool;
+    mode: string;
+end_var
+var_output
+    done: bool;
+end_var
+var
+    delay: time;
+    ton1: ton;
+end_var
+(*{ld}*)
+<LdObject xsi:type="Contact" operand="mode = &apos;RUN&apos; &amp; start"/>
+<LdObject xsi:type="Contact" operand="delay &lt; T#10s"/>
+<Block xsi:type="FbCall" instance="ton1"><Arg name="PT" dir="0" value="T#2s"/> <Arg name="Q" dir="1" value="done"/></Block>
+<Comment>done is set when delay &lt; 2s &amp; start = true</Comment>
+(*{end}*)
+end_function_block
