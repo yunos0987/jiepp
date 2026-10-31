@@ -6,8 +6,8 @@ class MacroTest : public JieppTest {};
 TEST_F(MacroTest, Counter) {
     // Case-sensitive: only uppercase __COUNTER__ expands; counter resets per Env
     EXPECT_EQ("0;1;__counter__", pp("__COUNTER__;__COUNTER__;__counter__"));
-    // Inside {st}...{end} block: expanded
-    EXPECT_EQ("(*{st}*)0;(*{end}*)", pp("{st}__COUNTER__;{end}"));
+    // Between two pragmas: expanded
+    EXPECT_EQ("(*{my_pragma}*)0;(*{my_pragma}*)", pp("{my_pragma}__COUNTER__;{my_pragma}"));
     // Inside string literal: not expanded
     EXPECT_EQ("'__COUNTER__';", pp("'__COUNTER__';"));
     // Inside (* *) comment: not expanded

@@ -10,9 +10,9 @@ function BOOST_PP_CAT(add_, BOOST_PP_CAT(BOOST_PP_CAT(data, _), BOOST_PP_ADD(n, 
 var_input $
     BOOST_PP_REPEAT(BOOST_PP_ADD(n, 2), DEFINE_IN_VAR, data) $
 end_var $
-${st$} $
+$
 BOOST_PP_CAT(add_, BOOST_PP_CAT(BOOST_PP_CAT(data, _), BOOST_PP_ADD(n, 2))) := BOOST_PP_REPEAT(BOOST_PP_ADD(n, 2), SUM_IN_VARS, _); $
-${end$} $
+$
 end_function $
 }
 

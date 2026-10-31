@@ -25,7 +25,5 @@ var
     t1: TIMER_FB;
     log_flag: int;
 end_var
-{st}
 log_flag := LOG_ENABLED;
-{end}
 end_program

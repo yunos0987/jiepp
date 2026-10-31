@@ -9,6 +9,4 @@
 {#endif TARGET_X}
 
 program Main
-{st}
-{end}
 end_program

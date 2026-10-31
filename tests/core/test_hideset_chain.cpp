@@ -181,7 +181,7 @@ TEST_F(HideSetChainTest, H7_TimingGuard) {
 // Deferred item from design-arg-once.md: SmokeTest::DeeplyNestedFunctionMacroExpansion
 // / section 11 (tests/jiepp/test_smoke.cpp) only ever search for one expected
 // line in stdout; this asserts the WHOLE stdout (including the file marker,
-// the {st}/{end} pragma lines, and exact blank-line placement) at a size
+// and exact blank-line placement) at a size
 // (n=1000) that would be badly quadratic (and so slow enough to make this
 // test impractical) before the hide-set fix.
 
@@ -255,13 +255,13 @@ TEST_F(HideSetChainCliTest, H8_DeepNestedFunctionMacroWholeOutput) {
     constexpr int kDepth = 1000;
     fs::path input = tmp_dir_ / "h8_deep_nested.iec";
 
-    std::string src = "{#define I(a) (a)+1}\nprogram Main\n{st}\n";
+    std::string src = "{#define I(a) (a)+1}\nprogram Main\n";
     for (int i = 0; i < kDepth; ++i)
         src += "I(";
     src += "0";
     for (int i = 0; i < kDepth; ++i)
         src += ")";
-    src += ";\n{end}\nend_program\n";
+    src += ";\nend_program\n";
     write_file(input, src);
 
     auto r = run("--max-expansion-depth 2000 \"" + input.generic_string() + "\"");
@@ -270,13 +270,11 @@ TEST_F(HideSetChainCliTest, H8_DeepNestedFunctionMacroWholeOutput) {
     std::string expected = "(*{#:0 '" + input.generic_string() + "'}*)\n";
     expected += "\n"; // {#define I(a) (a)+1} consumes its line, leaving a blank one
     expected += "program Main\n";
-    expected += "(*{st}*)\n";
     expected += std::string(kDepth, '(');
     expected += "0";
     for (int i = 0; i < kDepth; ++i)
         expected += ")+1";
     expected += ";\n";
-    expected += "(*{end}*)\n";
     expected += "end_program\n";
 
     EXPECT_EQ(expected, r.out);

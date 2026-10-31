@@ -18,7 +18,7 @@
 }
 
 program Main
-{st}
+
 __LINE__;
 (F(
     2,
@@ -26,5 +26,5 @@ __LINE__;
     4,
     5));
 __LINE__;
-{end}
+
 end_program

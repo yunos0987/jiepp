@@ -5,9 +5,7 @@
 	var_input
 		in1, in2: T;
 	end_var
-	${st$}
 	add_@@T := in1 + in2;
-	${end$}
 	end_function
 }
 
@@ -21,9 +19,7 @@ var
 	d: dint;
 	r: lreal;
 end_var
-{st}
 i := add_int(1, 2);
 d := add_dint(100, 200);
 r := add_lreal(1.5, 2.5);
-{end}
 end_program

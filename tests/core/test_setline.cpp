@@ -45,17 +45,17 @@ TEST_F(SetlineTest, MarkerForm) {
 
 TEST_F(SetlineTest, Syntax) {
     // Valid: with colon separator (C1: named form -> marker N-1, next line N)
-    EXPECT_EQ("(*{#:9 'a.iec'}*)\n(*{st}*)10;(*{end}*)",
-        pp("{#line  :  10  'a.iec'  }\n{st}__LINE__;{end}"));
+    EXPECT_EQ("(*{#:9 'a.iec'}*)\n10;",
+        pp("{#line  :  10  'a.iec'  }\n__LINE__;"));
     // Valid: without colon
-    EXPECT_EQ("(*{#:9 'a.iec'}*)\n(*{st}*)10;(*{end}*)",
-        pp("{#line  10  'a.iec'  }\n{st}__LINE__;{end}"));
+    EXPECT_EQ("(*{#:9 'a.iec'}*)\n10;",
+        pp("{#line  10  'a.iec'  }\n__LINE__;"));
     // Valid: line number only, with colon
-    EXPECT_EQ("(*{#:9}*)\n(*{st}*)10;(*{end}*)",
-        pp("{#line  :  10  }\n{st}__LINE__;{end}"));
+    EXPECT_EQ("(*{#:9}*)\n10;",
+        pp("{#line  :  10  }\n__LINE__;"));
     // Valid: line number only, without colon
-    EXPECT_EQ("(*{#:9}*)\n(*{st}*)10;(*{end}*)",
-        pp("{#line  10  }\n{st}__LINE__;{end}"));
+    EXPECT_EQ("(*{#:9}*)\n10;",
+        pp("{#line  10  }\n__LINE__;"));
     EXPECT_TRUE(empty());
 
     // C3: signed operands are rejected -- {#line} takes an unsigned decimal

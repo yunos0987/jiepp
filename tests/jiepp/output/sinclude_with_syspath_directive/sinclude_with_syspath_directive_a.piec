@@ -4,9 +4,9 @@
 (*{#:0 'module.iec'}*)
 
 program a
-(*{st:}*)
+
 4;
 0;
-(*{end:}*)
+
 end_program
 (*{#:3 'tests/jiepp/input/sinclude_with_syspath_directive/sinclude_with_syspath_directive_a.iec'}*)

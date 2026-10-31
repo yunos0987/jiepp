@@ -24,7 +24,5 @@ var
     counter1: FB_COUNTER;
     io_count: int;
 end_var
-{st}
 io_count := MAX_IO;
-{end}
 end_program

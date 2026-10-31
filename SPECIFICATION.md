@@ -1842,9 +1842,7 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 	var_input
 		in1, in2: T;
 	end_var
-	${st$}
 	add_@@T := in1 + in2;
-	${end$}
 	end_function
 }
 DECL_ADD(int);
@@ -1853,9 +1851,11 @@ DECL_ADD(lreal);
 
 **出力:**（各タブの直前に、元のインデント行から持ち込まれたスペースが 1 個残る）
 ```
-function add_int: int 	var_input 		in1, in2: int; 	end_var 	(*{st}*) 	add_int := in1 + in2; 	(*{end}*) 	end_function;
-function add_lreal: lreal 	var_input 		in1, in2: lreal; 	end_var 	(*{st}*) 	add_lreal := in1 + in2; 	(*{end}*) 	end_function;
+function add_int: int 	var_input 		in1, in2: int; 	end_var 	add_int := in1 + in2; 	end_function;
+function add_lreal: lreal 	var_input 		in1, in2: lreal; 	end_var 	add_lreal := in1 + in2; 	end_function;
 ```
+
+jiecc 9.2.0 以降は、ST の本体を `{st}`〜`{end}`（`(*{st}*)`〜`(*{end}*)`）で囲まなくてよい。この例も囲まずに書ける。jiecc 8.0.0 は囲みを必要とするので、8.0.0 向けの出力にするときは、マクロ本体の ST の前後に `${st$}` と `${end$}` を書く（jiepp は `{st}`・`{end}` を特別扱いせず、ほかのプラグマと同じに出力へ通す。`${`・`$}` は `{`・`}` を書くためのエスケープで、§2「ディレクティブ内の `$` エスケープ」を参照）。9.2.0 は囲んだ古い形も、警告なしで受け付ける。`{il}`・`{ld}`・`{fbd}`・`{sfc}` のブロックは ST ではないので、9.2.0 でも `{end}` で閉じる。
 
 ### A.2 プラットフォーム切替 / Platform Switching
 

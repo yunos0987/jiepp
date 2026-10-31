@@ -11,7 +11,5 @@ program Main
 var
     v: int;
 end_var
-(*{st}*)
 v := 42;
-(*{end}*)
 end_program

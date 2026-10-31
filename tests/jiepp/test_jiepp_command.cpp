@@ -817,7 +817,7 @@ TEST_F(JieppCommandTest, PPreservesUserPragmas) {
 
     EXPECT_EQ(std::string::npos, content.find("(*{#:")) << "line marker in -P output";
     EXPECT_NE(std::string::npos, content.find("(*{k:v}*)")) << "user pragma suppressed by -P";
-    EXPECT_NE(std::string::npos, content.find("(*{st}*)"))  << "user pragma suppressed by -P";
+    EXPECT_NE(std::string::npos, content.find("(*{my_pragma}*)"))  << "user pragma suppressed by -P";
 }
 
 TEST_F(JieppCommandTest, PDefaultFalseLineMarkersPresent) {

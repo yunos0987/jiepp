@@ -33,6 +33,4 @@ var
     checks_active: bool := CHECKS_ACTIVE;
     cycle_ms: int := CYCLE_TIME_MS;
 end_var
-{st}
-{end}
 end_program

@@ -43,13 +43,13 @@ protected:
     // Shared input/output shape for the deeply-nested function-macro tests
     // below: I(I(...I(0)...)) at the given depth, inside a program body.
     static std::string nested_macro_source(int depth) {
-        std::string src = "{#define I(a) (a)+1}\nprogram Main\n{st}\n";
+        std::string src = "{#define I(a) (a)+1}\nprogram Main\n";
         for (int i = 0; i < depth; ++i)
             src += "I(";
         src += "0";
         for (int i = 0; i < depth; ++i)
             src += ")";
-        src += ";\n{end}\nend_program\n";
+        src += ";\nend_program\n";
         return src;
     }
 

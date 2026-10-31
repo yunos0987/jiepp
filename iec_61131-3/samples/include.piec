@@ -26,8 +26,6 @@ var
     ver: int;
     loaded: int;
 end_var
-(*{st}*)
 ver := 1;
 loaded := 1;
-(*{end}*)
 end_program

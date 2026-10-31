@@ -3,9 +3,9 @@ function PREFIX@@_@@T: T $
 var_input $
 	in1, in2: T; $
 end_var $
-${st$} $
+$
 PREFIX@@_@@T := in1 OPERATOR in2; $
-${end$} $
+$
 end_function}
 
 {#define DECL_ADD_FUNCTION(T) DECL_BIN_FUNCTION(add, +, T)}

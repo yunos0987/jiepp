@@ -9,7 +9,6 @@ var
     file_name_only: string[255];
     base_name: string[255];
 end_var
-{st}
 line_num := __LINE__;
 inc_level := __INCLUDE_LEVEL__;
 file_name := __FILE__;
@@ -22,5 +21,4 @@ counter3 := __COUNTER__;
 (* _header.iec exists *)
 {#include '_header.iec'}
 {#endif}
-{end}
 end_program

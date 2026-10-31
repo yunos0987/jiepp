@@ -15,8 +15,6 @@ var
     ver: int;
     loaded: int;
 end_var
-{st}
 ver := VERSION;
 loaded := UTIL_LOADED;
-{end}
 end_program

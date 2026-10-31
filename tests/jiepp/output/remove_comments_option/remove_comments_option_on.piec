@@ -4,13 +4,13 @@
  */
 (*{#:25 'tests/jiepp/input/remove_comments_option/remove_comments_option_on.iec'}*)
 function f
-(*{st}*)
 
 
 
 
 
-(*{end}*)
+
+
 end_function
 
 //! document comment

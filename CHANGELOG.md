@@ -48,6 +48,7 @@
 ### 文書 / Documentation
 
 - マクロ展開が生んだ `defined` を評価すること、clang・gcc の `-Wexpansion-to-defined` に当たる警告を出さないことを SPECIFICATION.md §5.2 に明記した。§12.8 の `defined`・`__has_include` が使える場所に `__counter_set` の値を加えた（どちらも動作は変わらない）
+- サンプル（`iec_61131-3/samples/`）、テスト、SPECIFICATION.md の付録 A.1 から、ST の本体を囲む `{st}`〜`{end}`（`(*{st}*)`〜`(*{end}*)`、マクロ本体の `${st$}`〜`${end$}`）を外した。jiecc 9.2.0 以降は囲まなくてよい（囲んだ古い形も警告なしで受け付ける）。jiecc 8.0.0 は囲みを必要とする。jiepp は `{st}`・`{end}` を特別扱いせず、ほかのプラグマと同じに出力へ通すので、動作は変わらない。`{il}`・`{ld}`・`{fbd}`・`{sfc}` の `{end}` は残る。`bench` の入力は変えていない
 
 ### サンプルと性能測定 / Samples and benchmarks
 

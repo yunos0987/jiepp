@@ -2,22 +2,22 @@
 (*{#:0 'a.iec'}*)
 
 program a
-(*{st}*)'a.iec';(*{end}*)
+'a.iec';
 end
 (*{#:1 'tests/jiepp/input/file_macro/file_macro_include.iec'}*)
 (*{#:0 './b.iec'}*)
 
 program b
-(*{st}*)'./b.iec';(*{end}*)
+'./b.iec';
 end
 (*{#:2 'tests/jiepp/input/file_macro/file_macro_include.iec'}*)
 (*{#:0 './../file_macro/c.iec'}*)
 
 program c
-(*{st}*)'./../file_macro/c.iec';(*{end}*)
+'./../file_macro/c.iec';
 end
 (*{#:3 'tests/jiepp/input/file_macro/file_macro_include.iec'}*)
 
 program Main
-(*{st}*)'tests/jiepp/input/file_macro/file_macro_include.iec';(*{end}*)
+'tests/jiepp/input/file_macro/file_macro_include.iec';
 end

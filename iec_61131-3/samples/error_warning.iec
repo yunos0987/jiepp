@@ -16,6 +16,4 @@
 {#info 'This is an informational message'}
 
 program Main
-{st}
-{end}
 end_program
