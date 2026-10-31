@@ -2839,6 +2839,36 @@ TEST_F(JieppCommandTest, HasBuiltinDetectsDisabledAssertCli) {
     fs::remove(src, ec);
 }
 
+// The function form -D '__assert(...)=' removes the whole __assert call; the
+// object form -D __assert= leaves the argument text "(0, m)" in the output.
+TEST_F(JieppCommandTest, DisableAssertFunctionFormRemovesCallCli) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("assert_disable_form", "__assert(0, m);\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    opts.define_macros = {"__assert(...)="};
+    std::string out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_EQ(std::string::npos, out.find("(0, m)")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__assert")) << out;
+    EXPECT_NE(std::string::npos, out.find(";")) << out;
+    EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__assert: redefining built-in macro'",
+              message());
+
+    opts.define_macros = {"__assert="};
+    out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("(0, m);")) << out;
+    EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__assert: redefining built-in macro'",
+              message());
+
+    std::error_code ec;
+    fs::remove(src, ec);
+}
+
 // -U __has_builtin warns PP35 (the operator keeps working) and exits 0.
 TEST_F(JieppCommandTest, UOptionOnHasBuiltinWarns) {
     fs::current_path(jiepp_root_dir());

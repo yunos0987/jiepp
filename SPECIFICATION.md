@@ -630,11 +630,11 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 {#if \not\ __has_builtin(__assert)}{#error assert is disabled}{#endif}
 ```
 
-`NAME` がビルトインなら `1`、そうでなければ `0` に評価される。ビルトイン関数マクロの `__assert` を `-D __assert=` などで無効にしたヘッダーが、`__assert` が使えるかを調べるための演算子（clang の `__has_builtin` に倣う）。
+`NAME` がビルトインなら `1`、そうでなければ `0` に評価される。ビルトイン関数マクロの `__assert` を `-D '__assert(...)='` などで無効にしたヘッダーが、`__assert` が使えるかを調べるための演算子（clang の `__has_builtin` に倣う）。
 
 - 使える場所は `defined` と同じ（`{#if}` / `{#elif}` 式内、`__assert` の条件式、`__counter_set` の値。§12.8）。それ以外の場所では `__has_builtin` はただの識別子（またはユーザーのマクロ）で、そのまま出力する。条件式の中のメッセージ展開中（`__error(…)` の引数など）も、`defined` と同じくただの語として扱う
 - ここでの「ビルトイン」は §3.5 の範囲、つまり動的なマクロ（`__COUNTER__`・`__LINE__` など）、ビルトイン関数マクロ（`__error`・`__assert`・`__counter`・`__counter_peek`・`__counter_set`・`__nosplit`・`__xmlattr`・`__xmltext`・`__arg_lhs`・`__arg_rhs`・`__arg_dir`）、演算子（`__has_builtin`・`defined`、通常ビルドの `__has_include`）である。§12.3〜§12.7 の値を持つ定義済みマクロ（`__INT_MAX__`・`_JIEPP`・`_JIEPP_VER` など）、ユーザーのマクロ、未定義の名前は `0` になる
-- 調べる `NAME` の状態を反映する。`{#undef __assert}` や `-D __assert=` の後の `__has_builtin(__assert)` は `0`、`{#define __LINE__ 5}` の後の `__has_builtin(__LINE__)` も `0`（この 3 つはどれも `PP35` 警告を出す）。一方、演算子 `__has_builtin` そのものは `{#undef __has_builtin}` / `{#define __has_builtin …}` / `-D` / `-U` の後も働く。条件式の中の `__has_builtin(…)` をユーザーの定義で置き換えることはできない
+- 調べる `NAME` の状態を反映する。`{#undef __assert}` や `-D '__assert(...)='`（`-D __assert=` も同じ）の後の `__has_builtin(__assert)` は `0`、`{#define __LINE__ 5}` の後の `__has_builtin(__LINE__)` も `0`（この 3 つはどれも `PP35` 警告を出す）。一方、演算子 `__has_builtin` そのものは `{#undef __has_builtin}` / `{#define __has_builtin …}` / `-D` / `-U` の後も働く。条件式の中の `__has_builtin(…)` をユーザーの定義で置き換えることはできない
 - `{#ifdef __has_builtin}` と `defined(__has_builtin)` は、`{#undef __has_builtin}` の後も含めて真（ビルドの種類を問わない）。`__has_builtin(__has_include)` は通常のビルドでは `1`、サンドボックスでは `0`（`defined(__has_include)` と同じ。§14）
 - `NAME` はマクロ展開しない。`{#define N __LINE__}` の後の `__has_builtin(N)` は `0`。`(` の後と `)` の前の空白とコメントは読み飛ばす
 - 評価中のマクロ展開が生んだ `__has_builtin` も `defined` と同じく演算子として認識する（`{#define HB(x) __has_builtin(x)}{#if HB(__assert)}` は `1`）。外側のマクロのパラメータを通した被演算子は置換の時点で事前展開されるため、`HB(__LINE__)` は `__has_builtin(1)` になり `PP39` を出す（`defined` なら `PP40`）
@@ -895,7 +895,7 @@ VAR CONSTANT MAX_SIZE : INT := 100; END_VAR
 実行した `{#include}` / `{#sinclude}` の回数には上限があり、既定は **10000** である（`PP66`、`MAX_INCLUDE_COUNT_EXCEEDED`、SEVERE）。`--max-include-count N` / `--max_include_count N` で変更できる（0〜2147483647 の整数。`0` で無制限。負数・数字以外・範囲外は `PP71`、値なしは `PP72`）。ディレクティブ形式はない（入力が自分で上限を引き上げられないようにするため。§11）。
 
 - 数えるのは、実行した `{#include}` / `{#sinclude}` ディレクティブの回数である。パスの構文が正しく（不正なら `PP47`）、ファイルの解決に進んだものを 1 回と数える。`{#pragma once}` で読み込みを飛ばしたものも数える（パスの解決にかかる仕事は飛ばすときも同じなので）。主入力、`-include` の指定そのもの、`__has_include` は数えない。ただし `-include` で読んだファイルの中にある `{#include}` / `{#sinclude}` ディレクティブは数える。ファイルが見つからなくても（`PP11`）数える
-- 数える範囲は jiepp コマンド 1 回、またはライブラリの `preprocess()` / `preprocess_text()` 1 回ごとで、呼び出しごとに 0 から数え直す
+- 数える範囲は jiepp コマンド 1 回、またはライブラリの `preprocess()` / `preprocess_text()` 1 回ごとで、呼び出しごとに 0 から数え直す。0 に戻す処理は `preprocess()`（`preprocess_text()` も通る）の中にあり、同じ `Env` で `expand()` を直接呼ぶライブラリ利用者の呼び出しでは戻らない。呼び出し側が `Env::reset_include_count()` で戻す（展開ステップ数の `reset_expansion_steps()`、入力バイト数の `reset_input_bytes()` も同じ）
 - 上限を超える `N+1` 回目のディレクティブで `PP66`（補足情報は `limit N; use --max-include-count N to raise it (0 = no limit)`、位置はそのディレクティブ）を出して処理を中断する。SEVERE なので `{#ignore PP66}`・`-w`・`--silent` でも止まり、終了コードは `1`、出力は `PP64` と同じ規則に従う（§16）
 - サンドボックスビルドでは `{#include}` が `PP62` なので、実質的な効果はない。オプションは受け付ける
 
@@ -1053,12 +1053,12 @@ CLI オプションで設定した値はソースコード内のディレクテ�
 - マクロ本体の置換結果に追加したトークンと、`@@` で連結したトークン 1 個につき `1 + 長さ/64` ステップ（`__VA_ARGS__`・`__VA_OPT__`・`@` 文字列化・`$n` の複製を含む。`__VA_OPT__` の中身は 1 回だけ数え、`@@` の被演算子でも同じ）
 - ディレクティブやプラグマのオペランド（`{#if}`・`{#include}` のパス・メッセージ・`{#string}`・`{#line}`・プラグマ本体）、`__assert` の条件式（§12.9）、`__counter_set` の値（§12.10）は 1 バイトにつき 1 ステップ
 
-上限は既定で 16777216（2^24）ステップ、`0` で無制限。通常ビルドでもサンドボックスビルドでも同じ既定値である。超えると `MAX_EXPANSION_STEPS_EXCEEDED`（`PP64`、SEVERE）を出して処理を中断する（`{#ignore}`・`-w`・`--silent` でも止まり、終了コードは `1`）。出力は `PP60`・`PP63` と同じ規則に従う（§16「重大度」）。数える範囲は 1 回の `preprocess()` / `preprocess_text()` 呼び出し、または jiepp コマンド 1 回（`-include` ファイルと主入力で共通）で、呼び出しごとに 0 から数え直す。
+上限は既定で 16777216（2^24）ステップ、`0` で無制限。通常ビルドでもサンドボックスビルドでも同じ既定値である。超えると `MAX_EXPANSION_STEPS_EXCEEDED`（`PP64`、SEVERE）を出して処理を中断する（`{#ignore}`・`-w`・`--silent` でも止まり、終了コードは `1`）。出力は `PP60`・`PP63` と同じ規則に従う（§16「重大度」）。数える範囲は 1 回の `preprocess()` / `preprocess_text()` 呼び出し、または jiepp コマンド 1 回（`-include` ファイルと主入力で共通）で、呼び出しごとに 0 から数え直す。同じ `Env` で `expand()` を直接呼ぶ場合は戻らないので、呼び出し側が `Env::reset_expansion_steps()` で戻す。
 
 **入力サイズの上限（`PP67`）**: `--max-input-bytes N`（`--max_input_bytes N` も同じ。0〜2147483647 の整数。負数・数字以外・範囲外は `PP71`、値なしは `PP72`。深度系オプションの上限 2^24（`PP04`）は適用されない）で、読み込む入力の合計バイト数に上限を設けられる。既定は `0`（無制限）で、サンドボックスビルドも同じ。ライブラリの既定も `0`（`Env::set_max_input_bytes()`）。
 
 - 数えるのは読み込んだ生のバイト数で、BOM と CR も数える。対象は主入力ファイル、標準入力（Windows でもバイナリモードで読むので生のバイト数）、`-include` のファイル、`{#include}`/`{#sinclude}` のファイル、ライブラリでは呼び出し元のストリームが渡したバイト
-- 数える範囲は jiepp コマンド 1 回、またはライブラリの `preprocess()` / `preprocess_text()` 呼び出し 1 回で、呼び出しごとに 0 から数え直す
+- 数える範囲は jiepp コマンド 1 回、またはライブラリの `preprocess()` / `preprocess_text()` 呼び出し 1 回で、呼び出しごとに 0 から数え直す。同じ `Env` で `expand()` を直接呼ぶ場合は戻らないので、呼び出し側が `Env::reset_input_bytes()` で戻す
 - ファイルはディスクから読んだときに 1 回だけ数える。トークンのキャッシュから再び使う場合（同じファイルの 2 回目の `{#include}`、主入力ファイルを `-include` した場合、ライブラリで同じ `Env` の前の `preprocess()` 呼び出しが読んだファイル）は数えない
 - 数えないもの: `-D`/`-U` の文字列、ディレクティブのオペランド、展開結果、`__has_include`（何も読まない）、見つからないか開けなかったファイル
 - 合計が `N` を超えると `MAX_INPUT_BYTES_EXCEEDED`（`PP67`、SEVERE、`Maximum input size exceeded`）を出して処理を中断する。補足情報は `limit N bytes; use --max-input-bytes N to raise it (0 = no limit)`。合計がちょうど `N` なら受け付ける
@@ -1213,7 +1213,7 @@ __error(unsupported target);   (* → ; PP91 'unsupported target' *)
 **呼び出し**:
 
 - 関数マクロと同じ形で呼び出す（§3.2）。名前の後に `(` がなければ呼び出しではなく、そのまま出力する（`__error;` は `__error;`、診断なし）。`[...]` の内側のカンマは引数を区切らない（`F(a[x,y])` の `a[x,y]` は 1 個の引数）。引数リスト内のディレクティブは §3.2 のとおり収集時に 1 回だけ実行し、制御・出力ディレクティブは `PP02`
-- `__error` は 0 個以上、`__assert` は 1 個以上の引数を取るため、引数の数による `PP34` は起きない。閉じ括弧がないまま入力が終わった場合（`__error(x`）だけ `PP34`（`missing closing parenthesis`）になり、何も出力せず `PP91` も出さない。`__assert()` は空の引数 1 個なので、空の式として `PP51` だけを出す
+- `__error` は 0 個以上、`__assert` は 1 個以上の引数を取るため、引数の数による `PP34` は起きない。閉じ括弧がないまま入力が終わった場合（`__error(x`）だけ `PP34`（`__error: missing closing parenthesis`）になり、何も出力せず `PP91` も出さない。`__assert()` は空の引数 1 個なので、空の式として `PP51` だけを出す
 - 引数は事前展開しない。条件式は評価の中で、メッセージは報告するときに展開する
 - 診断の行番号は呼び出しの閉じ括弧 `)` の行。マクロ本体の中で使った場合は、いちばん外側の呼び出しの閉じ括弧の行（`__LINE__` と同じ。§12.1・§16）
 
@@ -1222,7 +1222,7 @@ __error(unsupported target);   (* → ; PP91 'unsupported target' *)
 - メッセージは可変長引数部分（`__error` は第 1 引数から、`__assert` は第 2 引数から）を `__VA_ARGS__` と同じく結合したもの（§3.3。カンマは残し、呼び出しでその側に空白があったときだけ空白を 1 個置く）。`__error(a, b ,c)` のメッセージは `a, b ,c`
 - 結合したメッセージをマクロ展開し、テキストとして連結して `{#error}` と同じ経路で報告する。呼び出しの中に直接書いた改行は空白 1 個になり、マクロ本体の `$n` が出力する改行は改行のまま（`{#error}` と同じ。§8）。コメントは `-nC` を付けない限り残り、引数の先頭・末尾のコメントは捨てる（ほかの引数と同じ）
 - メッセージに書いた仮引数名やマクロ名は、ほかの本体テキストと同じく置換・展開される。そのまま出したい語が仮引数名と重なる場合は文字列リテラルの中に書く
-- 引数は通常のトークンなので、引用符は IEC の文字列リテラルを始め、括弧は対応していなければならない。`__error(can't happen)` は `F(can't happen)` と同じく、リテラルが行末まで続いて呼び出しが閉じず、`PP29` と `PP34`（`missing closing parenthesis`）になり、`PP91` は出ず、それ以降の入力は出力されない（clang の `F(can't happen)` と同じ）。`__error('can$'t happen')` のように文字列リテラルに入れるか、アポストロフィを避ける
+- 引数は通常のトークンなので、引用符は IEC の文字列リテラルを始め、括弧は対応していなければならない。`__error(can't happen)` は `F(can't happen)` と同じく、リテラルが行末まで続いて呼び出しが閉じず、`PP29` と `PP34`（`__error: missing closing parenthesis`）になり、`PP91` は出ず、それ以降の入力は出力されない（clang の `F(can't happen)` と同じ）。`__error('can$'t happen')` のように文字列リテラルに入れるか、アポストロフィを避ける
 - 文字列リテラル 1 個だけのメッセージは引用符ごとそのまま出す（`__error('x')` のメッセージは `'x'` で、`PP91: ''x''` と表示される。`{#error 'x'}` と同じ。§8）
 - `__assert` のメッセージは省略できる。省略した場合、空の場合（`__assert(expr, )`）、展開結果が空または空白だけの場合（`{#define EMPTY}__assert(0, EMPTY)`）は、clang の `static_assert` と同じ文面 `static assertion failed due to requirement 'EXPR'` を使う。`EXPR` は書いたとおりの式で、空白は文字列化と同じ規則で 1 個にまとめる（§4.1）。`PP91` はメッセージを自分の引用符で囲むので、`__assert(1 = 2)` は `PP91: 'static assertion failed due to requirement '1 = 2''` と表示される（`{#error}` と同じく引用符はエスケープしない）
 - `__assert` のメッセージは、条件が偽のときだけ展開する。真のときは展開しないので、メッセージ中の `__COUNTER__` なども進まない（`static_assert` のメッセージと同じ）
@@ -1238,7 +1238,7 @@ __error(unsupported target);   (* → ; PP91 'unsupported target' *)
 - 評価されない被演算子（§6.4）は評価の失敗にならない。その中の 0 による除算・剰余と、実数の整数範囲外（"float value out of integer range"）は診断を出さず、後者は失敗としても数えないので、`__assert(FALSE \and\ BYTE#1.0e30 = BYTE#0, m)` は `PP91 'm'` だけを出す（条件は左の偽で決まる）。`__assert(TRUE \or\ 1 / 0 = 1, m)` は何も出さない
 - 条件式は 1 バイトにつき 1 ステップを数える（§11）
 - 条件式の中の `__error` は評価中に展開されて報告し、`__COUNTER__` と `__counter`（§12.10）は評価 1 回につき 1 回進む
-- 引数は通常のトークンとして字句解析されるため、引用符で囲まない `__has_include(<...>)` の中の `//` はコメントの始まりになる。`__assert(__has_include(<a//b>), x)` は `//` から行末までがコメントになって呼び出しが閉じず、`PP34`（`missing closing parenthesis`）になるので、`//` を含むパスは引用符の形（`__has_include('a//b')`）で書く
+- 引数は通常のトークンとして字句解析されるため、引用符で囲まない `__has_include(<...>)` の中の `//` はコメントの始まりになる。`__assert(__has_include(<a//b>), x)` は `//` から行末までがコメントになって呼び出しが閉じず、`PP34`（`__assert: missing closing parenthesis`）になるので、`//` を含むパスは引用符の形（`__has_include('a//b')`）で書く
 - 条件式の中に入れ子で書いたビルトイン関数マクロ `__assert`・`__error`・`__counter`・`__counter_peek`・`__counter_set`（再定義・解除していないもの）の呼び出しは、引数の中の `__has_include` を外側の条件式では解決しない。引数は内側の呼び出しが自分の規則で扱う（条件式は評価し、メッセージは報告するときに展開し、カウンタの名前は書いたとおりに検査する）ので、`__assert(__assert(1, __has_include('x')) 1, m)` はサンドボックスでも `PP62` を出さず、報告するメッセージの `__has_include(…)` は書いたとおりに表示される。閉じ括弧のない呼び出しは条件式の終わりまでを引数とみなす（`PP34`）。`__nosplit`、`__xmlattr`、`__xmltext`、`__arg_lhs`、`__arg_rhs`、`__arg_dir`、ユーザーのマクロ、再定義・解除したビルトインの名前の呼び出しは、引数も条件式の一部として解決する。`defined` と `__has_builtin` の被演算子の名前は呼び出しではない。対象は条件式に直接書いた名前で、マクロの展開で作られた呼び出し（`{#define E __error}` の後の `E(…)`）の引数は、ほかのテキストと同じく解決する。`__counter_set` の値（§12.10）も同じ。`{#if}`/`{#elif}` の条件式は `__has_include` を字句解析の前にテキストとして解決する（`<a//b>` を使えるようにするため）ので、その中に書いた入れ子の呼び出しの引数も解決する（サンドボックスでは `PP62`）
 
 **使える場所**:
@@ -1252,7 +1252,7 @@ __error(unsupported target);   (* → ; PP91 'unsupported target' *)
 
 **診断と終了**: `PP91` は `{#error}` と同じ扱い（§8・§16）。ライブラリ利用（`preprocess()` 等）では呼び出しの時点で `Issue::Exception`（`ERROR_MESSAGE`）を投げ、jiepp コマンドではエラーを数えて処理を続け、終了コードは `1` で、`-o`・依存ファイルは書かない。`{#ignore PP91}` は `{#error}`・`__error`・`__assert` の報告をまとめて抑制する（抑制しても条件は評価し、偽ならメッセージも展開する）。`{#ignore}` はファイル単位ではなく全体に効くので、インクルードされたヘッダの `{#ignore PP91}` は、その後のインクルードした側の `__assert` も黙らせる（§10）。
 
-**定義・解除・`-dM`**: `__COUNTER__` と同じくシンボル表の通常の項目で、`{#ifdef __error}` や `defined(__assert)` は真になる。`{#undef __assert}` / `-U __assert` で解除でき、`PP35`（`__assert: undefining built-in macro`）を出す。解除した後の `__assert(...)` はただのテキストとして出力され、同じ `Env` では元に戻せない。つまり `-U __assert`・`-D __assert=`・`{#undef __assert}` は検査を無効にする。このとき出る `PP35` は警告なので、終了コードは `0` のままになる。`-Werror` を付けると `PP35` がエラーになり、終了コードは `1` になる。`-w` は `PP35` の表示を隠す。`{#define __error ...}` / `-D __error=...` は `PP35`（`__error: redefining built-in macro`）を出し、ユーザーの定義が使われる（§3.5・§3.6）。`-dM` には出ない（gcc/clang の `-dM` が `__COUNTER__` を出さないのと同じ）。
+**定義・解除・`-dM`**: `__COUNTER__` と同じくシンボル表の通常の項目で、`{#ifdef __error}` や `defined(__assert)` は真になる。`{#undef __assert}` / `-U __assert` で解除でき、`PP35`（`__assert: undefining built-in macro`）を出す。解除した後の `__assert(...)` はただのテキストとして出力され、同じ `Env` では元に戻せない。つまり `-U __assert`・`-D __assert=`・`{#undef __assert}` は検査を無効にする。ただしこの 3 つは呼び出しを消さない。`-U` と `{#undef}` は `__assert(0, m)` をそのまま出力し、`-D __assert=` は空のオブジェクト形式マクロを定義するので `(0, m)` という引数テキストが残る。呼び出しごと消すには関数形式で定義する（`-D '__assert(...)='`。`(` `)` をシェルが解釈しないよう引用符で囲む。`{#define __assert(...)}` も同じ）。このとき出る `PP35` は警告なので、終了コードは `0` のままになる。`-Werror` を付けると `PP35` がエラーになり、終了コードは `1` になる。`-w` は `PP35` の表示を隠す。`{#define __error ...}` / `-D __error=...` は `PP35`（`__error: redefining built-in macro`）を出し、ユーザーの定義が使われる（§3.5・§3.6）。`-dM` には出ない（gcc/clang の `-dM` が `__COUNTER__` を出さないのと同じ）。
 
 **サンドボックス**: 使える（ファイルにアクセスしない）。メッセージからは、ほかのすべての診断と同じく制御文字を取り除く。本文の LF・CR は `{#error}` と同じく残す（§14）。条件式の中の `__has_include(...)` は `PP62` を出し（入れ子のビルトイン関数マクロの引数の中は除く。上の「条件式」）、呼び出しのテキストが式に残るため続けて `PP52` を出す（`{#if __has_include('x')}` と同じ組）。`PP91` は出さない。
 

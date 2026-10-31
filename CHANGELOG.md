@@ -2,6 +2,14 @@
 
 1.0.0 以降の変更を記録します。0.8.0 以前は GitHub Releases（https://github.com/yunos0987/jiepp/releases）を参照してください。
 
+## Unreleased
+
+### 文書 / Documentation
+
+- `__assert` を呼び出しごと消して無効にするには、関数形式の `-D '__assert(...)='` を使うと SPECIFICATION.md §12.9 に明記した（シェルが括弧を解釈しないよう引用符で囲む）。`-D __assert=` は空のオブジェクト形式マクロを定義するので引数テキスト `(c, m)` が出力に残り、`-U __assert` と `{#undef __assert}` は呼び出しをそのまま出力する。§5.2 の `__has_builtin` の例も同じ形に直した
+- SPECIFICATION.md §12.9 の `PP34`（`missing closing parenthesis`）の例に、実際の補足情報の先頭にあるマクロ名（`__error:` / `__assert:`）を付けた
+- 同じ `Env` で `expand()` を直接呼ぶライブラリ利用者には、展開ステップ数・include の回数・入力バイト数が自動では 0 に戻らず、`Env::reset_expansion_steps()`・`reset_include_count()`・`reset_input_bytes()` で戻すことを SPECIFICATION.md §7.10・§11 と ARCHITECTURE.md に明記した（戻すのは `preprocess()` / `preprocess_text()` の中）
+
 ## 1.2.0 (2026-10-31)
 
 ### 互換性に影響する変更 / Breaking changes
