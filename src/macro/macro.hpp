@@ -27,7 +27,9 @@ struct VaOptSpan {
                               // `next`; 0 = malformed (no '(' there, or unclosed)
     std::uint32_t nested = 0; // __VA_OPT__ only: __VA_OPT__ tokens after that '(' up to
                               // `close` (to the body end if unclosed; 0 if no '(') --
-                              // one PP37 each, raised by subst() per occurrence
+                              // handle_define() rejects a function-like macro when
+                              // it is > 0; subst() raises one PP37 each only for a
+                              // FunctionMacro built directly in code
 };
 
 // Computes the VaOptSpan table of `body` in O(body) (one backward pass, one

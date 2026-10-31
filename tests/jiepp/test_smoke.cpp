@@ -784,15 +784,18 @@ TEST_F(SmokeTest, UnclosedDirectiveInDeepRelexKeepsPP23) {
 }
 #endif
 
-// ---- F2: deeply nested __VA_OPT__ reports PP63 instead of crashing ----
+// ---- deeply nested __VA_OPT__ is rejected once, at the definition ----
 //
-// Nested __VA_OPT__ is PP37, but with PP37 ignored or in continue mode its
-// content is still substituted, recursing subst() -> subst() once per level
-// without passing through expand()'s stack check. 5000 levels exhaust a
-// 1 MiB stack (--recursion-limit 128) in both Debug and Release on every OS
-// (768 KiB / 5000 is about 157 bytes per level); before the fix the process
-// crashed. --max-expansion-steps 0 keeps PP64 (the k(k-1)/2 PP37 step
-// charges) from stopping the run first.
+// A nested __VA_OPT__ in a function-like macro is rejected when the macro is
+// defined: one PP37, the macro is not defined, the call stays as text. Before,
+// the macro was defined, and with PP37 ignored or in continue mode its content
+// was still substituted, recursing subst() -> subst() once per level without
+// passing through expand()'s stack check: 5000 levels exhausted a 1 MiB stack
+// (--recursion-limit 128) in both Debug and Release on every OS. That path is
+// no longer reachable from input; the stack check in subst() stays and is
+// covered in-process by RobustnessTestStackGuard.VaOptContentRecursionReportsPP63,
+// CLI-level PP63 by the __nosplit and function-macro nesting tests.
+// --max-expansion-steps 0 keeps PP64 from stopping the run first.
 
 namespace {
 
@@ -809,45 +812,188 @@ std::string nested_va_opt_source(const std::string& prefix, int k) {
 } // namespace
 
 #ifndef JIEPP_SANDBOX
-TEST_F(SmokeTest, NestedVaOptIgnoredPP37ReportsPP63NotCrash) {
+TEST_F(SmokeTest, NestedVaOptIgnoredPP37IsNotDefined) {
     fs::path input = tmp_dir_ / "nested_va_opt_ignored.iec";
     write_file(input, nested_va_opt_source("{#ignore PP37}", 5000));
 
     auto r = run("--recursion-limit 128 --max-expansion-steps 0 \"" + input.generic_string() + "\"");
-    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
-    // The depth figure counts expand() nesting only, so it is not pinned.
-    EXPECT_NE(r.err.find("PP63: Stack nearly exhausted; 'expansion depth "), std::string::npos)
-        << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_NE(r.err.find("retry with --recursion-limit greater than 128'"), std::string::npos)
-        << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_EQ(r.err.find("PP37"), std::string::npos) << "stderr: " << r.err.substr(0, 2000);
-    // The run stopped inside M(1): nothing after it was output.
-    EXPECT_EQ(r.out.find("after_m"), std::string::npos);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.out.find("M(1) after_m"), std::string::npos) << "stdout: " << r.out.substr(0, 2000);
 }
 #endif
 
 // Same input without {#ignore} (restricted in sandbox builds): the CLI's
-// continue mode counts each PP37 and keeps substituting, so a sandboxed web
-// deployment crashed too. --silent keeps the PP37 lines (millions of them
-// before the stack runs low) off stderr. The RobustnessTest* fixture name
-// matches the sandbox test presets' filter ^(Sandbox|RobustnessTest), so
-// this runs in both normal and sandbox builds.
-// --error-limit 0 (P2-4) keeps the PP63 path exercised: with the default
-// limit (100 in a sandbox build) the run would stop at PP65 before the stack
-// runs low, which also gives rc=1 and is indistinguishable under --silent.
+// continue mode counts the one PP37 and goes on. The RobustnessTest* fixture
+// name matches the sandbox test presets' filter ^(Sandbox|RobustnessTest), so
+// this runs in both normal and sandbox builds. --error-limit 0 keeps the
+// default limit (100 in a sandbox build) out of the way.
 class RobustnessTestSmoke : public SmokeTest {};
 
-TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsPP63NotCrash) {
+TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsOnePP37) {
     fs::path input = tmp_dir_ / "nested_va_opt_continue.iec";
     write_file(input, nested_va_opt_source("", 5000));
 
-    auto r = run("--silent --error-limit 0 --recursion-limit 128 --max-expansion-steps 0 \"" +
+    auto r = run("--error-limit 0 --recursion-limit 128 --max-expansion-steps 0 \"" +
                  input.generic_string() + "\"");
-    EXPECT_EQ(r.exit_code, 1);
-    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_EQ(r.out.find("after_m"), std::string::npos);
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.err.find("PP37: Invalid __VA_OPT__; 'nested __VA_OPT__ is not allowed'"),
+              std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_NE(r.out.find("M(1) after_m"), std::string::npos) << "stdout: " << r.out.substr(0, 2000);
 }
+
+// -D goes through the same {#define} check, and a -D error stops the command
+// like the other -D errors (no output, rc 1): exactly one PP37 line, after the
+// PP80 warnings for the __VA_OPT__ tokens of a non-variadic macro up to the
+// problem.
+TEST_F(RobustnessTestSmoke, RejectedVaOptDefinitionOnCommandLine) {
+    fs::path input = tmp_dir_ / "d_va_opt.iec";
+    write_file(input, "M(1) after_d\n");
+
+    const struct {
+        const char* define;
+        int warnings; // PP80 lines before the PP37 line
+        const char* text;
+    } cases[] = {
+        {"M(...)=__VA_OPT__(__VA_OPT__(x))", 0, "nested __VA_OPT__ is not allowed"},
+        {"F(a)=__VA_OPT__(__VA_OPT__(x))", 2, "nested __VA_OPT__ is not allowed"},
+        {"M(...)=x @@ __VA_OPT__ y", 0, "__VA_OPT__ requires parenthesized argument"},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.define);
+        auto r = run(std::string("-D \"") + c.define + "\" \"" + input.generic_string() + "\"");
+        EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+        std::string err = r.err;
+        err.erase(std::remove(err.begin(), err.end(), '\r'), err.end());
+        // A Debug build appends "@<source file>:<line>" to every diagnostic.
+        for (auto at = err.find("'@"); at != std::string::npos; at = err.find("'@", at + 1))
+            err.erase(at + 1, err.find('\n', at) - at - 1);
+        std::string expected;
+        for (int i = 0; i < c.warnings; ++i)
+            expected += "jiepp: warning: PP80: __VA_OPT__ outside a variadic macro; 'F'\n";
+        expected += std::string("jiepp: error: PP37: Invalid __VA_OPT__; '") + c.text + "'\n";
+        EXPECT_EQ(err, expected);
+        EXPECT_TRUE(r.out.empty()) << "stdout: " << r.out;
+    }
+}
+
+// The definition-time report carries the line of the {#define} (the same
+// rule as PP36).
+TEST_F(RobustnessTestSmoke, RejectedVaOptDefinitionReportsItsLine) {
+    fs::path input = tmp_dir_ / "line_va_opt.iec";
+    write_file(input, "\n{#define M(...) __VA_OPT__ x}\nM(1)\n");
+    fs::path input36 = tmp_dir_ / "line_pp36.iec";
+    write_file(input36, "\n{#define M(a, a) x}\nM(1)\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find(":2.0: error: PP37"), std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("M(1)"), std::string::npos) << "stdout: " << r.out;
+
+    auto r36 = run("\"" + input36.generic_string() + "\"");
+    EXPECT_NE(r36.err.find(":2.0: error: PP36"), std::string::npos) << "stderr: " << r36.err;
+}
+
+// Watchpoint: the same definition on the command line and in the source is an
+// identical redefinition, silent.
+TEST_F(RobustnessTestSmoke, VaOptIdenticalRedefinitionWithDOptionStaysSilent_Guard) {
+    fs::path input = tmp_dir_ / "d_va_opt_same.iec";
+    write_file(input, "{#define V(...) __VA_OPT__(<__VA_ARGS__>)}\nV(a[x,y])\n");
+
+    auto r = run("-D \"V(...)=__VA_OPT__(<__VA_ARGS__>)\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("<a[x,y]>"), std::string::npos) << "stdout: " << r.out;
+}
+
+// stderr without CR and without the "@<source file>:<line>" suffix that a
+// Debug build appends to every diagnostic.
+static std::string plain_stderr(std::string err) {
+    err.erase(std::remove(err.begin(), err.end(), '\r'), err.end());
+    for (auto at = err.find("'@"); at != std::string::npos; at = err.find("'@", at + 1))
+        err.erase(at + 1, err.find('\n', at) - at - 1);
+    return err;
+}
+
+// __VA_OPT__ in a non-variadic macro is a warning (PP80) at the definition:
+// rc 0, nothing at the use, and the macro expands as if the variable
+// arguments were empty.
+TEST_F(RobustnessTestSmoke, VaOptOutsideVariadicIsAWarning) {
+    fs::path input = tmp_dir_ / "vo_warn.iec";
+    write_file(input, "{#define F(a) __VA_OPT__(x)}\n[F(1)] [F(2)]\n");
+    const std::string in = "\"" + input.generic_string() + "\"";
+
+    auto r = run(in);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err;
+    EXPECT_NE(plain_stderr(r.err).find(":1.0: warning: PP80: __VA_OPT__ outside a variadic macro; 'F'\n"),
+              std::string::npos)
+        << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("[] []"), std::string::npos) << "stdout: " << r.out;
+
+    // -Werror: an error (rc 1); -w and --silent: nothing shown.
+    auto rw = run("-Werror " + in);
+    EXPECT_EQ(rw.exit_code, 1) << "stderr: " << rw.err;
+    EXPECT_NE(rw.err.find(": error: PP80: "), std::string::npos) << "stderr: " << rw.err;
+    for (const char* opt : {"-w ", "--silent "}) {
+        SCOPED_TRACE(opt);
+        auto rs = run(std::string(opt) + in);
+        EXPECT_EQ(rs.exit_code, 0) << "stderr: " << rs.err;
+        EXPECT_TRUE(rs.err.empty()) << "stderr: " << rs.err;
+        EXPECT_NE(rs.out.find("[] []"), std::string::npos) << "stdout: " << rs.out;
+    }
+}
+
+// -D goes through the same definition: a warning on the command line, and
+// with -Werror an error that stops the command like a promoted PP35 does.
+TEST_F(RobustnessTestSmoke, VaOptOutsideVariadicOnCommandLine) {
+    fs::path input = tmp_dir_ / "d_vo_warn.iec";
+    write_file(input, "[F(1)]\n");
+    const std::string in = "\"" + input.generic_string() + "\"";
+
+    auto r = run("-D \"F(a)=__VA_OPT__(x)\" " + in);
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(plain_stderr(r.err),
+              "jiepp: warning: PP80: __VA_OPT__ outside a variadic macro; 'F'\n");
+    EXPECT_NE(r.out.find("[]"), std::string::npos) << "stdout: " << r.out;
+
+    auto rw = run("-Werror -D \"F(a)=__VA_OPT__(x)\" " + in);
+    EXPECT_EQ(rw.exit_code, 1) << "stderr: " << rw.err;
+    EXPECT_EQ(plain_stderr(rw.err),
+              "jiepp: error: PP80: __VA_OPT__ outside a variadic macro; 'F'\n");
+    EXPECT_TRUE(rw.out.empty()) << "stdout: " << rw.out;
+}
+
+// The same macro on the command line and in the source: still no PP35, but
+// each definition warns (clang warns at every #define).
+TEST_F(RobustnessTestSmoke, VaOptOutsideVariadicIdenticalRedefinitionNoPP35) {
+    fs::path input = tmp_dir_ / "d_vo_same.iec";
+    write_file(input, "{#define O a @@ __VA_OPT__(b)}\nO\n");
+
+    auto r = run("-D \"O=a @@ __VA_OPT__(b)\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    const std::string err = plain_stderr(r.err);
+    EXPECT_EQ(std::count(err.begin(), err.end(), '\n'), 2) << "stderr: " << err;
+    EXPECT_EQ(err.find("PP35"), std::string::npos) << "stderr: " << err;
+    EXPECT_NE(r.out.find("a__VA_OPT__(b)"), std::string::npos) << "stdout: " << r.out;
+}
+
+#ifndef JIEPP_SANDBOX
+// {#ignore PP80}: no stderr (normal build only; {#ignore} is restricted in a
+// sandbox build).
+TEST_F(SmokeTest, VaOptOutsideVariadicIgnored) {
+    fs::path input = tmp_dir_ / "vo_ignore.iec";
+    write_file(input, "{#ignore PP80}\n{#define F(a) __VA_OPT__(x)}\n[F(1)]\n");
+
+    auto r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_TRUE(r.err.empty()) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("[]"), std::string::npos) << "stdout: " << r.out;
+}
+#endif
 
 // __nosplit (SPEC 12.11) nested 1000 deep: each level is one expand() call
 // (invoke() expands the joined arguments), so the stack guard reports PP63

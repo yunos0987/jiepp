@@ -19,12 +19,25 @@
 // pre-fix build (e644f7d) and pass both before and after the fix.
 // VaArgsEmptyAgreesWithSelectArg calls the new va_args_empty() helper, so it
 // (and this file) does not build against the pre-fix code; it was added
-// after the RED run. NestedVaOptPP37IsCharged guards the step charge for
-// nested-__VA_OPT__ PP37s that the fix added (RED with that charge
-// removed). The timing guards at the end are Release-only and were RED
-// before the fix.
+// after the RED run. The timing guards at the end are Release-only and were
+// RED before the fix.
+//
+// A malformed __VA_OPT__ in a function-like macro is rejected when the
+// macro is defined (one PP37, the macro is not defined); the tests for that
+// are the definition-time ones below. A __VA_OPT__ outside a variadic macro
+// is a warning (PP80) at the definition; the matrix of its forms is in
+// test_va_opt_outside_variadic.cpp.
 
-class SubstCostTest : public JieppTest {};
+class SubstCostTest : public JieppTest {
+protected:
+    void expect_malformed_rejected_at_definition();
+    void expect_nested_reported_once_at_definition();
+};
+
+// Same checks under a name matching the sandbox test presets' filter
+// ^(Sandbox|RobustnessTest): they use continue mode only, so they also run
+// in sandbox builds.
+class RobustnessTestVaOptDefinition : public SubstCostTest {};
 
 namespace {
 
@@ -40,10 +53,25 @@ const char* const kNested =
     "<unknown location>:1.0: error: PP37: Invalid __VA_OPT__; 'nested __VA_OPT__ is not allowed'";
 const char* const kNeedsParen =
     "<unknown location>:1.0: error: PP37: Invalid __VA_OPT__; '__VA_OPT__ requires parenthesized argument'";
-const char* const kOutside =
-    "<unknown location>:1.0: error: PP37: Invalid __VA_OPT__; '__VA_OPT__ used outside variadic macro'";
 const char* const kBadStringize =
     "<unknown location>:1.0: error: PP31: Invalid stringizing (@)";
+
+// The PP80 warning for a __VA_OPT__ token in the definition of macro `name`.
+std::string vow(const std::string& name) {
+    return "<unknown location>:1.0: warning: PP80: __VA_OPT__ outside a variadic macro; '" +
+           name + "'";
+}
+
+// `n` PP80 warnings for macro `name`.
+std::vector<std::string> vows(const std::string& name, int n) {
+    return std::vector<std::string>(static_cast<std::size_t>(n), vow(name));
+}
+
+// a followed by b.
+std::vector<std::string> cat(std::vector<std::string> a, const std::vector<std::string>& b) {
+    a.insert(a.end(), b.begin(), b.end());
+    return a;
+}
 
 } // namespace
 
@@ -94,25 +122,10 @@ TEST_F(SubstCostTest, VaArgsEmptyAgreesWithSelectArg) {
     }
 }
 
-// ---- malformed and nested __VA_OPT__: same output, same PP37 count and order ----
+// ---- well-formed __VA_OPT__ forms: same output, no diagnostics ----
 
-TEST_F(SubstCostTest, VaOptMalformedAndNestedDiagnosticsUnchanged) {
+TEST_F(SubstCostTest, WellFormedVaOptFormsUnchanged) {
     Issue::ContinueMode guard({});
-
-    EXPECT_EQ("x|x", pp("{#define M(...) __VA_OPT__(__VA_OPT__(x))}M(1)|M(1)"));
-    EXPECT_EQ((std::vector<std::string>{kNested, kNested}), messages());
-
-    EXPECT_EQ("__VA_OPT__ x", pp("{#define M(...) __VA_OPT__ x}M(1)"));
-    EXPECT_EQ((std::vector<std::string>{kNeedsParen}), messages());
-
-    EXPECT_EQ("__VA_OPT__(a b", pp("{#define M(...) __VA_OPT__(a __VA_OPT__(b)}M(1)"));
-    EXPECT_EQ((std::vector<std::string>{kNested, kNeedsParen}), messages());
-
-    EXPECT_EQ("__VA_OPT__(a (b", pp("{#define M(...) __VA_OPT__(a (b}M(1)"));
-    EXPECT_EQ((std::vector<std::string>{kNeedsParen}), messages());
-
-    EXPECT_EQ("__VA_OPT__", pp("{#define M(...) __VA_OPT__}M(1)"));
-    EXPECT_EQ((std::vector<std::string>{kNeedsParen}), messages());
 
     EXPECT_EQ("x|", pp("{#define M(...) __VA_OPT__ (* c *) (x)}M(1)|M()"));
     EXPECT_TRUE(empty());
@@ -123,59 +136,317 @@ TEST_F(SubstCostTest, VaOptMalformedAndNestedDiagnosticsUnchanged) {
     EXPECT_EQ("'y'|''", pp("{#define M(...) @ __VA_OPT__ (y)}M(1)|M()"));
     EXPECT_TRUE(empty());
 
-    EXPECT_EQ("@__VA_OPT__", pp("{#define M(...) @__VA_OPT__}M(1)"));
-    EXPECT_EQ((std::vector<std::string>{kBadStringize, kNeedsParen}), messages());
-
     EXPECT_EQ("xy|x", pp("{#define M(...) x @@ __VA_OPT__(y)}M(1)|M()"));
     EXPECT_TRUE(empty());
 
     EXPECT_EQ("xy|x", pp("{#define M(...) x @@ __VA_OPT__ (y)}M(1)|M()"));
     EXPECT_TRUE(empty());
 
-    EXPECT_EQ("x__VA_OPT__", pp("{#define M(...) x @@ __VA_OPT__}M(1)"));
-    EXPECT_TRUE(empty());
-
     EXPECT_EQ("y|", pp("{#define M(...) __VA_OPT__(@@ y)}M(1)|M()"));
     EXPECT_TRUE(empty());
-
-    // Nested __VA_OPT__ under `@@` and `@`: one PP37 per invocation, raised
-    // even when the variable arguments are empty and the content is skipped.
-    EXPECT_EQ("xy z|x", pp("{#define M(...) x @@ __VA_OPT__(__VA_OPT__(y) z)}M(1)|M()"));
-    EXPECT_EQ((std::vector<std::string>{kNested, kNested}), messages());
-
-    EXPECT_EQ("'y z'|''", pp("{#define M(...) @__VA_OPT__(__VA_OPT__(y) z)}M(1)|M()"));
-    EXPECT_EQ((std::vector<std::string>{kNested, kNested}), messages());
-
-    EXPECT_EQ("<(a)(b) c>|<>",
-              pp("{#define M(...) <__VA_OPT__((a)(b) __VA_OPT__(c))>}M(1)|M()"));
-    EXPECT_EQ((std::vector<std::string>{kNested, kNested}), messages());
 }
 
-// Each nested-__VA_OPT__ PP37 is charged one expansion step (S-01): k nested
-// levels raise (k-1) + (k-2) + ... + 0 = k(k-1)/2 PP37 per invocation, so a
-// lowered --max-expansion-steps stops it. Small k so it also runs in Debug
-// (deep __VA_OPT__ nesting recurses in subst()).
-TEST_F(SubstCostTest, NestedVaOptPP37IsCharged) {
+// ---- malformed and nested __VA_OPT__: rejected when the macro is defined ----
+
+namespace {
+
+struct MalformedBody {
+    const char* body;
+    const char* message;
+    // __VA_OPT__ tokens up to and including the one where the problem is
+    // found, and after it. clang warns for every __VA_OPT__ token of a
+    // non-variadic definition, also for the rest of a rejected line; jiepp
+    // does not warn for the body of a variadic macro at all.
+    int before;
+    int after;
+};
+
+// The first problem from left to right decides the message.
+const MalformedBody kMalformedBodies[] = {
+    // nested __VA_OPT__ (inside the parentheses of another one)
+    {"__VA_OPT__(__VA_OPT__(x))", kNested, 2, 0},
+    {"__VA_OPT__(__VA_OPT__ x)", kNested, 2, 0},
+    {"__VA_OPT__(a __VA_OPT__(b)", kNested, 2, 0},
+    {"__VA_OPT__((a) __VA_OPT__", kNested, 2, 0},
+    {"x @@ __VA_OPT__(__VA_OPT__(y) z)", kNested, 2, 0},
+    {"@__VA_OPT__(__VA_OPT__(y) z)", kNested, 2, 0},
+    {"<__VA_OPT__((a)(b) __VA_OPT__(c))>", kNested, 2, 0},
+    {"__VA_OPT__(__VA_OPT__(x)) __VA_OPT__(y)", kNested, 2, 1},
+    {"__VA_OPT__(a __VA_OPT__(b) c __VA_OPT__(d)", kNested, 2, 1},
+    // __VA_OPT__ not followed by '('
+    {"__VA_OPT__ x", kNeedsParen, 1, 0},
+    {"x @@ __VA_OPT__ y", kNeedsParen, 1, 0},
+    {"@__VA_OPT__ y", kNeedsParen, 1, 0},
+    {"__VA_OPT__", kNeedsParen, 1, 0},
+    {"x __VA_OPT__", kNeedsParen, 1, 0},
+    {"__VA_OPT__ __VA_OPT__(a)", kNeedsParen, 2, 0},
+    {"__VA_OPT__ x __VA_OPT__(a __VA_OPT__(b))", kNeedsParen, 1, 2},
+    {"__VA_OPT__ x __VA_OPT__ y", kNeedsParen, 1, 1},
+    {"__VA_OPT__(a) __VA_OPT__ b", kNeedsParen, 2, 0},
+    {"__VA_OPT__(a) @@ __VA_OPT__", kNeedsParen, 2, 0},
+    // __VA_OPT__( without its ')'
+    {"__VA_OPT__(a", kNeedsParen, 1, 0},
+    {"x @@ __VA_OPT__(a", kNeedsParen, 1, 0},
+    {"@__VA_OPT__(a", kNeedsParen, 1, 0},
+    {"__VA_OPT__(a (b)", kNeedsParen, 1, 0},
+};
+
+// Parameter lists of the five kinds of function-like macro.
+const char* const kParamLists[] = {"(...)", "(args...)", "(x, ...)", "(a)", "()"};
+
+bool is_variadic_list(const std::string& params) {
+    return params.find("...") != std::string::npos;
+}
+
+} // namespace
+
+void SubstCostTest::expect_malformed_rejected_at_definition() {
     Issue::ContinueMode guard({});
-    constexpr int kK = 60;
-    constexpr std::uint64_t kReports = kK * (kK - 1) / 2;
-    const std::string def = "{#define M(...) " + repeat("__VA_OPT__(", kK) + "x" +
-                            repeat(")", kK) + "}";
+    for (const char* params : kParamLists) {
+        for (const auto& c : kMalformedBodies) {
+            SCOPED_TRACE(std::string("M") + params + " " + c.body);
+            Env env = setup();
+            EXPECT_EQ("M(1)", pp(std::string("{#define M") + params + " " + c.body + "}M(1)", env));
+            const bool variadic = is_variadic_list(params);
+            EXPECT_EQ(cat(cat(vows("M", variadic ? 0 : c.before), {c.message}),
+                          vows("M", variadic ? 0 : c.after)),
+                      messages());
+            EXPECT_EQ(nullptr, env.lookup("M"));
+        }
+    }
+}
+
+TEST_F(SubstCostTest, MalformedVaOptRejectedAtDefinition) {
+    expect_malformed_rejected_at_definition();
+}
+
+TEST_F(RobustnessTestVaOptDefinition, MalformedVaOptRejectedAtDefinition) {
+    expect_malformed_rejected_at_definition();
+}
+
+// A parameter named __VA_OPT__ does not change the rule: the body tokens
+// spelled __VA_OPT__ are checked whatever the parameters are. The parameter
+// is one more __VA_OPT__ token for PP80 (clang warns for it too).
+TEST_F(RobustnessTestVaOptDefinition, ParameterNamedVaOptRejected) {
+    Issue::ContinueMode guard({});
+    Env env = setup();
+    EXPECT_EQ("F(1)", pp("{#define F(__VA_OPT__) __VA_OPT__(__VA_OPT__)}F(1)", env));
+    EXPECT_EQ(cat(vows("F", 3), {kNested}), messages());
+    EXPECT_EQ(nullptr, env.lookup("F"));
+    EXPECT_EQ("F(1)", pp("{#define F(__VA_OPT__) __VA_OPT__ x}F(1)", env));
+    EXPECT_EQ(cat(vows("F", 2), {kNeedsParen}), messages());
+    EXPECT_EQ(nullptr, env.lookup("F"));
+}
+
+// A nested __VA_OPT__ is reported once, at the definition, whatever the
+// nesting depth and the parameter list; the macro is not defined and the
+// call stays as text. The __VA_OPT__ tokens of a non-variadic definition
+// warn (PP80): the two up to the problem before the PP37, the rest after it;
+// a variadic macro has the PP37 only.
+void SubstCostTest::expect_nested_reported_once_at_definition() {
+    Issue::ContinueMode guard({});
+    for (int k : {2, 3, 60, 5000}) {
+        for (const char* params : {"(...)", "(a)", "()"}) {
+            SCOPED_TRACE("k=" + std::to_string(k) + " M" + params);
+            const std::string def = std::string("{#define M") + params + " " +
+                                    repeat("__VA_OPT__(", k) + "x" + repeat(")", k) + "}";
+            Env env = setup();
+            EXPECT_EQ("M(1)", pp(def + "M(1)", env));
+            const bool variadic = is_variadic_list(params);
+            EXPECT_EQ(variadic ? std::vector<std::string>{kNested}
+                               : cat(cat(vows("M", 2), {kNested}), vows("M", k - 2)),
+                      messages());
+            EXPECT_EQ(nullptr, env.lookup("M"));
+        }
+    }
+}
+
+TEST_F(SubstCostTest, NestedVaOptReportedOnceAtDefinition) {
+    expect_nested_reported_once_at_definition();
+}
+
+// The cost of a call does not depend on the depth: before, k levels raised
+// k(k-1)/2 charged PP37 per call.
+TEST_F(SubstCostTest, NestedVaOptCallCostIndependentOfDepth) {
+    Issue::ContinueMode guard({});
+    auto call_cost = [&](int k) {
+        const std::string def = "{#define M(...) " + repeat("__VA_OPT__(", k) + "x" +
+                                repeat(")", k) + "}";
+        Env env0 = setup();
+        pp(def, env0);
+        Env env1 = setup();
+        pp(def + "M(1)", env1);
+        return env1.expansion_steps() - env0.expansion_steps();
+    };
+    EXPECT_EQ(call_cost(3), call_cost(60));
+}
+
+TEST_F(RobustnessTestVaOptDefinition, NestedVaOptReportedOnceAtDefinition) {
+    expect_nested_reported_once_at_definition();
+}
+
+// An object macro does not treat __VA_OPT__ specially, so k nested levels
+// give k PP80 warnings at the definition and nothing at a use (no PP37, no
+// recursion in subst()); the text is kept and the cost of a use is linear in
+// the body.
+TEST_F(SubstCostTest, ObjectMacroNestedVaOptIsLinear) {
+    Issue::ContinueMode guard({});
+    constexpr int kK = 5000;
+    const std::string body = repeat("__VA_OPT__(", kK) + "x" + repeat(")", kK);
+    const std::string def = "{#define O a @@ " + body + "}";
 
     Env env0 = setup();
     pp(def, env0);
     const std::uint64_t def_steps = env0.expansion_steps();
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(vows("O", kK), messages());
 
     Env env1 = setup();
-    EXPECT_EQ("x", pp(def + "M(1)", env1));
-    EXPECT_EQ(kReports, messages().size());
-    EXPECT_GE(env1.expansion_steps() - def_steps, kReports);
+    EXPECT_EQ("a" + body, pp(def + "O", env1));
+    EXPECT_EQ(vows("O", kK), messages());
+    EXPECT_LT(env1.expansion_steps() - def_steps, static_cast<std::uint64_t>(8 * kK));
+    EXPECT_EQ(0, Issue::error_count_);
+}
 
-    Env env2 = setup();
-    env2.set_max_expansion_steps(def_steps + kReports / 2);
-    EXPECT_THROW(pp(def + "M(1)", env2), Issue::Exception);
-    EXPECT_EQ(Issue::Code::MAX_EXPANSION_STEPS_EXCEEDED, codes().back());
+// ---- what a rejected definition leaves behind ----
+
+// The earlier definition (user or built-in) stays and no PP35 is raised.
+TEST_F(RobustnessTestVaOptDefinition, RejectedDefinitionKeepsExistingOne) {
+    Issue::ContinueMode guard({});
+
+    EXPECT_EQ("old", pp("{#define M(...) old}{#define M(...) __VA_OPT__ x}M(1)"));
+    EXPECT_EQ((std::vector<std::string>{kNeedsParen}), messages());
+
+    EXPECT_EQ("old", pp("{#define F(a) old}{#define F(a) __VA_OPT__(__VA_OPT__(x))}F(1)"));
+    EXPECT_EQ(cat(vows("F", 2), {kNested}), messages());
+
+    EXPECT_EQ("1", pp("{#define __LINE__(...) __VA_OPT__(__VA_OPT__(x))}__LINE__"));
+    EXPECT_EQ((std::vector<std::string>{kNested}), messages());
+    EXPECT_EQ("y", pp("{#define __LINE__(...) __VA_OPT__ x}{#if __has_builtin(__LINE__)}y{#else}n{#endif}"));
+    EXPECT_EQ((std::vector<std::string>{kNeedsParen}), messages());
+
+    pp("{#define __assert(a, b) __VA_OPT__ x}__assert(0, m)");
+    const auto ms = messages();
+    ASSERT_EQ(3u, ms.size());
+    EXPECT_EQ(vow("__assert"), ms[0]);
+    EXPECT_EQ(kNeedsParen, ms[1]);
+    EXPECT_THAT(ms[2], ::testing::HasSubstr("PP91"));
+    EXPECT_THAT(ms[2], ::testing::HasSubstr("'m'"));
+}
+
+// A rejected definition is abandoned like PP36: the library without
+// continue mode throws at the definition (the PP80 warnings before it are
+// reported).
+TEST_F(RobustnessTestVaOptDefinition, RejectedDefinitionThrowsWithoutContinueMode) {
+    const Issue::Code vow_code = Issue::Code::VA_OPT_OUTSIDE_VARIADIC_MACRO;
+    const Issue::Code pp37 = Issue::Code::INVALID_VA_OPT;
+    const struct {
+        const char* src;
+        std::vector<Issue::Code> codes;
+    } cases[] = {
+        {"{#define M(...) __VA_OPT__ x}", {pp37}},
+        {"{#define F(a) __VA_OPT__(__VA_OPT__(x))}", {vow_code, vow_code, pp37}},
+        {"{#define F() x @@ __VA_OPT__ y}", {vow_code, pp37}},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.src);
+        EXPECT_THROW(pp(c.src), Issue::Exception);
+        EXPECT_EQ(c.codes, codes());
+    }
+}
+
+#ifndef JIEPP_SANDBOX
+// {#ignore PP37} only hides the report: the macro is still not defined
+// ({#ignore} is restricted in sandbox builds, so this is a normal-build test).
+// The PP80 warnings of a non-variadic definition are not PP37 and stay.
+TEST_F(SubstCostTest, RejectedDefinitionUnderIgnoreIsNotDefined) {
+    Env env = setup();
+    EXPECT_EQ("M(1)", pp("{#ignore PP37}{#define M(...) __VA_OPT__(__VA_OPT__(x))}M(1)", env));
+    EXPECT_TRUE(empty());
+    EXPECT_EQ(nullptr, env.lookup("M"));
+
+    EXPECT_EQ("old", pp("{#define F(a) old}{#define F(a) __VA_OPT__ x}F(1)", env));
+    EXPECT_EQ(vows("F", 1), messages());
+
+    EXPECT_EQ("old", pp("{#ignore PP37}{#ignore PP80}{#define F(a) __VA_OPT__ x}F(1)", env));
+    EXPECT_TRUE(empty());
+}
+#endif
+
+// A {#define} inside a macro call's argument list goes through the same check.
+TEST_F(RobustnessTestVaOptDefinition, RejectedDefinitionInArgumentList) {
+    Issue::ContinueMode guard({});
+    Env env = setup();
+    pp("{#define G(x) x}G({#define M(...) __VA_OPT__ x} y)", env);
+    EXPECT_EQ((std::vector<std::string>{kNeedsParen}), messages());
+    EXPECT_EQ(nullptr, env.lookup("M"));
+}
+
+// -dD does not echo a rejected {#define}; -dM does not list it.
+TEST_F(RobustnessTestVaOptDefinition, RejectedDefinitionNotEchoedNorDumped) {
+    Issue::ContinueMode guard({});
+    Env env = setup();
+    env.set_dd_mode(true);
+    const std::string output = pp(
+        "{#define M(...) __VA_OPT__ x}{#define F(a) __VA_OPT__(__VA_OPT__(x))}{#define OK 1}", env);
+    EXPECT_EQ(std::string::npos, output.find("{#define M(")) << "output:\n" << output;
+    EXPECT_EQ(std::string::npos, output.find("{#define F(")) << "output:\n" << output;
+    EXPECT_NE(std::string::npos, output.find("{#define OK 1}")) << "output:\n" << output;
+    EXPECT_EQ(cat({kNeedsParen}, cat(vows("F", 2), {kNested})), messages());
+
+    std::ostringstream os;
+    dump_macros(env, os);
+    EXPECT_EQ(std::string::npos, os.str().find("{#define M(")) << os.str();
+    EXPECT_EQ(std::string::npos, os.str().find("{#define F(")) << os.str();
+    EXPECT_NE(std::string::npos, os.str().find("{#define OK 1}")) << os.str();
+}
+
+// ---- forms that are not rejected at definition ----
+
+// A well-formed, non-nested __VA_OPT__ in a non-variadic function-like macro
+// is accepted with a PP80 warning at the definition and nothing at a use.
+TEST_F(RobustnessTestVaOptDefinition, NonVariadicWellFormedVaOptIsAWarning) {
+    Issue::ContinueMode guard({});
+
+    EXPECT_EQ("", pp("{#define F(a) __VA_OPT__(x)}F(1)"));
+    EXPECT_EQ(vows("F", 1), messages());
+
+    EXPECT_EQ("x", pp("{#define F(a) x @@ __VA_OPT__(y)}F(1)"));
+    EXPECT_EQ(vows("F", 1), messages());
+
+    EXPECT_EQ("''", pp("{#define F(a) @__VA_OPT__(y)}F(1)"));
+    EXPECT_EQ(vows("F", 1), messages());
+
+    EXPECT_EQ("__VA_OPT__(X)", pp("{#define BAD() __VA_OPT__(X)}BAD()"));
+    EXPECT_EQ(vows("BAD", 1), messages());
+    EXPECT_EQ(0, Issue::error_count_);
+}
+
+// Object-like macros are not checked at definition (no PP37), only warned
+// about once per __VA_OPT__ token.
+TEST_F(RobustnessTestVaOptDefinition, ObjectMacroMalformedVaOptIsOnlyWarned) {
+    Issue::ContinueMode guard({});
+
+    EXPECT_EQ("__VA_OPT__(__VA_OPT__(y))", pp("{#define O __VA_OPT__(__VA_OPT__(y))}O"));
+    EXPECT_EQ(vows("O", 2), messages());
+
+    EXPECT_EQ("x__VA_OPT__ y", pp("{#define O x @@ __VA_OPT__ y}O"));
+    EXPECT_EQ(vows("O", 1), messages());
+
+    EXPECT_EQ("__VA_OPT__(a", pp("{#define O __VA_OPT__(a}O"));
+    EXPECT_EQ(vows("O", 1), messages());
+    EXPECT_EQ(0, Issue::error_count_);
+}
+
+// Regression watchpoint: an identical redefinition stays silent (no PP35),
+// also after a rejected one. The rejected definition leaves the first one in
+// place, so the third definition is identical to it. (The bracketed-argument
+// watchpoint is VariadicBracketedArgumentIsOneArgument_Guard.)
+TEST_F(RobustnessTestVaOptDefinition, IdenticalRedefinitionAfterRejectedStaysSilent) {
+    Issue::ContinueMode guard({});
+    const std::string v = "{#define V(...) __VA_OPT__(<__VA_ARGS__>)}";
+    EXPECT_EQ("<a[x,y]>",
+              pp(v + "{#define V(...) __VA_OPT__(<__VA_ARGS__> __VA_OPT__(x))}" + v + "V(a[x,y])"));
+    EXPECT_EQ((std::vector<std::string>{kNested}), messages());
 }
 
 // ---- @@ adjacency inside and around __VA_OPT__ content ----
@@ -189,29 +460,31 @@ TEST_F(SubstCostTest, GlueAdjacencyAroundVaOptUnchanged) {
     EXPECT_TRUE(empty());
 }
 
-// ---- object macros take the same @@/@ __VA_OPT__ paths ----
+// ---- in an object macro __VA_OPT__ is an ordinary identifier ----
 
-TEST_F(SubstCostTest, ObjectMacroVaOptFormsUnchanged) {
+TEST_F(SubstCostTest, ObjectMacroVaOptIsAnIdentifier) {
     Issue::ContinueMode guard({});
 
-    EXPECT_EQ("a", pp("{#define O a @@ __VA_OPT__(b)}O"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ("a__VA_OPT__(b)", pp("{#define O a @@ __VA_OPT__(b)}O"));
+    EXPECT_EQ(vows("O", 1), messages());
 
-    EXPECT_EQ("''", pp("{#define O2 @__VA_OPT__(b)}O2"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ("@__VA_OPT__(b)", pp("{#define O2 @__VA_OPT__(b)}O2"));
+    EXPECT_EQ(vows("O2", 1), messages());
 
     EXPECT_EQ("__VA_OPT__(b)", pp("{#define O3 __VA_OPT__(b)}O3"));
-    EXPECT_EQ((std::vector<std::string>{kOutside}), messages());
+    EXPECT_EQ(vows("O3", 1), messages());
 
     EXPECT_EQ("__VA_OPT__ (* c *) (b)", pp("{#define O __VA_OPT__ (* c *) (b)}O"));
-    EXPECT_EQ((std::vector<std::string>{kOutside}), messages());
+    EXPECT_EQ(vows("O", 1), messages());
 
     EXPECT_EQ("x__VA_OPT__ y", pp("{#define O x @@ __VA_OPT__ y}O"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(vows("O", 1), messages());
 
     EXPECT_EQ("@__VA_OPT__ (b", pp("{#define O @__VA_OPT__ (b}O"));
-    EXPECT_EQ((std::vector<std::string>{kBadStringize, kOutside}), messages());
+    EXPECT_EQ(vows("O", 1), messages());
 
+    // Only @__VA_OPT__ keeps the '@' silently; `@` before an ordinary
+    // identifier is still PP31.
     EXPECT_EQ("@ x", pp("{#define O @ x}O"));
     EXPECT_EQ((std::vector<std::string>{kBadStringize}), messages());
 }
@@ -271,8 +544,10 @@ TEST_F(SubstCostTest, VaOptBodyIdenticalRedefinitionSilent_Guard) {
     EXPECT_EQ("", pp("{#define M(...) __VA_OPT__(x) @__VA_ARGS__}"
                      "{#define M(...) __VA_OPT__(x) @__VA_ARGS__}"));
     EXPECT_TRUE(empty());
+    // An object macro: still no PP35, but its __VA_OPT__ warns (PP80) at each
+    // {#define}, like clang, so exactly 2 PP80 for the two definitions.
     EXPECT_EQ("", pp("{#define O a @@ __VA_OPT__(b)}{#define O a  @@  __VA_OPT__(b)}"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(vows("O", 2), messages());
 }
 
 TEST_F(SubstCostTest, VariadicBracketedArgumentIsOneArgument_Guard) {
@@ -338,20 +613,24 @@ TEST_F(SubstCostTest, VaOptSkippedContent_TimingGuard) {
     }
 }
 
-// Object macro bodies with a 20000-token __VA_OPT__ content, used 4000 times.
-// Pre-fix: 12.2 / 13.1 s.
-TEST_F(SubstCostTest, ObjectMacroVaOpt_TimingGuard) {
-    constexpr int kUses = 4000;
+// The same skipped content in a non-variadic function-like macro with
+// parameters, where __VA_OPT__ acts as if the variable arguments were empty
+// and the content is dropped. (An object macro keeps the text as written, so
+// the skipped-content path is no longer reached through one.)
+// Pre-fix: 12.2 / 13.1 s through an object macro.
+TEST_F(SubstCostTest, NonVariadicVaOptSkippedContent_TimingGuard) {
+    constexpr int kCalls = 4000;
     const std::string c = spaced_z(20000);
-    const std::string uses = repeat("O;", kUses);
+    const std::string calls = repeat("F(1);", kCalls);
     const std::pair<std::string, std::string> forms[] = {
-        {"a @@ __VA_OPT__(" + c + ")", repeat("a;", kUses)},
-        {"@__VA_OPT__(" + c + ")", repeat("'';", kUses)},
+        {"__VA_OPT__(" + c + ")", repeat(";", kCalls)},
+        {"x @@ __VA_OPT__(" + c + ")", repeat("x;", kCalls)},
+        {"@__VA_OPT__(" + c + ")", repeat("'';", kCalls)},
     };
     for (const auto& [body, expected] : forms) {
-        auto [out, secs] = timed_pp("{#define O " + body + "}" + uses);
+        auto [out, secs] = timed_pp("{#define F(a) " + body + "}" + calls);
         EXPECT_EQ(expected, out);
-        EXPECT_LT(secs, 3.0) << body.substr(0, 16) << "... x" << kUses << " took " << secs
+        EXPECT_LT(secs, 3.0) << body.substr(0, 16) << "... x" << kCalls << " took " << secs
                              << "s";
     }
 }

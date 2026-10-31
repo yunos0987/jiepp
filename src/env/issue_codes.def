@@ -9,7 +9,7 @@
 //   50-59  Expression
 //   60-69  Runtime/Limit
 //   70-79  CLI/Option
-//   80-89  (reserved)
+//   80-89  Macro (continued; 30-39 is full)
 //   90-99  Message passthrough
 
 JIEPP_ISSUE_CODE(SUCCESS,                      0, INFO,    "Operation completed successfully")
@@ -88,6 +88,9 @@ JIEPP_ISSUE_CODE(INVALID_MACRO_DEF,            73, ERROR,   "Invalid macro defin
 JIEPP_ISSUE_CODE(RECURSION_LIMIT_RANGE,        74, ERROR,   "Recursion limit value out of range")
 JIEPP_ISSUE_CODE(THREAD_CREATE_FAILED,         75, ERROR,   "Failed to create worker thread")
 JIEPP_ISSUE_CODE(STACK_LIMIT_FAILED,           76, ERROR,   "Failed to set stack limit")
+
+// --- Macro, continued (80-89) ---
+JIEPP_ISSUE_CODE(VA_OPT_OUTSIDE_VARIADIC_MACRO, 80, WARNING, "__VA_OPT__ outside a variadic macro")
 
 // --- Message passthrough (90-99) ---
 JIEPP_ISSUE_CODE(SEVERE_MESSAGE,               90, SEVERE,  "#severe")

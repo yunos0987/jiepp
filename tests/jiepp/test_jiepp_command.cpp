@@ -1551,7 +1551,8 @@ TEST_F(JieppCommandTest, VaOptStringize) {
 }
 
 TEST_F(JieppCommandTest, VaOptOutsideVariadic) {
-    // __VA_OPT__ in a non-variadic macro body must produce a PP37 error.
+    // __VA_OPT__ in a non-variadic macro body is a PP80 warning at the
+    // definition; F() has no parameters, so __VA_OPT__ stays as written.
     fs::current_path(jiepp_root_dir());
     auto tmpdir = fs::temp_directory_path();
     fs::path src = tmpdir / "vaopt_nonvariadic.iec";
@@ -1566,8 +1567,13 @@ TEST_F(JieppCommandTest, VaOptOutsideVariadic) {
     opts.output_filepath = output.generic_string();
     opts.no_line_markers = true;
 
-    ASSERT_NE(0, jiepp_command(opts)) << "expected PP37 error for __VA_OPT__ outside variadic macro";
-    EXPECT_NE(std::string::npos, message().find("PP37")) << "PP37 not in error message";
+    ASSERT_EQ(0, jiepp_command(opts)) << "PP80 is a warning, not an error";
+    const std::string msg = message();
+    EXPECT_NE(std::string::npos, msg.find("warning: PP80")) << msg;
+    EXPECT_NE(std::string::npos, msg.find("; 'BAD'")) << msg;
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos, content.find("__VA_OPT__(X)")) << content;
 }
 
 TEST_F(JieppCommandTest, VaOptNested) {
