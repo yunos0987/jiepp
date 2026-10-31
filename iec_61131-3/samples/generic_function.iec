@@ -1,12 +1,12 @@
 (* generic_function.iec - Generate type-parameterized functions using @@ and function macros *)
 
 {#define DECL_ADD(T)
-	function add_@@T: T
-	var_input
-		in1, in2: T;
-	end_var
-	add_@@T := in1 + in2;
-	end_function
+function add_@@T: T$n$
+var_input$n$
+	in1, in2: T;$n$
+end_var$n$
+add_@@T := in1 + in2;$n$
+end_function
 }
 
 DECL_ADD(int);

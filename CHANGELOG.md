@@ -9,6 +9,8 @@
 - `__assert` を呼び出しごと消して無効にするには、関数形式の `-D '__assert(...)='` を使うと SPECIFICATION.md §12.9 に明記した（シェルが括弧を解釈しないよう引用符で囲む）。`-D __assert=` は空のオブジェクト形式マクロを定義するので引数テキスト `(c, m)` が出力に残り、`-U __assert` と `{#undef __assert}` は呼び出しをそのまま出力する。§5.2 の `__has_builtin` の例も同じ形に直した
 - SPECIFICATION.md §12.9 の `PP34`（`missing closing parenthesis`）の例に、実際の補足情報の先頭にあるマクロ名（`__error:` / `__assert:`）を付けた
 - 同じ `Env` で `expand()` を直接呼ぶライブラリ利用者には、展開ステップ数・include の回数・入力バイト数が自動では 0 に戻らず、`Env::reset_expansion_steps()`・`reset_include_count()`・`reset_input_bytes()` で戻すことを SPECIFICATION.md §7.10・§11 と ARCHITECTURE.md に明記した（戻すのは `preprocess()` / `preprocess_text()` の中）
+- `__has_builtin` の被演算子に `__has_include` の呼び出しを書くと（`__has_builtin(__has_include ("x"))`）、`__has_include` が先に `0`/`1` へ解決されるため、`PP39` の補足情報が `name must be an identifier: 0`（または `1`）になることを SPECIFICATION.md §5.2 に明記した。どちらにしてもエラーである
+- サンプル `generic_function` のマクロ本体に `$n` を使い、生成される関数を 1 行に 1 宣言・文の普通の IEC 61131-3 の見た目にした（`generic_function.iec`・`generic_function.piec`、SPECIFICATION.md 付録 A.1）
 
 ## 1.2.0 (2026-10-31)
 

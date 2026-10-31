@@ -638,7 +638,7 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 - `{#ifdef __has_builtin}` と `defined(__has_builtin)` は、`{#undef __has_builtin}` の後も含めて真（ビルドの種類を問わない）。`__has_builtin(__has_include)` は通常のビルドでは `1`、サンドボックスでは `0`（`defined(__has_include)` と同じ。§14）
 - `NAME` はマクロ展開しない。`{#define N __LINE__}` の後の `__has_builtin(N)` は `0`。`(` の後と `)` の前の空白とコメントは読み飛ばす
 - 評価中のマクロ展開が生んだ `__has_builtin` も `defined` と同じく演算子として認識する（`{#define HB(x) __has_builtin(x)}{#if HB(__assert)}` は `1`）。外側のマクロのパラメータを通した被演算子は置換の時点で事前展開されるため、`HB(__LINE__)` は `__has_builtin(1)` になり `PP39` を出す（`defined` なら `PP40`）
-- 誤り（診断は 1 つの条件式で最初の 1 件だけ。条件式全体を偽とみなし、残りは評価しない。`defined` と同じ）: `(` がない場合（`__has_builtin` だけ）は `PP52`（`missing '(' after '__has_builtin'`）。被演算子がない場合（`__has_builtin()`）は `PP39`（`__has_builtin: name missing`）。識別子でない場合（`__has_builtin(1)`・`__has_builtin(%IX0)`）は `PP39`（`__has_builtin: name must be an identifier: TEXT`）。`)` がない場合（`__has_builtin(A B)`・`__has_builtin(A`）は `PP52`（`missing ')' after '__has_builtin'`）。`__assert` と `__counter_set` の中では、これらも評価の失敗として扱う（§12.9・§12.10）
+- 誤り（診断は 1 つの条件式で最初の 1 件だけ。条件式全体を偽とみなし、残りは評価しない。`defined` と同じ）: `(` がない場合（`__has_builtin` だけ）は `PP52`（`missing '(' after '__has_builtin'`）。被演算子がない場合（`__has_builtin()`）は `PP39`（`__has_builtin: name missing`）。識別子でない場合（`__has_builtin(1)`・`__has_builtin(%IX0)`）は `PP39`（`__has_builtin: name must be an identifier: TEXT`）。被演算子に `__has_include` の呼び出しを書いた場合（`__has_builtin(__has_include ("x"))`）も識別子でないので `PP39` になるが、`__has_include` の呼び出しは先に `0`/`1` へ解決されるため、補足情報には書いた文字列ではなくその結果が出る（`name must be an identifier: 0`。`"x"` が存在するときは `1`）。`{#if}`・`__assert` の条件式・`__counter_set` の値のどれでも同じ。`)` がない場合（`__has_builtin(A B)`・`__has_builtin(A`）は `PP52`（`missing ')' after '__has_builtin'`）。`__assert` と `__counter_set` の中では、これらも評価の失敗として扱う（§12.9・§12.10）
 - 既知の差異: clang の `__has_builtin` はコンパイラの組み込み関数を調べ、マクロの定義や解除には影響されない。jiepp のものは jiepp のビルトインマクロと演算子を調べ、`NAME` の解除と再定義を反映する（§17）
 
 ### 5.3 未定義の識別子 / Undefined Identifiers
@@ -1971,21 +1971,31 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 **入力:**
 ```
 {#define DECL_ADD(T)
-	function add_@@T: T
-	var_input
-		in1, in2: T;
-	end_var
-	add_@@T := in1 + in2;
-	end_function
+function add_@@T: T$n$
+var_input$n$
+	in1, in2: T;$n$
+end_var$n$
+add_@@T := in1 + in2;$n$
+end_function
 }
 DECL_ADD(int);
 DECL_ADD(lreal);
 ```
 
-**出力:**（各タブの直前に、元のインデント行から持ち込まれたスペースが 1 個残る）
+**出力:**（マクロ本体は、行末の `$n` で出力に改行を入れ、続けて `$` + 改行で次のソース行を連結している。マクロ本体の改行は空白 1 個になるので、`$n` を使わないと 1 行に並ぶ。§2「ディレクティブ内の `$` エスケープ」）
 ```
-function add_int: int 	var_input 		in1, in2: int; 	end_var 	add_int := in1 + in2; 	end_function;
-function add_lreal: lreal 	var_input 		in1, in2: lreal; 	end_var 	add_lreal := in1 + in2; 	end_function;
+function add_int: int
+var_input
+	in1, in2: int;
+end_var
+add_int := in1 + in2;
+end_function;
+function add_lreal: lreal
+var_input
+	in1, in2: lreal;
+end_var
+add_lreal := in1 + in2;
+end_function;
 ```
 
 jiecc 9.2.0 以降は、ST の本体を `{st}`〜`{end}`（`(*{st}*)`〜`(*{end}*)`）で囲まなくてよい。この例も囲まずに書ける。jiecc 8.0.0 は囲みを必要とするので、8.0.0 向けの出力にするときは、マクロ本体の ST の前後に `${st$}` と `${end$}` を書く（jiepp は `{st}`・`{end}` を特別扱いせず、ほかのプラグマと同じに出力へ通す。`${`・`$}` は `{`・`}` を書くためのエスケープで、§2「ディレクティブ内の `$` エスケープ」を参照）。9.2.0 は囲んだ古い形も、警告なしで受け付ける。`{il}`・`{ld}`・`{fbd}`・`{sfc}` のブロックは ST ではないので、9.2.0 でも `{end}` で閉じる。
