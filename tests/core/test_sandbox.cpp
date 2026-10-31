@@ -351,6 +351,130 @@ TEST_F(SandboxDirectiveTest, AssertHasIncludeIsPP62AndPP52) {
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, cs[1]);
 }
 
+// The pre-scan for __has_include does not look inside the arguments of a
+// nested __assert, __error, __counter, __counter_peek or __counter_set that is
+// still the built-in: the inner call handles its own arguments (a message is
+// expanded only when it is reported, a counter name is checked as written).
+// Tests marked "guard" pass with and without that rule.
+TEST_F(SandboxDirectiveTest, AssertNestedMessageHasIncludeIsNotPP62) {
+    Issue::ContinueMode guard({});
+    using C = Issue::Code;
+    auto run = [this](const std::string& src) {
+        pp(src);
+        return codes();
+    };
+    EXPECT_EQ((std::vector<C>{}), run("__assert(__assert(1, __has_include('x')) 1, outer);"));
+    EXPECT_EQ((std::vector<C>{C::ERROR_MESSAGE}),
+              run("__assert(__assert(0, [__has_include('x')]) 1, outer);"));
+    EXPECT_EQ((std::vector<C>{C::ERROR_MESSAGE}),
+              run("__assert(1 __error([__has_include('x')]), m);"));
+    EXPECT_EQ((std::vector<C>{C::INVALID_BUILTIN_OPERAND}),
+              run("__assert(__counter(__has_include('x')) + 1, m);"));
+    EXPECT_EQ((std::vector<C>{C::INVALID_BUILTIN_OPERAND}),
+              run("__assert(__counter_peek(__has_include('x')) + 1, m);"));
+    EXPECT_EQ((std::vector<C>{C::ERROR_MESSAGE}),
+              run("__counter_set(c, __error([__has_include('x')]) 1);"));
+    EXPECT_EQ((std::vector<C>{C::ERROR_MESSAGE}),
+              run("__counter_set(c, __assert(0, [__has_include('x')]) 1);"));
+    // guard: the top level reports the message as written.
+    EXPECT_EQ((std::vector<C>{C::ERROR_MESSAGE}), run("__error([__has_include('x')]);"));
+}
+
+// The expression of a nested call is evaluated by that call, whose own
+// pre-scan reports the operator once, then the evaluator reports the call
+// text that stays in the expression (as AssertHasIncludeIsPP62AndPP52).
+TEST_F(SandboxDirectiveTest, AssertNestedExpressionHasIncludeIsPP62Once) {
+    Issue::ContinueMode guard({});
+    using C = Issue::Code;
+    auto run = [this](const std::string& src) {
+        pp(src);
+        return codes();
+    };
+    const std::vector<C> once = {C::SANDBOX_RESTRICTED_DIRECTIVE, C::INVALID_EXPRESSION};
+    EXPECT_EQ(once, run("__assert(__assert(__has_include('x'), m) 1, o);"));
+    EXPECT_EQ(once, run("__assert(__counter_set(c, __has_include('x')) 1, m);"));
+    EXPECT_EQ(once, run("__counter_set(c, __assert(__has_include('x'), m) 1);"));
+}
+
+// guard: calls that are not one of the five built-ins, or that no longer are,
+// keep their arguments in the expression.
+TEST_F(SandboxDirectiveTest, AssertNestedNonBuiltinCallsStillPP62) {
+    Issue::ContinueMode guard({});
+    using C = Issue::Code;
+    auto run = [this](const std::string& src) {
+        pp(src);
+        return codes();
+    };
+    const std::vector<C> pp62_52 = {C::SANDBOX_RESTRICTED_DIRECTIVE, C::INVALID_EXPRESSION};
+    EXPECT_EQ(pp62_52, run("__assert(__nosplit(__has_include('x')) + 1, m);"));
+    EXPECT_EQ(pp62_52, run("{#define F(x) x}__assert(F(__has_include('x')) + 1, m);"));
+    EXPECT_EQ((std::vector<C>{C::MACRO_REDEFINED, C::SANDBOX_RESTRICTED_DIRECTIVE,
+                              C::INVALID_EXPRESSION}),
+              run("{#define __error(x) x}__assert(__error(__has_include('x')) + 0, m);"));
+    EXPECT_EQ((std::vector<C>{C::MACRO_REDEFINED, C::SANDBOX_RESTRICTED_DIRECTIVE,
+                              C::INVALID_EXPRESSION}),
+              run("{#undef __assert}__counter_set(c, __assert(__has_include('x')) + 1);"));
+    EXPECT_EQ(pp62_52, run("__assert(defined __error (__has_include('x')), m);"));
+    EXPECT_EQ(pp62_52, run("__assert(defined(__error) (__has_include('x')), m);"));
+}
+
+// An unclosed nested call extends to the end of the operand and reports PP34
+// itself; the operator inside it is not reported.
+TEST_F(SandboxDirectiveTest, AssertUnclosedNestedBuiltinCallIsPP34Only) {
+    Issue::ContinueMode guard({});
+    using C = Issue::Code;
+    auto run = [this](const std::string& src) {
+        pp(src);
+        return codes();
+    };
+    EXPECT_EQ((std::vector<C>{C::ARGUMENT_COUNT_MISMATCH}),
+              run("__assert(1 __error([__has_include('x')], [)]), m);"));
+    EXPECT_EQ((std::vector<C>{C::ARGUMENT_COUNT_MISMATCH, C::MISSING_EXPRESSION}),
+              run("__assert(__error(__has_include('x') ], m);"));
+}
+
+// guard: a __has_include call is met before the built-in call inside it, so
+// the operator is reported.
+TEST_F(SandboxDirectiveTest, AssertBuiltinInsideHasIncludeCall) {
+    Issue::ContinueMode guard({});
+    using C = Issue::Code;
+    auto run = [this](const std::string& src) {
+        pp(src);
+        return codes();
+    };
+    EXPECT_EQ((std::vector<C>{C::SANDBOX_RESTRICTED_DIRECTIVE, C::ERROR_MESSAGE,
+                              C::INVALID_EXPRESSION}),
+              run("__assert(__has_include(<__error(x)>), m);"));
+    EXPECT_EQ((std::vector<C>{C::SANDBOX_RESTRICTED_DIRECTIVE, C::ERROR_MESSAGE,
+                              C::INVALID_EXPRESSION}),
+              run("__assert(__has_include('a' __error([__has_include('x')])), m);"));
+}
+
+// Only names written in the expression count: a call made by a macro is
+// ordinary text (guard), and a `defined` made by a macro does not protect the
+// name after it, which is skipped as a call.
+TEST_F(SandboxDirectiveTest, AssertMacroProducedBuiltinCall) {
+    Issue::ContinueMode guard({});
+    using C = Issue::Code;
+    auto run = [this](const std::string& src) {
+        pp(src);
+        return codes();
+    };
+    EXPECT_EQ((std::vector<C>{C::SANDBOX_RESTRICTED_DIRECTIVE, C::ERROR_MESSAGE}),
+              run("{#define E __error}__assert(E([__has_include('x')]) 1, m);"));
+    EXPECT_EQ((std::vector<C>{C::INVALID_EXPRESSION}),
+              run("{#define D defined}__assert(D __error([__has_include('x')]), m);"));
+}
+
+// guard: the {#if} condition is resolved as text before lexing and is not
+// changed: an operator inside a nested call's argument is still reported.
+TEST_F(SandboxDirectiveTest, IfConditionNestedBuiltinStillPP62) {
+    Issue::ContinueMode guard({});
+    using C = Issue::Code;
+    EXPECT_EQ("A", pp("{#if __assert(1, __has_include('x')) 1}A{#endif}"));
+    EXPECT_EQ((std::vector<C>{C::SANDBOX_RESTRICTED_DIRECTIVE}), codes());
+}
+
 // __has_builtin(NAME) needs no filesystem access, so it is allowed; the
 // restricted __has_include operator reads as 0 (like defined(__has_include)).
 TEST_F(SandboxDirectiveTest, HasBuiltinAllowed) {

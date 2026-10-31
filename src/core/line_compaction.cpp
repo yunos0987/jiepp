@@ -153,11 +153,15 @@ bool compact_blank_lines(std::vector<Token>& ots, int max_blank_lines,
             // Trailing inline whitespace (indentation of the next content
             // line), if the run ends with one or more non-newline tokens.
             std::size_t idx = run.size();
-            std::string trailing;
+            std::size_t trailing_len = 0;
             while (idx > 0 && run[idx - 1].num_of_lines == 0) {
-                trailing = run[idx - 1].text + trailing;
+                trailing_len += run[idx - 1].text.size();
                 --idx;
             }
+            std::string trailing;
+            trailing.reserve(trailing_len);
+            for (std::size_t k = idx; k < run.size(); ++k)
+                trailing += run[k].text;
             if (!trailing.empty())
                 out.push_back(Token::create(Token::WS, std::move(trailing)));
             line_has_content = false;
