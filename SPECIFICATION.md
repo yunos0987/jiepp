@@ -617,6 +617,8 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 
 `defined` の被演算子は識別子でなければならない。被演算子がない、または識別子でない場合（`defined 1`・`defined(%IX0)`・`defined 'a'` など）は `PP40`、`defined(` の後に `)` がない場合は `PP52` エラーになる。このとき条件式全体を偽とみなし、残りの部分は評価しない（診断はその式の最初の 1 件だけ。clang と同じ）。
 
+マクロ展開が生んだ `defined` も演算子として評価する（`{#define D defined(X)}` の後の `{#if D}` は、`X` が定義されていれば真）。関数形式マクロ（`{#define DF(n) defined(n)}`）が生んだ `defined` も評価するが、引数は事前展開されるので、オブジェクト形式マクロの名前を渡すと `PP40` になる（`{#define X}` の後の `{#if DF(X)}`。§12.9）。C では未定義の動作だが、gcc/clang も同じく評価する。`__assert` の条件式（§12.9）と `__counter_set` の値（§12.10）でも同じ。この場合の警告は出さない。clang はオブジェクト形式マクロが生んだ `defined` には既定で、関数形式マクロが生んだものには `-pedantic` で `-Wexpansion-to-defined` を出し、gcc は `-Wextra`・`-Wpedantic` で出すが、jiepp にはこれに当たる診断もオプションもない（`-Wexpansion-to-defined` は未知のオプションで `PP70`）。なお、`__assert` 自体を再定義・解除して検査を無効にする書き方（`{#define __assert(c, m)}`・`-D __assert=`・`{#undef __assert}`・`-U __assert`）は `PP35` の警告になる（§3.5・§3.6・§12.9）。
+
 `__has_include` はマクロではないが、gcc/clang と同じく `{#ifdef}` / `{#ifndef}` / `defined` では定義済みとして扱う。`{#ifdef __has_include}` で `__has_include(…)` を使えるか判定できる。jiepp の `__has_include(…)` は `{#undef}` / `{#define}` で働きが変わらないため、`{#undef __has_include}` の後も定義済みのまま（gcc/clang では `#undef` で使えなくなり、未定義になる）。ただし `{#undef __has_include}` 自体は clang と同じく `PP35` 警告を出す（§3.5）。通常ビルドの `{#define __has_include …}` も `PP35` 警告になる（§3.6）。サンドボックスモード（§14）では未定義として扱う。
 
 ビルトイン関数マクロ `__error` / `__assert`（§12.9）、`__counter` / `__counter_peek` / `__counter_set`（§12.10）と `__nosplit`（§12.11）は `__COUNTER__` と同じくシンボル表の通常の項目なので、`{#ifdef}` / `defined` では定義済みとして扱う。`{#undef}` で解除でき、解除と再定義には `PP35` のビルトイン警告が出る（§3.5・§3.6）。解除した後の `__error(x)` はただのテキストとして出力される。
@@ -1187,8 +1189,8 @@ CLI オプションで設定した値はソースコード内のディレクテ�
 
 | マクロ | 説明 |
 |-------|----|
-| `defined(NAME)` | `{#if}` / `{#elif}` 式内と `__assert` の条件式（§12.9）でのみ使用可能。NAME が定義されていれば 1、そうでなければ 0 |
-| `__has_include('file')` | `{#if}` 式内（`__assert` の条件式を含む）でファイルの存在を確認 (§7.5 参照) |
+| `defined(NAME)` | `{#if}` / `{#elif}` 式内、`__assert` の条件式（§12.9）と `__counter_set` の値（§12.10）でのみ使用可能。NAME が定義されていれば 1、そうでなければ 0。マクロ展開が生んだ `defined` も評価し、警告は出さない (§5.2 参照) |
+| `__has_include('file')` | `{#if}` 式内、`__assert` の条件式と `__counter_set` の値でファイルの存在を確認 (§7.5 参照) |
 | `__has_builtin(NAME)` | `defined` と同じ場所で使用可能。NAME がビルトイン（§3.5 の範囲）なら 1、そうでなければ 0 (§5.2 参照) |
 
 ### 12.9 診断用ビルトイン関数マクロ / Diagnostic Built-in Function Macros
@@ -1230,7 +1232,7 @@ __error(unsupported target);   (* → ; PP91 'unsupported target' *)
 
 - `{#if}` と同じ規則（§6）で評価する。条件式のトークンは事前展開せず、評価の中で展開する。マクロは評価中に展開し、`defined`・`__has_include`・`__has_builtin` を使え、未定義の識別子は `0`（`-Wundef` なら `PP54` の警告。評価の失敗ではなく、`__assert` は `0` として続ける。§5.3）、コメントは空白。評価はトークンのまま行うため、展開済みのマクロの印（§3.7）が保たれ、`{#define N __assert(N, self)}N` は内側の `N` を未定義の識別子（`0`）として扱い、`PP91 'self'` を 1 回出す（`PP60` にならない）
 - 外側のマクロのパラメータは、`__assert` が動く前に置換済み（事前展開済みの実引数。`__VA_ARGC__` も数値になっている）
-- `defined` を直接書けば働く（`__assert(defined(X), m)`）。評価中に展開されたマクロが生んだ `defined` も、`{#if}` と同じく演算子として認識する（`{#define D defined(X)}__assert(D, m)`。clang も同じ）。外側のマクロのパラメータを通した被演算子は置換の時点で事前展開されるため、`{#define REQ(n) __assert(defined(n), m)}{#define X 1}REQ(X)` は `defined(1)` になり `PP40` になる（C の規則と同じ。`{#define D(n) defined(n)}` と `{#if D(X)}` も同じ）
+- `defined` を直接書けば働く（`__assert(defined(X), m)`）。評価中に展開されたマクロが生んだ `defined` も、`{#if}` と同じく演算子として認識する（`{#define D defined(X)}__assert(D, m)`。clang も同じ）。警告は出さない（§5.2）。外側のマクロのパラメータを通した被演算子は置換の時点で事前展開されるため、`{#define REQ(n) __assert(defined(n), m)}{#define X 1}REQ(X)` は `defined(1)` になり `PP40` になる（C の規則と同じ。`{#define D(n) defined(n)}` と `{#if D(X)}` も同じ）
 - 評価できない式は、その式の診断だけを出し、`PP91` は重ねない（clang の `static_assert` と同じ）。対象は、空または不完全な式（`1 +`、`PP51`）、余分なトークン（`1 x`、`PP52`）、不正な基数・桁・リテラルの桁あふれ・浮動小数点リテラルの 0 へのアンダーフロー（`2#102`・`99999999999999999999`・`1.0e-400`、`PP52`）、型エラー（`TRUE + 1`、`PP50`）、`defined` の被演算子の誤り（`PP40`、`)` がなければ `PP52`）、`__has_builtin` の被演算子の誤り（`PP39`、`(` や `)` がなければ `PP52`。§5.2）、サンドボックスでの `__has_include`（`PP62`）。この診断を `{#ignore}` で抑制した場合は、壊れた条件で通らないよう `PP91`（メッセージ、または上記の既定の文面）を出す（§10）。最初の診断を抑制し、その後の別の診断が表示された場合は、両方（その診断と `PP91`）が出ることがある
 - 0 による除算・剰余は `{#if}` と同じく `PP52` を出し、その演算を 0 として評価を続け、結果の値で判定する（§6.3）
 - 評価されない被演算子（§6.4）は評価の失敗にならない。その中の 0 による除算・剰余と、実数の整数範囲外（"float value out of integer range"）は診断を出さず、後者は失敗としても数えないので、`__assert(FALSE \and\ BYTE#1.0e30 = BYTE#0, m)` は `PP91 'm'` だけを出す（条件は左の偽で決まる）。`__assert(TRUE \or\ 1 / 0 = 1, m)` は何も出さない
@@ -1684,7 +1686,7 @@ jiepp: error: PP10: An error occurred with the file; '<stdout>'
 - 中断するのは SEVERE（`PP63`・`PP64`・`PP65`・`PP66`・`PP67` など）と `PP10`（`FILE_ERROR`）・`PP11`（`FILE_NOT_FOUND`）・`PP12`（`MAX_INCLUDE_DEPTH_EXCEEDED`）・`PP13`（`INVALID_COMMAND`）・`PP14`（`INCLUDE_TARGET_IS_DIRECTORY`）・`PP60`（`MAX_EXPANSION_DEPTH_EXCEEDED`）・`PP61`（`MAX_IF_NESTING_EXCEEDED`）だけ。gcc がまだ中断しない場合でも jiepp は中断する（例: インクルード深度超過を許すと処理量が指数的に増えかねないため）
 - 上記以外の ERROR（`{#error}` を含む）はメッセージを出してエラー件数を 1 増やし処理を続ける。`-Werror` や `-Werror=undef` で昇格した WARNING も、元のコードが中断コードでなければ同様に件数へ加算するだけ
 - エラー件数は `--error-limit N`（既定 1000、サンドボックスビルドは 100、`0` で無制限）で制限される。数えたエラーがちょうど `N` 件に達した後で、次に数えるべき ERROR が起きると、その ERROR は出さずに `PP65`（`TOO_MANY_ERRORS`、SEVERE。`Too many errors emitted, stopping now`、補足情報は `limit N; use --error-limit N to raise it (0 = no limit)`）を出して中断する。`PP65` の位置は、出さなかったそのエラーの位置（処理を止めた場所）である。エラーがちょうど `N` 件なら `PP65` は出ない。数えるのは上の件数と同じエラーだけで、WARNING・INFO と `{#ignore}` で抑制した診断は数えず、`-Werror` で昇格した警告は数える。上の中断コード（`PP10`〜`PP14`、`PP60`、`PP61`、SEVERE）は件数が `N` に達していても自分のコードで中断する。`PP65` は SEVERE なので `{#ignore PP65}`・`-w`・`--silent` でも止まり、終了コードは `1`、出力は `PP64` と同じ規則に従う。この上限は継続モードの jiepp コマンドだけに効く。ライブラリとして使う場合の `Issue::error_limit_` は既定 0（無制限）で、`Issue::ContinueMode` なしで設定しても何も起きない
-- `--silent`/`-w` は表示だけを抑制し件数には影響しない。`{#ignore}` で抑制した診断は表示も件数加算も行わない
+- `--silent` は表示だけを抑制し件数には影響しない。`-w` は WARNING の表示だけを抑制し、ERROR・SEVERE と、`-Werror` などでエラーに昇格した警告は表示して数える（`-w` でも `PP67` は表示され、終了コードは `1`）。`{#ignore}` で抑制した診断は表示も件数加算も行わない
 - 終了コードは、処理を中断した場合、エラー件数が 1 件以上ある場合、または出力の書き込みに失敗した場合に `1`
 - 出力（`-o`・依存関係ファイル・標準出力）の書き込みの検査は処理の後に行い、書き込みに失敗すると `PP10` を出す。どのコードで中断するかは変わらない。中断した場合や最後まででエラーが 1 件以上あった場合に標準出力へ出した内容の書き込みに失敗したときも、先に出た診断の後に `PP10`（`'<stdout>'`）を 1 行加える（終了コードは `1` のまま）
 - 最後まで処理してもエラーが 1 件以上あれば、`-o` と依存関係ファイルは書き込まず既存ファイルにも触れない。標準出力宛のとき（`-o` 省略または `-o -`）だけ、そこまで組み立てた内容を出す。宛先ごとの詳細は次の表（`-dM`/`-M`/`-MM` の扱いに注意）
@@ -1808,7 +1810,7 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | `-MD` / `-MMD` | `-MD` / `-MMD` | 同等（自動命名規則も gcc のドライバと同じ、§13「依存関係ファイルの Make エスケープ」）。-MMD はシステムインクルード除外 |
 | インクルード深度超過時も処理を継続 | インクルード深度超過（`PP12`）は中断する | gcc/clang はこの場合も処理を続けるが、jiepp は指数的な処理量増大を避けるため意図的に中断する（§16「重大度」） |
 | — | `__VA_ARGC__` | Jiepp 拡張: 可変長引数の個数 |
-| `defined(NAME)` | `defined(NAME)` | 同等 |
+| `defined(NAME)` | `defined(NAME)` | 同等。マクロ展開が生んだ `defined` も評価する。clang の `-Wexpansion-to-defined`（オブジェクト形式マクロでは既定、関数形式マクロでは `-pedantic`）に当たる警告は出さない（§5.2） |
 | `__has_include(...)` | `__has_include(...)` | 同等 |
 | `__has_builtin(NAME)` | `__has_builtin(NAME)` | 条件式で使う点と形は同じ。clang はコンパイラの組み込み関数を調べ、マクロの定義・解除に影響されないが、jiepp は jiepp のビルトインマクロと演算子（§3.5 の範囲）を調べ、`NAME` の解除と再定義を反映する（`{#undef __assert}` の後は `0`）。`defined` を使えない場所（条件式の外）では、ただの識別子（§5.2） |
 | `&&`, `\|\|`, `!` | `\and\`, `\or\`, `\not\` | IEC 61131-3 論理演算子形式。`&&` / `\|\|` と同じく右の被演算子が評価されない場合があり、その中では値に依存する診断（`PP54`、ゼロ除算・剰余、実数の整数範囲外）を出さない（§6.4）。`\xor\` は両辺を評価する |

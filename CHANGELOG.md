@@ -45,6 +45,10 @@
 - 入れ子の `__VA_OPT__` を持つ関数形式マクロは定義時に 1 回報告するだけになり、呼び出しごとの k(k−1)/2 件の診断がなくなった（1000 段で `--error-limit 0` のとき 499500 件・35.6 秒 → 1 件・0.06 秒。4000 段で `--silent --error-limit 0` のとき 0.52 秒 → 0.05 秒）
 - `__VA_OPT__` の中身を展開ステップに 2 回数えていたのを 1 回にした（`@@` の被演算子の形を含む）。`--max-expansion-steps` の境界が動き、`__VA_OPT__` を使う展開は以前より少ないステップで済む。`PP64` を出さない最小の `--max-expansion-steps` は、`{#define M(...) __VA_OPT__(a b c d e f g h)}M(1)` で 51 → 36、`p @@ __VA_OPT__(a b c d e f g h)` で 52 → 37、`__VA_OPT__(__VA_ARGS__)` に 8 トークンの引数を渡すと 80 → 65。`@__VA_OPT__(…)` と、中身が捨てられる呼び出しは変わらない。出力と診断は変わらない
 
+### 文書 / Documentation
+
+- マクロ展開が生んだ `defined` を評価すること、clang・gcc の `-Wexpansion-to-defined` に当たる警告を出さないことを SPECIFICATION.md §5.2 に明記した。§12.8 の `defined`・`__has_include` が使える場所に `__counter_set` の値を加えた（どちらも動作は変わらない）
+
 ### サンプルと性能測定 / Samples and benchmarks
 
 - `bench` に `has_include_probes`（`__assert` の中の多数の `__has_include`）と `has_include_nested_malformed`（入れ子の不正な `__has_include`）を追加
