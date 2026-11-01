@@ -600,3 +600,92 @@ TEST_F(PreprocessTest, UnclosedDirectiveInDeepRelexStillReportsPP23) {
               diag_tails(messages()));
     EXPECT_EQ(1, Issue::error_count_);
 }
+
+// A directive written "${#...$}" in a pragma body is not a directive (the
+// source lexer pairs "${" as an escaped '{'), so the re-lex of the body must
+// not run it: Q stays undefined, the directive is dropped from the pragma
+// text, and PP22 is reported beside the lexer's PP23.
+TEST_F(PreprocessTest, EscapedDirectiveInBarePragmaBodyDoesNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("(*{$}*)\nQ\n", pp("{ ${#define Q 1$} }\nQ\n"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1$} '",
+                  "PP22: Invalid syntax for pragma; '{#define Q 1$} }'",
+              }),
+              diag_tails(messages()));
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+// Same with the PP23 of the lexer ignored: the dropped directive is still
+// reported (PP22), so it cannot vanish silently.
+TEST_F(PreprocessTest, EscapedDirectiveInBarePragmaBodyStillReportedWithPP23Ignored) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    Issue::Ignoring ignoring({Issue::Code::INVALID_PP_SYNTAX});
+    EXPECT_EQ("(*{$}*)\nQ\n", pp("{ ${#define Q 1$} }\nQ\n"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{#define Q 1$} }'",
+              }),
+              diag_tails(messages()));
+    EXPECT_EQ(1, Issue::error_count_);
+}
+
+// {#undef}, {#line} and {#include} are not run either.
+TEST_F(PreprocessTest, EscapedOtherDirectivesInBarePragmaBodyDoNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("\n(*{a $}*)\n5\n", pp("{#define Q 5}\n{ a ${#undef Q$} b }\nQ\n"));
+    EXPECT_EQ(2, Issue::error_count_);
+    EXPECT_EQ("(*{$}*)\n2\n", pp("{ ${#line 100$} }\n__LINE__\n")); // 100 if {#line} ran
+    EXPECT_EQ("(*{$}*)\nx\n", pp("{ ${#include \"no_such_file.h\"$} }\nx\n"));
+    for (const auto& m : messages())
+        EXPECT_EQ(std::string::npos, m.find("PP11")) << m;
+}
+
+// A pragma in a macro argument is expanded at the argument pre-expansion
+// and on every rescan; the directive does not run in any of them.
+TEST_F(PreprocessTest, EscapedDirectiveInPragmaInMacroArgumentDoesNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("\n(*{$}*)\nQ\n",
+              pp("{#define M(x) x}\nM({ ${#define Q 1$} })\nQ\n"));
+    EXPECT_EQ(2, Issue::error_count_);
+    EXPECT_EQ("\n(*{$}*)\nQ\n",
+              pp("{#define M(x) x}\nM(M({ ${#define Q 1$} }))\nQ\n"));
+}
+
+// A pragma in a macro replacement list.
+TEST_F(PreprocessTest, EscapedDirectiveInPragmaInMacroBodyDoesNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    // The replacement list is "{ ${#define Q 1$} }" ($24 = '$').
+    EXPECT_EQ("\n(*{$}*)\nQ\n", pp("{#define P ${ $24$7B#define Q 1$24$7D $}}\nP\nQ\n"));
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+// A nested pragma body: the directive does not run at any depth.
+TEST_F(PreprocessTest, EscapedDirectiveInNestedPragmaBodyDoesNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    const std::string out = pp("{ ${ ${#define Q 1$} }\nQ\n");
+    EXPECT_NE(std::string::npos, out.find("\nQ\n")) << out;
+}
+
+// Guard: the {#pragma ...} form never ran such a directive and stays quiet.
+TEST_F(PreprocessTest, EscapedDirectiveInPragmaDirectiveStillQuiet_Guard) {
+    EXPECT_EQ("\nQ\n", pp("{#pragma x ${#define Q 1$}}\nQ\n"));
+    EXPECT_TRUE(empty());
+}
+
+// Guard: a directive after an even number of '$' has a raw '{'; it keeps
+// running as before (PP22 from the source lex, PP23 from the re-lex).
+TEST_F(PreprocessTest, DirectiveAfterEvenDollarsInPragmaBodyStillRuns_Guard) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("(*{$$}*)\n1\n", pp("{ $${#define Q 1 }\nQ\n"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1 '",
+              }),
+              diag_tails(messages()));
+}
+
+// Guard: a directive written literally in a macro argument (not in a
+// pragma body) still runs.
+TEST_F(PreprocessTest, DirectiveInMacroArgumentStillRuns_Guard) {
+    EXPECT_EQ("\nx 1\n", pp("{#define M(x) x}\nM({#define Q 1} x) Q\n"));
+}

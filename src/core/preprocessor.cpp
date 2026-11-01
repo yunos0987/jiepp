@@ -91,6 +91,29 @@ std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
         for (auto& t : its)
             if (t.type == Token::PRAGMA)
                 t.relexed_pragma = true;
+        // A directive whose '{' follows an odd number of '$' was written
+        // "${#...": the source lexer read "${" as an escaped pair, not as a
+        // raw '{', so the text was never a directive there. It must not run
+        // here either: a pragma body is text of the pragma, not a place for
+        // directives. Drop the token (it is not copied into the pragma
+        // text) and report PP22, the code a raw '{' in a pragma body gets
+        // (read_pragma_body()). Every such directive is reported, in both
+        // pragma kinds: no earlier pass met it, as the source lexer paired
+        // its '{' with the '$'. A directive after an even number of '$' has
+        // a raw '{' (already PP22 in the source lex) and is unchanged.
+        std::size_t dollars = 0; // run of "$" tokens right before this one
+        std::erase_if(its, [&dollars](const Token& t) {
+            if (t.type == Token::ANY && t.text == "$") {
+                ++dollars;
+                return false;
+            }
+            const bool escaped_opener = t.type == Token::DIRECTIVE && dollars % 2 == 1;
+            dollars = 0;
+            if (!escaped_opener)
+                return false;
+            ISSUE(INVALID_PRAGMA_SYNTAX, t.text);
+            return true;
+        });
     }
     // Every newline in an operand is a decoded $n/$l/$r/$0A/$0D escape: the
     // raw newlines of the directive are counted by the lexer separately
