@@ -657,7 +657,7 @@ void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ot
     // filesystem calls, so it is an invalid path, like a malformed operand.
     if (strip_path(raw_path, syspath, _) && syspath.find('\0') == std::string::npos) {
         env.add_syspath(resolve_syspath_base(syspath, env));
-        ots.push_back(Token::pragma("syspath", Util::encode_iec_string(syspath, '\''), env.is_standard_pragma_style()));
+        ots.push_back(Token::pragma("syspath", Util::encode_syspath_path(syspath), env.is_standard_pragma_style()));
         return;
     }
     // raw_arg is decoded, so re-escape it before it reaches the

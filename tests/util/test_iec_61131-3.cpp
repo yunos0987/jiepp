@@ -16,6 +16,16 @@ TEST_F(UtilTest, encode_iec_string) {
     EXPECT_EQ("'a$nb$n'", Util::encode_iec_string("a\nb\n"));
 }
 
+TEST_F(UtilTest, encode_syspath_path) {
+    EXPECT_EQ("''", Util::encode_syspath_path(""));
+    EXPECT_EQ("'dir/a b'", Util::encode_syspath_path("dir/a b"));
+    EXPECT_EQ("'a$$b'", Util::encode_syspath_path("a$b"));
+    EXPECT_EQ("'a$7Bb$7Dc'", Util::encode_syspath_path("a{b}c"));
+    EXPECT_EQ("'$27$22'", Util::encode_syspath_path("\'\""));
+    EXPECT_EQ("'a$nb$rc$td$p'", Util::encode_syspath_path("a\nb\rc\td\f"));
+    EXPECT_EQ("'a$$b$7Bc$7Dd$27e'", Util::encode_syspath_path("a$b{c}d'e"));
+}
+
 TEST_F(UtilTest, encode_line_marker_path) {
     EXPECT_EQ("''", Util::encode_line_marker_path(""));
     EXPECT_EQ("'a.iec'", Util::encode_line_marker_path("a.iec"));

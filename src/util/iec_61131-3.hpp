@@ -14,4 +14,9 @@ std::string encode_iec_string(std::string_view raw, const char quote = '\'');
 // brace and a reader can end the pragma at the first "}".
 std::string encode_line_marker_path(std::string_view raw);
 
+// Path inside the re-emitted {syspath:'...'} pragma: as encode_iec_string
+// with a single quote ("$" stays "$$"), except that "{" and "}" are written
+// as "$7B" and "$7D", so a reader can end the pragma at the first "}".
+std::string encode_syspath_path(std::string_view raw);
+
 }

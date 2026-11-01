@@ -426,6 +426,23 @@ TEST_F(IncludeTest, SyspathPragmaReemittedAsWritten) {
     EXPECT_TRUE(empty());
 }
 
+// The re-emitted pragma writes "{" and "}" of the path as $7B and $7D (and
+// "$" as $$), so jiepp can read its own output: with a raw "}" the pragma
+// would end early (PP22/PP29).
+TEST_F(IncludeTest, SyspathPragmaEscapesBracesAndRoundTrips) {
+    fs::current_path(jiepp_root_dir());
+    std::string o;
+    EXPECT_NO_THROW({ o = pp("{#syspath 'd$7Bx$7D$$y'}"); });
+    EXPECT_EQ("(*{syspath:'d$7Bx$7D$$y'}*)", o);
+    EXPECT_TRUE(empty());
+
+    // Re-reading the output must neither fail nor change it.
+    std::string o2;
+    EXPECT_NO_THROW({ o2 = pp(o); });
+    EXPECT_EQ(o, o2);
+    EXPECT_TRUE(empty());
+}
+
 #ifndef JIEPP_SANDBOX
 // A9: a path with a NUL ($00 decoded in the directive operand) used to be
 // truncated at the NUL by the C-string filesystem calls, so
