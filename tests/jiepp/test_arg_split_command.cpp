@@ -3,7 +3,7 @@
 #include "jiepp/option.hpp"
 
 // jiepp command-line output of __arg_lhs / __arg_rhs / __arg_dir
-// (SPECIFICATION.md 12.13) inside {ld}...{end}, the way rungst splits FB
+// (SPECIFICATION.md 12.13) inside {ld}...{end}, the way rungiec splits FB
 // arguments written as `pin := value` or `pin => var`.
 
 namespace {
@@ -65,7 +65,7 @@ TEST_F(ArgSplitCommandTest, StandardStyle) {
               r.out);
 }
 
-// -P (no line markers) with -nC (remove comments), the options rungst uses.
+// -P (no line markers) with -nC (remove comments), the options rungiec uses.
 // A real comment is removed; the {ld}/{end} pragma comments stay. `a < b` in
 // the value is escaped by __xmlattr, `dir` is quoted through __xmlattr, and
 // the call is split at the first separator.

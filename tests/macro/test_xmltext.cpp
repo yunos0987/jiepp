@@ -20,7 +20,7 @@ class XmltextTest : public JieppTest {};
 class RobustnessTestXmltext : public JieppTest {};
 
 namespace {
-// A caller like rungst's element writers: the parameter is named inside the
+// A caller like rungiec's element writers: the parameter is named inside the
 // call.
 const std::string kElem = "{#define ELEM(t) <Text>__xmltext(t)</Text>}";
 } // namespace

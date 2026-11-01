@@ -1449,7 +1449,7 @@ LABEL(x := 'y' < 2){end}
 - `{#if}` / `{#elif}` の条件式の中に書いても、結果は文字列の字句なので式の被演算子にならない
 - 引数リスト内のディレクティブ、`__LINE__` と診断の行番号は `__nosplit` と同じ（§12.11）
 
-**定義・解除・`-dM`**: §12.9 と同じくシンボル表の通常の項目で、`{#ifdef __xmlattr}` と `__has_builtin(__xmlattr)`（§5.2）は真（`__xmltext` も同様）。`{#undef}` / `-U` で解除でき `PP35`（`__xmlattr: undefining built-in macro`）を、再定義（`-D __xmlattr=1` など）は `PP35`（`__xmlattr: redefining built-in macro`）を出す（§3.5・§3.6）。解除・再定義した後は `__has_builtin(__xmlattr)` は `0`、`__xmlattr(a)` はただのテキストになる。`-dM` には出ない。RUNGST のように、`__has_builtin(__xmlattr)` で使えるかを調べてから使う。
+**定義・解除・`-dM`**: §12.9 と同じくシンボル表の通常の項目で、`{#ifdef __xmlattr}` と `__has_builtin(__xmlattr)`（§5.2）は真（`__xmltext` も同様）。`{#undef}` / `-U` で解除でき `PP35`（`__xmlattr: undefining built-in macro`）を、再定義（`-D __xmlattr=1` など）は `PP35`（`__xmlattr: redefining built-in macro`）を出す（§3.5・§3.6）。解除・再定義した後は `__has_builtin(__xmlattr)` は `0`、`__xmlattr(a)` はただのテキストになる。`-dM` には出ない。RUNGIEC のように、`__has_builtin(__xmlattr)` で使えるかを調べてから使う。
 
 **サンドボックス**: 使える（ファイルにアクセスしない）。
 
@@ -1466,7 +1466,7 @@ LABEL(x := 'y' < 2){end}
 | `__arg_rhs(args...)` | その区切りより後のトークン（同じく先頭と末尾の空白を除く） |
 | `__arg_dir(args...)` | 整数のトークン 1 個。区切りが `:=` なら `0`、`=>` なら `1` |
 
-FB の呼び出しの引数は `pin := value`（入力）または `pin => var`（出力）の形で書く。RUNGST のように XML を書くときに、これをパラメータ名と値に分けるためのもの。jiepp 独自の拡張で、gcc/clang に対応するものはない（§17）。
+FB の呼び出しの引数は `pin := value`（入力）または `pin => var`（出力）の形で書く。RUNGIEC のように XML を書くときに、これをパラメータ名と値に分けるためのもの。jiepp 独自の拡張で、gcc/clang に対応するものはない（§17）。
 
 ```
 {#define IN(a) <Arg name=__xmlattr(__arg_lhs(a)) dir=__xmlattr(__arg_dir(a)) value=__xmlattr(__arg_rhs(a))/>}

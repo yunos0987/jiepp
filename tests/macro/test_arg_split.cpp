@@ -24,7 +24,7 @@ class RobustnessTestArgSplit : public JieppTest {};
 namespace {
 const std::vector<std::string> kNames = {"__arg_lhs", "__arg_rhs", "__arg_dir"};
 
-// A caller like rungst's FB argument macros: the macro body names the
+// A caller like rungiec's FB argument macros: the macro body names the
 // parameter inside the calls.
 const std::string kIn =
     "{#define IN(a) <InputVariable parameterName=__xmlattr(__arg_lhs(a))/>}";

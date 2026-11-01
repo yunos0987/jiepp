@@ -39,7 +39,7 @@ const std::string kId = "{#define ID(...) __VA_ARGS__}";
 // its own arguments (G(x) calls F(x)), where the protection shows.
 const std::string kF = "{#define F(...) __VA_ARGC__}";
 const std::string kG = "{#define G(...) F(__VA_ARGS__)}";
-// A statement wrapper like rungst's ST_EXEC, and the same without __nosplit.
+// A statement wrapper like rungiec's ST_EXEC, and the same without __nosplit.
 const std::string kStx = "{#define STX(...) stx: __nosplit(__VA_ARGS__) ;}";
 const std::string kStxr = "{#define STXR(...) stx: __VA_ARGS__ ;}";
 const std::string kTwoStage =
@@ -58,7 +58,7 @@ TEST_F(NosplitTest, VaArgcAfterRescan) {
     EXPECT_TRUE(empty());
 }
 
-// T2: two-stage distribution (the rungst RUNG case).
+// T2: two-stage distribution (the rungiec RUNG case).
 TEST_F(NosplitTest, TwoStageDistribution) {
     EXPECT_EQ("<2> <2>", pp(kTwoStage + kStx + "OUT(A, STX(case N of 1, 2: Y := 1;))"));
     EXPECT_EQ("<2> <3>", pp(kTwoStage + kStxr + "OUT(A, STXR(case N of 1, 2: Y := 1;))")); // control

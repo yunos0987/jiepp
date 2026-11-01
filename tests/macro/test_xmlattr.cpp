@@ -20,7 +20,7 @@ class XmlattrTest : public JieppTest {};
 class RobustnessTestXmlattr : public JieppTest {};
 
 namespace {
-// A caller like rungst's CONTACT: the macro body names the parameter inside
+// A caller like rungiec's CONTACT: the macro body names the parameter inside
 // the call.
 const std::string kContact =
     "{#define CONTACT(op) <LdObject xsi:type=\"Contact\" operand=__xmlattr(op)/>}";
