@@ -1122,7 +1122,7 @@ TEST_F(DirectiveTest, InvalidEscapeKeptLiterally) {
     }
     {
         SCOPED_TRACE("{#line 10 'f$q.iec'}__FILE__;");
-        EXPECT_EQ("(*{#:9 'f$$q.iec'}*)'f$$q.iec';",
+        EXPECT_EQ("(*{#:9 'f$24q.iec'}*)'f$$q.iec';",
                    pp("{#line 10 'f$q.iec'}__FILE__;"));
         auto cs = codes();
         ASSERT_EQ(1u, cs.size());

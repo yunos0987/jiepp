@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+### 互換性に影響する変更 / Breaking changes
+
+- 行マーカー（`(*{#:N 'file'}*)` / `{#:N 'file'}`）のファイル名で、`$` を `$24`、`{` を `$7B`、`}` を `$7D` と書くようにした。以前は `$` を `$$` と書き、`{`・`}` はそのまま出していたので、ファイル名に `}` を含むとマーカーがそこで閉じ、jiepp 自身も jiecc も出力を正しく読み直せなかった（jiepp は `PP22` で終了コード 1）。`'` → `$27` などほかのエスケープは変わらない。出力が変わるのはファイル名に `$`・`{`・`}` を含むマーカーだけで、`__FILE__`・`@`（文字列化）・`{#string}` は変わらない（`$` は `$$` のまま）。`{#syspath}` の出力も変えていない（SPECIFICATION.md §9・§17）
+
 ### 新機能 / New features
 
 - 名前に `-` を含む長いオプション 11 個すべてが、`-` をすべて `_` にした綴りでも書けるようになった（`--remove_comments`、`--max_include_depth` など）。以前は `--max-include-depth`・`--max-expansion-depth`・`--max-expansion-steps`・`--max-include-count`・`--max-input-bytes`・`--error-limit`・`--max-if-nesting`・`--max-blank-lines`・`--pp-output-pragma-style`・`--recursion-limit` の 10 個だけが両方の綴りを受け付け、`--remove_comments` は `PP70` だった。パーサーが 1 か所で変換するので、今後増やす長いオプションも同じ規則になる。`-` と `_` が混ざった綴り（`--max_include-depth`）、`-include`・`-Werror=undef` のような `-` 1 つで始まるオプション、名前に `-` を含まない `--silent`・`--disppath`、オプションの値は変換せず、診断も変わらない。診断には入力した綴りがそのまま出る。`--help` に 1 行追加した（SPECIFICATION.md §2・§13、README.md）

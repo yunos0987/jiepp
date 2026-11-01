@@ -58,7 +58,7 @@ Token Token::line_pragma(LineNo lineno,
                          int num_of_lines)
 {
     if (filepath.has_value() && !filepath->empty()) {
-        std::string fp = Util::encode_iec_string(*filepath, '\'');
+        std::string fp = Util::encode_line_marker_path(*filepath);
         std::string value = std::to_string(lineno) + " " + fp;
         return pragma("#", value, standard, num_of_lines);
     } else {
