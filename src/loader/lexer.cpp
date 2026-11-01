@@ -228,12 +228,14 @@ std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, LineNo
 namespace {
 
 // Shared by iec3_tokens_from_string() and iec3_relex(), so the two cannot
-// drift apart (BOM stripping, comment removal).
+// drift apart (BOM stripping, comment removal). strip_bom: source text strips
+// a leading UTF-8 BOM; re-lexed text (iec3_relex()) keeps it, since its bytes
+// are data of the directive/pragma/macro text, not a file's encoding mark.
 std::vector<Token> lex_text(const std::string& input, bool remove_comments, LineNo lineno,
-                            LexOptions opts) {
+                            LexOptions opts, bool strip_bom) {
     std::string text = input;
     // Strip UTF-8 BOM if present
-    if ((text.size() >= 3) &&
+    if (strip_bom && (text.size() >= 3) &&
         (static_cast<unsigned char>(text[0]) == 0xEF) &&
         (static_cast<unsigned char>(text[1]) == 0xBB) &&
         (static_cast<unsigned char>(text[2]) == 0xBF))
@@ -258,7 +260,8 @@ std::vector<Token> lex_text(const std::string& input, bool remove_comments, Line
 std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, LineNo lineno,
                                            bool report_nested_brace) {
     return lex_text(input, remove_comments, lineno,
-                    LexOptions{.report_nested_brace = report_nested_brace});
+                    LexOptions{.report_nested_brace = report_nested_brace},
+                    /*strip_bom=*/true);
 }
 
 std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
@@ -267,7 +270,8 @@ std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
     // reports at the current Issue location instead; 1 is never shown.
     return lex_text(text, remove_comments, 1,
                     LexOptions{.report_nested_brace = report_nested_brace,
-                               .at_current_location = true});
+                               .at_current_location = true},
+                    /*strip_bom=*/false);
 }
 
 std::string iec3_blank_out_comments(std::string_view s, bool header_name) {

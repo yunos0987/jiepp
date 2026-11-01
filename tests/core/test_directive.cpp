@@ -466,6 +466,15 @@ TEST_F(DirectiveTest, NewlineInIfExpression) {
     EXPECT_TRUE(empty());
 }
 
+// A UTF-8 BOM decoded from "$EF$BB$BF" at the start of a re-lexed operand is
+// data, not a file's encoding mark: it is kept (source text strips a leading
+// BOM, see PreprocessTest.Bom).
+TEST_F(DirectiveTest, StringDirectiveKeepsDecodedBom) {
+    EXPECT_EQ("'\xEF\xBB\xBF" "x'", pp("{#string $EF$BB$BFx}"));
+    EXPECT_EQ("\"\xEF\xBB\xBF" "x\"", pp("{#wstring $EF$BB$BFx}"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(DirectiveTest, NewlineInStringAndMessageDirectives) {
     // {#string} emits its own content before the swallowed newline is
     // echoed, so the "\n" trails here instead of leading.

@@ -24,8 +24,8 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
 // not source lines, so every lexer diagnostic is reported at the current
 // Issue location (Issue::lineno()/filepath()), like the other diagnostics of
 // the directive or pragma being processed; call it only where that location
-// is set. Otherwise identical to iec3_tokens_from_string(), including the
-// existing behavior of stripping a leading UTF-8 BOM from the text.
+// is set. Otherwise identical to iec3_tokens_from_string(), except that a
+// leading UTF-8 BOM in the text is kept (source text strips it).
 // report_nested_brace: false only when re-lexing the body of a pragma that
 // was itself produced by re-lexing a pragma body (Token::relexed_pragma):
 // a raw '{' inside a nested pragma/directive body is then not reported
