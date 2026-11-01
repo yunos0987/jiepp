@@ -58,11 +58,14 @@ void report_unterminated_literal(Token& t) {
 }
 
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
-                               bool report_unterminated, bool report_nested_brace) {
+                               bool report_unterminated, bool report_nested_brace,
+                               bool* found_unterminated) {
     // U1: re-lexed text is not source text, so its diagnostics go to the
     // current Issue location (the directive/pragma being processed).
     auto ts = iec3_relex(text, remove_comments, report_nested_brace);
     for (auto& t : ts) {
+        if (t.unterminated && found_unterminated)
+            *found_unterminated = true;
         if (report_unterminated)
             report_unterminated_literal(t);
         else
@@ -72,13 +75,14 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
 }
 
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
-                                         bool report_unterminated, OperandKind kind) {
+                                         bool report_unterminated, OperandKind kind,
+                                         bool* found_unterminated) {
     // Work budget (PP64): one step per byte, charged BEFORE lexing, so an
     // operand (pragma body, {#if} condition, {#include} path, message, ...)
     // costs work in proportion to its size even if it expands to nothing.
     env.charge_expansion_steps(text.size());
     auto its = lex_operand(text, env.get_remove_comments(), report_unterminated,
-                           kind != OperandKind::nested_pragma_body);
+                           kind != OperandKind::nested_pragma_body, found_unterminated);
     // A2 / S-02: a pragma lexed from a pragma body is still the lexer's own
     // text here; every raw '{' in its body was met by this lex and reported
     // by it or by an enclosing pass (see read_pragma_body()), so its own

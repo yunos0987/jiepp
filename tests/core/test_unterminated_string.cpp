@@ -426,6 +426,39 @@ TEST_F(UnterminatedStringTest, PragmaInsideMacroBodyReportedOncePerExpansion) {
     EXPECT_EQ((std::vector<std::string>{w29(2, "'x"), w29(2, "'x")}), messages());
 }
 
+// A bare { ... } pragma in a macro argument is expanded when the argument is
+// pre-expanded and again when the substituted text is rescanned (once per
+// use of the parameter); PP29 for its literal is reported only by the first.
+TEST_F(UnterminatedStringTest, PragmaInArgumentReportedOnce) {
+    Issue::ContinueMode guard({});
+    const std::string out = pp("{#define F(x) [x]}\nF(\n{ x \"abc }\n1\n)\n");
+    EXPECT_NE(std::string::npos, out.find("[(*{x \"abc }*) 1]")) << out;
+    EXPECT_EQ((std::vector<std::string>{w29(5, "\"abc ")}), messages());
+}
+
+TEST_F(UnterminatedStringTest, PragmaInArgumentUsedTwiceReportedOnce) {
+    Issue::ContinueMode guard({});
+    const std::string out = pp("{#define G(x) [x][x]}\nG(\n{ x \"abc }\n1\n)\n");
+    EXPECT_NE(std::string::npos, out.find("[(*{x \"abc }*) 1][(*{x \"abc }*) 1]")) << out;
+    EXPECT_EQ((std::vector<std::string>{w29(5, "\"abc ")}), messages());
+}
+
+TEST_F(UnterminatedStringTest, PragmaInArgumentUsedThreeTimesReportedOnce) {
+    Issue::ContinueMode guard({});
+    (void)pp("{#define H(x) x x x}\nH(\n{ x 'abc }\n)\n");
+    EXPECT_EQ(1u, codes().size());
+}
+
+// Control: the {#pragma ...} directive form is run once as the argument is
+// collected.
+TEST_F(UnterminatedStringTest, PragmaDirectiveInArgumentReportedOnce) {
+    Issue::ContinueMode guard({});
+    (void)pp("{#define F(x) [x][x]}\nF(\n{#pragma x \"abc }\n1\n)\n");
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::UNTERMINATED_STRING_LITERAL, cs[0]);
+}
+
 // ---- PP29: suppression ----
 
 TEST_F(UnterminatedStringTest, IgnorePP29SuppressesLaterLiterals) {

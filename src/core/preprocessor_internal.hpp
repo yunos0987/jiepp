@@ -71,9 +71,12 @@ void report_unterminated_literal(Token& t);
 // clang's #error/#warning) only clears the marks. Lexes with iec3_relex(),
 // so its own diagnostics (PP20/PP22/PP23) are also reported at the current
 // Issue location; report_nested_brace is passed to it.
+// found_unterminated, if not null, is set to true when the text has an
+// unterminated literal (whether or not it was reported); never set to false.
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
                                bool report_unterminated = true,
-                               bool report_nested_brace = true);
+                               bool report_nested_brace = true,
+                               bool* found_unterminated = nullptr);
 
 // What expand_operand_tokens() lexes (A2 / S-02):
 // - operand: a directive operand or message text.
@@ -95,7 +98,8 @@ enum class OperandKind { operand, pragma_body, nested_pragma_body };
 // it here spliced a line marker into the operand text itself.
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
                                          bool report_unterminated = true,
-                                         OperandKind kind = OperandKind::operand);
+                                         OperandKind kind = OperandKind::operand,
+                                         bool* found_unterminated = nullptr);
 // Concatenated text of expand_operand_tokens().
 std::string expand_operand_text(const std::string& text, Env& env,
                                 bool report_unterminated = true);

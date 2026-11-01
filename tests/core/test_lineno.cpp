@@ -470,9 +470,9 @@ TEST_F(RobustnessTestRelexLineno, T15_AgreesWithPP29) {
                   kLoc + "6.0: warning: PP29: Missing terminating quote character; ''x'",
               }),
               relex_diags(*this, "\n\n{ a\n\n (* x }\n{attribute\n\n 'x}\n"));
-    // Same shape as T6, with PP29: twice at the closing ')' line.
+    // Same shape as T6, with PP29: once, at the closing ')' line (the rescan
+    // of the substituted argument does not report the literal again).
     EXPECT_EQ((std::vector<std::string>{
-                  kLoc + "5.0: warning: PP29: Missing terminating quote character; ''arg '",
                   kLoc + "5.0: warning: PP29: Missing terminating quote character; ''arg '",
               }),
               relex_diags(*this, "{#define F(x) x}\n\nF(\n{ 'arg }\n)\n"));

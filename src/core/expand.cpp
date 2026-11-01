@@ -411,16 +411,27 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
     std::string expanded_body;
     int body_lines = 0;
     using jiepp::preprocessor_detail::OperandKind;
+    // PP29 for an unterminated literal in the body: a pragma in a macro
+    // argument is expanded here once when the argument is pre-expanded and
+    // again on every rescan of the substituted text (one per use of the
+    // parameter). The rewritten text still holds the same literal, so the
+    // first pass reports it and marks `out`; a later pass over that text
+    // (pragma_unterminated_reported) only lexes it silently.
+    bool found_unterminated = false;
     for (const auto& et : jiepp::preprocessor_detail::expand_operand_tokens(
-             body, env, true,
-             t.relexed_pragma ? OperandKind::nested_pragma_body : OperandKind::pragma_body)) {
+             body, env, !t.pragma_unterminated_reported,
+             t.relexed_pragma ? OperandKind::nested_pragma_body : OperandKind::pragma_body,
+             &found_unterminated)) {
         expanded_body += et.text;
         body_lines += et.num_of_lines;
     }
     Token out = t;
     // The text is rewritten below, so it is no longer the lexer's own text:
-    // a rescan (macro argument) re-lexes it with every diagnostic reported.
+    // a rescan (macro argument) re-lexes it with every diagnostic reported
+    // (except the PP29 already reported above).
     out.relexed_pragma = false;
+    if (found_unterminated)
+        out.pragma_unterminated_reported = true;
     // A newline printed inside the pragma text comes from a macro
     // replacement (the lexer already folded the raw newlines of the body),
     // so it is not a source line (see Token::output_only_lines).
