@@ -63,7 +63,7 @@
 
 ### 新機能 / New features
 
-- `__arg_lhs(...)`・`__arg_rhs(...)`・`__arg_dir(...)`（jiepp 独自の組み込み関数マクロ。gcc/clang に対応するものはない）: RUNGST が FB の引数 `pin := value` / `pin => var` を XML のパラメータ名と値に分けるためのもの。引数を最初の最上位（`( )` と `[ ]` の外）の `:=` または `=>` で分け、`__arg_lhs` が左辺、`__arg_rhs` が右辺（端の空白を除いたトークン）、`__arg_dir` が方向（`:=` が `0`、`=>` が `1`）を返す。文字列・コメント・プラグマの中の区切りは数えない。引数のつなぎ方と展開は `__xmlattr` と同じ。区切りがなければ新しいコード `PP81`（`ARG_SEPARATOR_MISSING`、ERROR）を出して何も出力しない。`__has_builtin(__arg_lhs)` で使えるかを調べられる（§12.13）
+- `__arg_lhs(...)`・`__arg_rhs(...)`・`__arg_dir(...)`（jiepp 独自の組み込み関数マクロ。gcc/clang に対応するものはない）: RUNGIEC が FB の引数 `pin := value` / `pin => var` を XML のパラメータ名と値に分けるためのもの。引数を最初の最上位（`( )` と `[ ]` の外）の `:=` または `=>` で分け、`__arg_lhs` が左辺、`__arg_rhs` が右辺（端の空白を除いたトークン）、`__arg_dir` が方向（`:=` が `0`、`=>` が `1`）を返す。文字列・コメント・プラグマの中の区切りは数えない。引数のつなぎ方と展開は `__xmlattr` と同じ。区切りがなければ新しいコード `PP81`（`ARG_SEPARATOR_MISSING`、ERROR）を出して何も出力しない。`__has_builtin(__arg_lhs)` で使えるかを調べられる（§12.13）
 - `__xmlattr(...)`・`__xmltext(...)`（jiepp 独自の組み込み関数マクロ。gcc/clang に対応するものはない）: 引数のテキストを XML の属性値（`"` で囲み `& < > " '` をエスケープ）または要素内容（`& < >` をエスケープ）にする。引数のつなぎ方と空白の扱いは `@__VA_ARGS__` と同じで、IEC の `$` エスケープはしない。制御文字と ASCII でないバイトは検査しない。`__has_builtin(__xmlattr)` で使えるかを調べられる（§12.12）
 - `--max-input-bytes N`（`--max_input_bytes N` も同じ）: 読み込む入力（主入力、標準入力、`-include` と `{#include}`/`{#sinclude}` のファイル。BOM と CR も数える）の合計バイト数の上限。超えると新しいコード `PP67`（`MAX_INPUT_BYTES_EXCEEDED`、SEVERE、`Maximum input size exceeded`）で中断し、終了コード 1。既定は `0`（無制限）で、サンドボックスビルドも同じ。不正な値は `PP71`、値がないと `PP72`。ディレクティブの形はありません。入力サイズを抑えるだけで、メモリ使用量の上限ではありません（SPECIFICATION.md §11・§13・§14、SECURITY.md）
 
@@ -85,7 +85,7 @@
 
 ### サンプルと性能測定 / Samples and benchmarks
 
-- サンプル `iec_61131-3/samples/xml_output.iec`（`__xmlattr`・`__xmltext`・`__arg_lhs`・`__arg_rhs`・`__arg_dir`。RUNGST 形式の LD の XML）を追加
+- サンプル `iec_61131-3/samples/xml_output.iec`（`__xmlattr`・`__xmltext`・`__arg_lhs`・`__arg_rhs`・`__arg_dir`。RUNGIEC 形式の LD の XML）を追加
 - `bench` に `has_include_probes`（`__assert` の中の多数の `__has_include`）と `has_include_nested_malformed`（入れ子の不正な `__has_include`）を追加
 - `bench` に `trailing_indent`（空行の後ろに長い字下げが続く入力）を追加
 
