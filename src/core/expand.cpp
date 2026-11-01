@@ -1095,10 +1095,15 @@ std::vector<Token>& expand(const std::string& filepath,
     bool found_directory = false;
     std::string fullpath = Loader::fullpath(filepath, load_type, env, &found_directory);
     if (fullpath.empty()) {
-        if (found_directory)
-            ISSUE(INCLUDE_TARGET_IS_DIRECTORY, filepath);
-        else
+        if (found_directory) {
+            // An empty filename resolves to the directory it is joined onto
+            // (the including file's directory, or a -I path); say so instead
+            // of printing an empty context.
+            ISSUE(INCLUDE_TARGET_IS_DIRECTORY,
+                  filepath.empty() ? std::string("empty filename") : filepath);
+        } else {
             ISSUE(FILE_NOT_FOUND, filepath);
+        }
         return ots;
     }
 

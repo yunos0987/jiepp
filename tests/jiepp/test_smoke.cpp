@@ -1290,6 +1290,18 @@ TEST_F(SmokeTest, IgnoredPP14CannotHideDirectoryInclude) {
     EXPECT_NE(r.err.find("PP14"), std::string::npos) << "stderr: " << r.err;
 }
 
+// An empty -include operand resolves to the current directory: PP14 whose
+// context says the filename is empty.
+TEST_F(SmokeTest, EmptyForceIncludeOperandIsPP14WithContext) {
+    fs::path input = tmp_dir_ / "empty_fi.iec";
+    write_file(input, "x := 1;\n");
+
+    auto r = run("-include \"\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP14: Include target is a directory; 'empty filename'"),
+              std::string::npos) << "stderr: " << r.err;
+}
+
 TEST_F(SmokeTest, IgnoredPP12CannotHideIncludeDepthExceeded) {
     fs::path input = tmp_dir_ / "ign_depth.iec";
     write_file(input, "{#ignore PP12}\n{#include \"ign_depth.iec\"}\nx := 1;\n");

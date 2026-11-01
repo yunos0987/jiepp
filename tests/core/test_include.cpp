@@ -112,6 +112,63 @@ TEST_F(IncludeTest, IncludeDirectory) {
     EXPECT_TRUE(empty());
 }
 
+// An empty filename resolves to the directory it is joined onto, so it ends in
+// PP14; the context says so instead of being empty.
+static void expect_include_error(JieppTest& t, const std::string& src,
+                                 const std::string& expected_tail) {
+    Issue::initialize(t.output());
+    t.DiagBox::initialize();
+    EXPECT_THROW(pp(src), Issue::Exception) << src;
+    const std::string m = t.message();
+    EXPECT_NE(std::string::npos, m.find(expected_tail)) << src << " -> " << m;
+}
+
+TEST_F(IncludeTest, EmptyFilenameQuotedIsPP14WithContext) {
+    fs::current_path(jiepp_root_dir());
+    for (const char* src : {"{#include ''}", "{#include \"\"}"})
+        expect_include_error(*this, src,
+                             "error: PP14: Include target is a directory; 'empty filename'");
+}
+
+TEST_F(IncludeTest, EmptyFilenameViaSyspathIsPP14WithContext) {
+    fs::current_path(jiepp_root_dir());
+    for (const char* directive : {"{#include <>}", "{#sinclude ''}", "{#sinclude <>}",
+                                  "{#include ''}"})
+        expect_include_error(
+            *this, std::string("{#syspath 'tests/core/test_include'}") + directive,
+            "error: PP14: Include target is a directory; 'empty filename'");
+}
+
+// Cases that never reached PP14 with an empty context keep their code.
+TEST_F(IncludeTest, EmptyFilenameWithoutSyspathStaysPP11) {
+    fs::current_path(jiepp_root_dir());
+    for (const char* directive : {"{#include <>}", "{#sinclude ''}"})
+        expect_include_error(*this, directive, "error: PP11: No such file or directory");
+}
+
+// __has_include answers 0 for an empty filename (a directory is not a file), with
+// or without a syspath, and reports nothing.
+TEST_F(IncludeTest, HasIncludeEmptyFilenameIsZeroWithoutDiagnostic) {
+    fs::current_path(jiepp_root_dir());
+    for (const char* operand : {"''", "\"\"", "<>"}) {
+        for (const char* prefix : {"", "{#syspath 'tests/core/test_include'}"}) {
+            const std::string src = std::string(prefix) + "{#if __has_include(" + operand +
+                                    ")}\nYES\n{#else}\nNO\n{#endif}\n";
+            std::string o;
+            EXPECT_NO_THROW({ o = pp(src); }) << src;
+            EXPECT_NE(std::string::npos, o.find("NO")) << src << " -> " << o;
+            EXPECT_EQ(std::string::npos, o.find("YES")) << src << " -> " << o;
+            EXPECT_TRUE(empty()) << src;
+        }
+    }
+}
+
+TEST_F(IncludeTest, DirectoryContextKeepsTheWrittenPath) {
+    fs::current_path(jiepp_root_dir());
+    expect_include_error(*this, "{#include '.'}",
+                         "error: PP14: Include target is a directory; '.'");
+}
+
 TEST_F(IncludeTest, DirectoryShadowedByLaterSyspath) {
     // A directory candidate found in an earlier syspath must not stop the
     // search: a regular file of the same name in a later syspath still
