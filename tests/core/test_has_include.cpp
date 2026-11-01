@@ -374,21 +374,21 @@ TEST_F(HasIncludeTest, TokenPathResolutionEdgeCases) {
         {"__has_include('a>b.iec')",
          ";|<unknown location>:1.0: error: PP91: 'm'\n",
          "0|"},
-        // An invalid escape in a quoted path: PP21 is reported once for
-        // every candidate call whose text reaches the literal, so nested
-        // calls repeat it.
+        // An invalid escape in a quoted path: PP21 is reported once per
+        // literal, in source order, however deeply the calls nest (also in
+        // the {#if} context, see NestedInvalidEscapeReportedOnce).
         {"__has_include('a$q')",
          ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP91: 'm'\n",
          "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n"},
         {"__has_include('a$q' __has_include('b$q' __has_include('c$q')))",
-         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include('a$q' __has_include('b$q' 0))'\n",
-         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include('a$q' __has_include('b$q' 0))'\n"},
+         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include('a$q' __has_include('b$q' 0))'\n",
+         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include('a$q' __has_include('b$q' 0))'\n"},
         {"__has_include(__has_include(__has_include('d$q')))",
-         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(0))'\n",
-         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(0))'\n"},
+         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(0))'\n",
+         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(0))'\n"},
         {"__has_include(<z> __has_include('e$q') __has_include('existing.iec'))",
-         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n",
-         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n"},
+         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n",
+         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n"},
         {"__has_include(<z> (*! __has_include('f$q') *))",
          ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''f$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n",
          "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''f$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n"},
@@ -430,6 +430,87 @@ TEST_F(HasIncludeTest, TextPathAngleEdgeCases) {
     };
     for (const auto& [src, expected] : pins)
         EXPECT_EQ(expected, run(src)) << src;
+}
+
+// ---- PP21 in nested candidate calls: once per literal position ----
+
+namespace {
+
+// The literals ('a$q', 'b$q', ...) named by the PP21 messages, in order.
+std::string hi_pp21_literals(const std::vector<std::string>& ms) {
+    std::string r;
+    for (const auto& m : ms) {
+        const std::string::size_type at = m.find("PP21: Invalid escape sequence; ''");
+        if (at == std::string::npos)
+            continue;
+        r += m.substr(at + 33, 3);
+    }
+    return r;
+}
+
+// __has_include('a$q' __has_include('b$q' ... __has_include('<last>$q')...))
+std::string hi_nested_invalid(int depth, char first = 'a') {
+    std::string open, close;
+    for (int i = 0; i < depth; ++i) {
+        open += "__has_include('";
+        open += static_cast<char>(first + i);
+        open += "$q' ";
+        close += ")";
+    }
+    return open + close;
+}
+
+} // namespace
+
+TEST_F(HasIncludeTest, NestedInvalidEscapeReportedOnce) {
+    Issue::ContinueMode guard({});
+    const std::string nest5 = hi_nested_invalid(5);
+    // Expression context (token pre-scan) and {#if} context (text scan).
+    pp_hi("__assert(" + nest5 + ", m);");
+    EXPECT_EQ("a$qb$qc$qd$qe$q", hi_pp21_literals(messages())) << "__assert";
+    pp_hi("__counter_set(c, " + nest5 + ")__counter_peek(c)");
+    EXPECT_EQ("a$qb$qc$qd$qe$q", hi_pp21_literals(messages())) << "__counter_set";
+    pp_hi("{#if " + nest5 + "}y{#else}n{#endif}");
+    EXPECT_EQ("a$qb$qc$qd$qe$q", hi_pp21_literals(messages())) << "{#if}";
+}
+
+TEST_F(HasIncludeTest, InvalidEscapeSiblingsAndDuplicateTextEachReported) {
+    Issue::ContinueMode guard({});
+    // The same literal text at two positions: two reports.
+    const std::string flat = "__has_include('s$q') + __has_include('s$q')";
+    pp_hi("__assert(" + flat + ", m);");
+    EXPECT_EQ("s$qs$q", hi_pp21_literals(messages())) << "flat __assert";
+    pp_hi("{#if " + flat + "}y{#else}n{#endif}");
+    EXPECT_EQ("s$qs$q", hi_pp21_literals(messages())) << "flat {#if}";
+    // Two sibling nests with the same texts, and a well-formed call between.
+    const std::string sib = hi_nested_invalid(2) + " + __has_include('existing.iec') + " +
+                            hi_nested_invalid(2);
+    pp_hi("__assert(" + sib + ", m);");
+    EXPECT_EQ("a$qb$qa$qb$q", hi_pp21_literals(messages())) << "sibling __assert";
+    pp_hi("{#if " + sib + "}y{#else}n{#endif}");
+    EXPECT_EQ("a$qb$qa$qb$q", hi_pp21_literals(messages())) << "sibling {#if}";
+    // {#ignore PP21} suppresses every report, nested or not.
+    pp_hi("{#ignore PP21}__assert(" + hi_nested_invalid(3) + ", m);");
+    EXPECT_EQ("", hi_pp21_literals(messages())) << "ignored";
+}
+
+// Operation count, not time: with n nested literals the number of reports
+// is n (it was n(n+1)/2). A timing limit would be flaky under load.
+TEST_F(HasIncludeTest, DeepNestedInvalidEscapeCountScalesLinearly) {
+    Issue::ContinueMode guard({});
+    constexpr int kDepth = 2000;
+    std::string open, close;
+    for (int i = 0; i < kDepth; ++i) {
+        open += "__has_include('x$q' ";
+        close += ")";
+    }
+    pp_hi("__assert(" + open + close + ", m);");
+    const auto ms = messages();
+    std::size_t pp21 = 0;
+    for (const auto& m : ms)
+        if (m.find("PP21:") != std::string::npos)
+            ++pp21;
+    EXPECT_EQ(static_cast<std::size_t>(kDepth), pp21);
 }
 
 // ---- Built-in calls nested in an __assert expression or a __counter_set value ----

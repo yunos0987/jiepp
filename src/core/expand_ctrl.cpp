@@ -328,10 +328,11 @@ std::string resolve_has_include(const std::string& raw_cond, Env& env) {
 // The rest of resolve_has_include() on a candidate's text had one visible
 // effect (its Loader::fullpath() calls only query the filesystem), kept
 // here: every quoted literal it decoded reported PP21 for an invalid
-// escape, so a literal inside n candidate texts was reported up to n
-// times. report_pp21_in_call_text() repeats that walk, but only for a
-// candidate whose text holds such a literal, and only over the keywords
-// that can report PP21 or skip text.
+// escape. A literal inside n candidate texts is reported once, at the
+// outermost candidate that reaches it, as resolve_has_include() does on an
+// {#if} text, which scans left to right once. report_pp21_in_call_text()
+// walks a candidate's text only from where the previous walk stopped, and
+// only over the keywords that can report PP21 or skip text.
 class HasIncludeTokenScan {
 public:
     explicit HasIncludeTokenScan(const std::vector<Token>& ts) : off_(ts.size() + 1) {
@@ -437,20 +438,32 @@ private:
         HasIncludeCall call; // parsed on the whole s_
         bool word = false;   // starts_word()
         bool pp21 = false;   // a closed quoted literal with an invalid escape
+        bool reported = false; // PP21 raised for this literal
     };
 
     // The PP21 reports of resolve_has_include() on the candidate text
-    // s_[nodes_[first].pos, end). The keyword at the start of the text has
-    // no word check. A parse limited to the text gives the same result as
-    // the whole-text parse when every position it uses lies inside the
-    // text: a literal closes in the text iff path_end <= end, a call is
-    // well formed in the text iff close < end. Keywords that are not live
-    // neither report nor skip, so the walk jumps over them.
+    // s_[nodes_[first].pos, end), each literal at most once over the whole
+    // scan. The keyword at the start of the text has no word check. A parse
+    // limited to the text gives the same result as the whole-text parse when
+    // every position it uses lies inside the text: a literal closes in the
+    // text iff path_end <= end, a call is well formed in the text iff
+    // close < end. Keywords that are not live neither report nor skip, so
+    // the walk jumps over them.
+    //
+    // Candidates come in source order and are nested or disjoint, and an
+    // enclosing candidate is walked before the ones inside it, with the
+    // larger end. So the keywords before walked_to_ were all visited (or
+    // skipped as the path text of a well-formed call) already and this walk
+    // resumes at walked_to_; only the candidate's own keyword is visited
+    // again, guarded by `reported`, so that the literal of a candidate that
+    // resolves is always reported. Every keyword is visited once: linear.
     void report_pp21_in_call_text(std::size_t first, std::size_t end) {
         auto visit = [&](std::size_t k) {
-            const Node& n = nodes_[k];
-            if (n.pp21 && n.call.path_end <= end)
+            Node& n = nodes_[k];
+            if (n.pp21 && !n.reported && n.call.path_end <= end) {
+                n.reported = true;
                 ISSUE(INVALID_ESCAPE_SEQUENCE, std::string(call_literal(s_, n.call)));
+            }
             if (n.call.close != std::string_view::npos && n.call.close < end) {
                 // Skips the call: continue at the first keyword after its ')'.
                 auto it = std::upper_bound(
@@ -460,8 +473,9 @@ private:
             }
             return k + 1;
         };
-        std::size_t k = visit(first);
+        std::size_t k = std::max(visit(first), walked_to_);
         for (;;) {
+            walked_to_ = std::max(walked_to_, k);
             k = next_live_[k];
             if (k >= nodes_.size() || nodes_[k].pos >= end)
                 break;
@@ -475,6 +489,7 @@ private:
     std::vector<Node> nodes_;        // every occurrence of the keyword in s_
     std::vector<std::size_t> next_pp21_;
     std::vector<std::size_t> next_live_;
+    std::size_t walked_to_ = 0;      // keywords before this index are done
 };
 
 void resolve_has_include_tokens(std::vector<Token>& ts, Env& env) {
