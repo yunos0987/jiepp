@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+### 新機能 / New features
+
+- 名前に `-` を含む長いオプション 11 個すべてが、`-` をすべて `_` にした綴りでも書けるようになった（`--remove_comments`、`--max_include_depth` など）。以前は `--max-include-depth`・`--max-expansion-depth`・`--max-expansion-steps`・`--max-include-count`・`--max-input-bytes`・`--error-limit`・`--max-if-nesting`・`--max-blank-lines`・`--pp-output-pragma-style`・`--recursion-limit` の 10 個だけが両方の綴りを受け付け、`--remove_comments` は `PP70` だった。パーサーが 1 か所で変換するので、今後増やす長いオプションも同じ規則になる。`-` と `_` が混ざった綴り（`--max_include-depth`）、`-include`・`-Werror=undef` のような `-` 1 つで始まるオプション、名前に `-` を含まない `--silent`・`--disppath`、オプションの値は変換せず、診断も変わらない。診断には入力した綴りがそのまま出る。`--help` に 1 行追加した（SPECIFICATION.md §2・§13、README.md）
+
 ### 不具合の修正 / Bug fixes
 
 - 浮動小数点リテラル（`1.5` など）を、ライブラリとして使う側が `LC_NUMERIC` に小数点がカンマのロケールを設定していても、常に C ロケールで読むようにした。以前は `std::strtod` がロケールに従うため、`1.5` が黙って `1.0` と読まれていた。オーバーフロー・アンダーフロー・subnormal の扱い（`PP52`）は変わらない

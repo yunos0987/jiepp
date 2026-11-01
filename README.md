@@ -171,6 +171,8 @@ cat input.iec | jiepp -
 | `--` | オプション終端 | — |
 | `--help` / `-h` | ヘルプ表示 | — |
 
+名前に `-` を含む長いオプション（`--max-include-depth`、`--remove-comments` など）は、`-` をすべて `_` にした綴り（`--max_include_depth`、`--remove_comments`）でも書けます。`-include` のような `-` 1 つのオプションと、`-` と `_` が混ざった綴り（`--max_include-depth`。`PP70`）は対象外です。
+
 全オプションの詳細は [`SPECIFICATION.md` §13](SPECIFICATION.md#13-cli-リファレンス--cli-reference) を参照してください。
 
 ## サンプル再生成 / Sample Regeneration

@@ -1,6 +1,10 @@
 #include "test_helper.hpp"
 #include "jiepp/option.hpp"
 
+#include <algorithm>
+#include <optional>
+#include <string>
+
 class OptionTest : public JieppTest {};
 
 // ---- define_macro_option ----
@@ -287,6 +291,137 @@ TEST_F(OptionTest, ParseArgsSnakeCaseVariants) {
     auto opts = parse_args(3, argv);
     ASSERT_TRUE(opts.max_include_depth.has_value());
     EXPECT_EQ(*opts.max_include_depth, 5);
+}
+
+// ---- underscore spellings of every hyphenated long option ----
+
+namespace {
+
+struct LongOptionRow {
+    const char* hyphen;           // "--remove-comments"
+    const char* value;            // nullptr for a flag
+    std::string (*summary)(const JieppOptions&);
+};
+
+std::string opt_int(const std::optional<int>& v) {
+    return v ? std::to_string(*v) : std::string("unset");
+}
+
+// Every long option in parse_args() whose name contains '-' (11 of them).
+const LongOptionRow LONG_OPTION_ROWS[] = {
+    {"--max-include-depth", "7", [](const JieppOptions& o) { return opt_int(o.max_include_depth); }},
+    {"--max-expansion-depth", "8", [](const JieppOptions& o) { return opt_int(o.max_expansion_depth); }},
+    {"--max-expansion-steps", "9", [](const JieppOptions& o) { return opt_int(o.max_expansion_steps); }},
+    {"--max-include-count", "10", [](const JieppOptions& o) { return opt_int(o.max_include_count); }},
+    {"--max-input-bytes", "11", [](const JieppOptions& o) { return opt_int(o.max_input_bytes); }},
+    {"--error-limit", "12", [](const JieppOptions& o) { return opt_int(o.error_limit); }},
+    {"--max-if-nesting", "13", [](const JieppOptions& o) { return opt_int(o.max_if_nesting); }},
+    {"--max-blank-lines", "14", [](const JieppOptions& o) { return opt_int(o.max_blank_lines); }},
+    {"--pp-output-pragma-style", "standard", [](const JieppOptions& o) {
+         return o.pp_output_pragma_style ? *o.pp_output_pragma_style : std::string("unset"); }},
+    {"--recursion-limit", "15", [](const JieppOptions& o) { return opt_int(o.recursion_limit); }},
+    {"--remove-comments", nullptr, [](const JieppOptions& o) {
+         return std::string(o.remove_comments ? "on" : "off"); }},
+};
+
+std::string underscore_spelling(std::string s) {
+    std::replace(s.begin() + 2, s.end(), '-', '_');
+    return s;
+}
+
+} // namespace
+
+TEST_F(OptionTest, LongOptionsAcceptBothSpellings) {
+    EXPECT_EQ(11u, sizeof(LONG_OPTION_ROWS) / sizeof(LONG_OPTION_ROWS[0]));
+    for (const auto& row : LONG_OPTION_ROWS) {
+        std::string hyphen = row.hyphen;
+        std::string under = underscore_spelling(hyphen);
+        ASSERT_NE(hyphen, under) << hyphen;
+
+        std::string results[2];
+        int n = 0;
+        for (const std::string& spelling : {hyphen, under}) {
+            std::string a1 = spelling;
+            std::string a2 = row.value ? row.value : "";
+            char* argv[] = {const_cast<char*>("jiepp"), a1.data(), a2.data()};
+            auto opts = parse_args(row.value ? 3 : 2, argv);
+            results[n++] = row.summary(opts);
+        }
+        EXPECT_NE("unset", results[0]) << hyphen;
+        EXPECT_NE("off", results[0]) << hyphen;
+        EXPECT_EQ(results[0], results[1]) << hyphen << " vs " << under;
+    }
+}
+
+TEST_F(OptionTest, UnderscoreSpellingKeepsTypedSpellingInDiagnostics) {
+    char* missing[] = {const_cast<char*>("jiepp"), const_cast<char*>("--max_include_depth")};
+    EXPECT_THROW(parse_args(2, missing), Issue::Exception);
+    // messages() drains the buffer, so call it once.
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ("jiepp: error: PP72: Option requires a value; '--max_include_depth'", msgs[0]);
+}
+
+TEST_F(OptionTest, UnderscoreSpellingInvalidValueKeepsTypedSpelling) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--pp_output_pragma_style"), const_cast<char*>("bogus")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("--pp_output_pragma_style")) << msgs[0];
+}
+
+TEST_F(OptionTest, MixedSpellingStaysUnknownOption) {
+    for (const char* spelling : {"--max_include-depth", "--max-include_depth", "--remove_comments-",
+                                 "--remove-comments_", "--Remove_Comments", "--remove__comments"}) {
+        SCOPED_TRACE(spelling);
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(spelling),
+                        const_cast<char*>("5")};
+        EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(std::string("jiepp: error: PP70: Unknown command-line option; '") + spelling + "'",
+                  msgs[0]);
+    }
+}
+
+TEST_F(OptionTest, UnderscoreIsNotMappedForOtherArguments) {
+    // Single-dash options, a name that is not an option, and options without
+    // '-' in the name are not normalised.
+    for (const char* spelling : {"-Werror_undef", "-_include", "-n_C", "--foo_bar", "--disppath_x",
+                                 "--si_lent", "--ver_sion", "--he_lp", "--max_include_depth_"}) {
+        SCOPED_TRACE(spelling);
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(spelling)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception);
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(std::string("jiepp: error: PP70: Unknown command-line option; '") + spelling + "'",
+                  msgs[0]);
+    }
+}
+
+TEST_F(OptionTest, UnderscoreInValuesAndAfterDoubleDashIsKept) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max_include_depth"), const_cast<char*>("5"),
+                    const_cast<char*>("-o"), const_cast<char*>("out_dir/a_b.iec"),
+                    const_cast<char*>("--disppath"), const_cast<char*>("x_y"),
+                    const_cast<char*>("-include"), const_cast<char*>("pre_a.iec"),
+                    const_cast<char*>("-DA_B=c_d"),
+                    const_cast<char*>("--"), const_cast<char*>("--remove_comments"),
+                    const_cast<char*>("in_put.iec")};
+    auto opts = parse_args(13, argv);
+    EXPECT_EQ(5, *opts.max_include_depth);
+    EXPECT_EQ("out_dir/a_b.iec", *opts.output_filepath);
+    EXPECT_EQ("x_y", *opts.disppath);
+    ASSERT_EQ(1u, opts.include_filepaths.size());
+    EXPECT_EQ("pre_a.iec", opts.include_filepaths[0]);
+    ASSERT_EQ(1u, opts.define_macros.size());
+    EXPECT_EQ("A_B=c_d", opts.define_macros[0]);
+    EXPECT_FALSE(opts.remove_comments);
+    ASSERT_EQ(2u, opts.input_filepaths.size());
+    EXPECT_EQ("--remove_comments", opts.input_filepaths[0]);
+    EXPECT_EQ("in_put.iec", opts.input_filepaths[1]);
 }
 
 TEST_F(OptionTest, ParseArgsRecursionLimit) {

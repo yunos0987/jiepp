@@ -2,6 +2,7 @@
 #include "../env/issue.hpp"
 #include "../env/param_constants.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -121,8 +122,23 @@ void display_help_and_exit(int exit_code = 0) {
         "  --silent                 Suppress all diagnostic output\n"
         "  --                       End of options\n"
         "  --help / -h              Show this help\n"
-        "  --version                Show version\n";
+        "  --version                Show version\n"
+        "Every --long-name option also accepts --long_name (for example --max_include_depth).\n";
     exit_after_stdout(exit_code);
+}
+
+// Lookup key for a "--" option: a name that has no '-' after the leading
+// "--" has every '_' mapped to '-', so "--max_include_depth" finds the
+// "--max-include-depth" branch. Mixed spellings ("--max_include-depth") are
+// left unchanged and stay unknown options (PP70), as do single-dash options.
+// Only the option name is passed here, never its value; callers keep the
+// original spelling for diagnostics.
+std::string long_option_key(const std::string& arg) {
+    std::string key = arg;
+    if (key.size() > 2 && key.compare(0, 2, "--") == 0 &&
+        key.find('-', 2) == std::string::npos)
+        std::replace(key.begin() + 2, key.end(), '_', '-');
+    return key;
 }
 
 } // namespace
@@ -165,6 +181,7 @@ JieppOptions parse_args(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; ) {
         std::string arg = argv[i];
+        const std::string key = long_option_key(arg);
 
         // After --, everything is an input filepath
         if (end_of_options) {
@@ -294,67 +311,67 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
-        if (arg == "--max-include-depth" || arg == "--max_include_depth") {
+        if (key == "--max-include-depth") {
             require_value(i, argc, arg);
             opts.max_include_depth = parse_positive_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-expansion-depth" || arg == "--max_expansion_depth") {
+        if (key == "--max-expansion-depth") {
             require_value(i, argc, arg);
             opts.max_expansion_depth = parse_positive_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-expansion-steps" || arg == "--max_expansion_steps") {
+        if (key == "--max-expansion-steps") {
             require_value(i, argc, arg);
             opts.max_expansion_steps = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-include-count" || arg == "--max_include_count") {
+        if (key == "--max-include-count") {
             require_value(i, argc, arg);
             opts.max_include_count = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-input-bytes" || arg == "--max_input_bytes") {
+        if (key == "--max-input-bytes") {
             require_value(i, argc, arg);
             opts.max_input_bytes = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--error-limit" || arg == "--error_limit") {
+        if (key == "--error-limit") {
             require_value(i, argc, arg);
             opts.error_limit = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-if-nesting" || arg == "--max_if_nesting") {
+        if (key == "--max-if-nesting") {
             require_value(i, argc, arg);
             opts.max_if_nesting = parse_positive_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-blank-lines" || arg == "--max_blank_lines") {
+        if (key == "--max-blank-lines") {
             require_value(i, argc, arg);
             opts.max_blank_lines = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--pp-output-pragma-style" || arg == "--pp_output_pragma_style") {
+        if (key == "--pp-output-pragma-style") {
             require_value(i, argc, arg);
             opts.pp_output_pragma_style = parse_pragma_style(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--recursion-limit" || arg == "--recursion_limit") {
+        if (key == "--recursion-limit") {
             require_value(i, argc, arg);
             opts.recursion_limit = parse_positive_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--remove-comments" || arg == "-nC") {
+        if (key == "--remove-comments" || arg == "-nC") {
             opts.remove_comments = true;
             ++i; continue;
         }
