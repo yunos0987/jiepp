@@ -1,5 +1,8 @@
 #include "constfold_test_helper.hpp"
 
+#include <clocale>
+#include <string>
+
 // ---- Equality operators and exact integration cases ----
 
 TEST_F(ConstfoldTest, ExprEq) {
@@ -559,4 +562,52 @@ TEST_F(ConstfoldTest, FloatLiteralSmallestSubnormalBoundary) {
     EXPECT_TRUE(ok.value.b);
     auto bad = eval_const_value("2.4e-324 = 0.0");
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, bad.failure);
+}
+
+// ---- Float literals are parsed in the C locale ----
+// A library caller may have set a comma-decimal LC_NUMERIC; strtod would then
+// stop at the '.' of "1.5" and read 1.0.
+
+namespace {
+// Switches LC_NUMERIC to a comma-decimal locale for the scope; restores the
+// previous one on every path out of the scope.
+class CommaNumericLocale {
+public:
+    CommaNumericLocale() {
+        const char* prev = std::setlocale(LC_NUMERIC, nullptr);
+        saved_ = prev ? prev : "C";
+        for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "fr_FR.UTF-8",
+                                 "German_Germany.1252", "de-DE", "French_France.1252"}) {
+            if (std::setlocale(LC_NUMERIC, name) != nullptr) {
+                const char* point = std::localeconv()->decimal_point;
+                if (point != nullptr && std::string(point) == ",") {
+                    active_ = true;
+                    return;
+                }
+            }
+        }
+        std::setlocale(LC_NUMERIC, saved_.c_str());
+    }
+    ~CommaNumericLocale() {
+        if (active_) std::setlocale(LC_NUMERIC, saved_.c_str());
+    }
+    CommaNumericLocale(const CommaNumericLocale&) = delete;
+    CommaNumericLocale& operator=(const CommaNumericLocale&) = delete;
+    bool active() const { return active_; }
+
+private:
+    std::string saved_;
+    bool active_ = false;
+};
+}  // namespace
+
+TEST_F(ConstfoldTest, FloatLiteralIgnoresCommaDecimalLocale) {
+    CommaNumericLocale loc;
+    if (!loc.active())
+        GTEST_SKIP() << "no comma-decimal locale (de_DE / fr_FR) installed";
+    EXPECT_NE(0LL, eval_const_expr("1.5 > 1.0"));
+    EXPECT_NE(0LL, eval_const_expr("1.5 < 2.0"));
+    EXPECT_NE(0LL, eval_const_expr("0.5 <> 0.0"));
+    EXPECT_NE(0LL, eval_const_expr("1_0.2_5e1 = 102.5"));
+    EXPECT_TRUE(empty());
 }
