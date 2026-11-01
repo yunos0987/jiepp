@@ -1266,6 +1266,83 @@ TEST_F(DirectiveTest, InvalidEscapeReportedOnceThroughMacroArgument) {
     EXPECT_NE(std::string::npos, output.find("x$q y;")) << "output:\n" << output;
 }
 
+// A directive executed while collecting a macro call's arguments reports its
+// diagnostics at the physical line it is written on, like a directive outside
+// an argument. Before the fix it reported at the macro-name line.
+TEST_F(DirectiveTest, DirectiveInMacroArgumentReportsOwnLine) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("single line");
+        pp("{#define F(x) x}\nF({#warning w} 1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:2.0: warning: PP92: 'w'"}, messages());
+    }
+    {
+        SCOPED_TRACE("multi-line argument");
+        pp("{#define F(x) x}\nF(\n\n{#warning w}\n1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:4.0: warning: PP92: 'w'"}, messages());
+    }
+    {
+        SCOPED_TRACE("error directive");
+        pp("{#define F(x) x}\n;\nF(\n{#error boo}\n1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:4.0: error: PP91: 'boo'"}, messages());
+    }
+    {
+        SCOPED_TRACE("comment and string spanning lines before the directive");
+        pp("{#define F(x) x}\nF((* a\nb *) \"s$\nt\"\n{#warning w}\n1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:5.0: warning: PP92: 'w'"}, messages());
+    }
+    {
+        SCOPED_TRACE("other diagnostic: unknown directive");
+        pp("{#define F(x) x}\nF(\n\n{#foo}\n1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:4.0: error: PP45: Unknown directive; 'foo'"},
+                  messages());
+    }
+}
+
+TEST_F(DirectiveTest, DirectiveInNestedMacroArgumentReportsOwnLine) {
+    Issue::ContinueMode guard({});
+    pp("{#define F(x) x}\n{#define G(x) x}\nG(\nF(\n{#warning w}\n1));");
+    EXPECT_EQ(std::vector<std::string>{"<unknown location>:5.0: warning: PP92: 'w'"}, messages());
+}
+
+TEST_F(DirectiveTest, DirectiveInMacroArgumentAfterLineDirective) {
+    Issue::ContinueMode guard({});
+    // {#line 100} makes the next physical line 100: define 100, F 101, directive 102.
+    pp("{#line 100}\n{#define F(x) x}\nF(\n{#warning w}\n1);");
+    EXPECT_EQ(std::vector<std::string>{"<unknown location>:102.0: warning: PP92: 'w'"}, messages());
+}
+
+TEST_F(DirectiveTest, TwoDirectivesInOneMacroArgument) {
+    Issue::ContinueMode guard({});
+    pp("{#define F(x) x}\nF(\n{#warning a}\n\n{#warning b}\n1);");
+    EXPECT_EQ((std::vector<std::string>{"<unknown location>:3.0: warning: PP92: 'a'",
+                                        "<unknown location>:5.0: warning: PP92: 'b'"}),
+              messages());
+}
+
+// {#line} / {#set_line} / {#include} are rejected inside an argument (PP02,
+// their output would precede the macro's expansion), so no directive that
+// moves the line counter runs there; the rejection itself is reported at the
+// directive's own line.
+TEST_F(DirectiveTest, SetLineInMacroArgumentRejectedAtOwnLine) {
+    Issue::ContinueMode guard({});
+    EXPECT_THROW(pp("{#define F(x) x}\nF(\n\n{#line 50}\n1);"), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find("<unknown location>:4.0: error: PP02")) << msgs[0];
+}
+
+// The fix only changes where diagnostics are reported: __LINE__ after the
+// call, and the output, are the same with and without the directive.
+TEST_F(DirectiveTest, DirectiveInMacroArgumentDoesNotChangeLineTracking) {
+    Issue::ContinueMode guard({});
+    const std::string with_dir = pp("{#define F(x) x}\nF(\n{#warning w}\n1) __LINE__\n__LINE__;");
+    const std::string without_dir = pp("{#define F(x) x}\nF(\n\n1) __LINE__\n__LINE__;");
+    EXPECT_EQ(without_dir, with_dir);
+    // F's closing ')' is on line 4 and the last __LINE__ on line 5.
+    EXPECT_NE(std::string::npos, with_dir.find("4\n5;")) << with_dir;
+}
+
 // Unchanged: a single directive with two invalid escapes in the same
 // operand still raises PP21 only once (key-preferred, first-invalid-part
 // reporting collapses multiple invalid escapes in one text into one

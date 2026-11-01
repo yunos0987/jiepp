@@ -803,6 +803,18 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         // and shares that one expansion's output tokens, including
                         // any this directive produced, across every occurrence).
                         if (pt.type == Token::DIRECTIVE) {
+                            // Report any diagnostic from this directive at the
+                            // physical line it is written on, like a directive
+                            // outside an argument. env's counter has not been
+                            // advanced past the argument tokens collected so far
+                            // (advance_lineno(sum_uncounted) runs once after the
+                            // whole list is collected), so add sum_uncounted
+                            // here -- the same accounting as the PP29 / PP34
+                            // reports in this loop. No directive that moves the
+                            // counter runs here: {#line}/{#set_line}/{#include}
+                            // are MASK_OUTPUT and rejected below.
+                            Issue::LineGuard dir_line_guard(
+                                wrap_lineno(env.get_lineno() + sum_uncounted));
                             // UD2: decode without raising PP21 yet (the 2-arg
                             // overload) -- dispatch_directive() below decodes
                             // this same text again and does raise it, so
