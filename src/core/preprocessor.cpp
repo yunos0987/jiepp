@@ -30,11 +30,14 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     // path; the location is the caller's current Issue location).
     env.reset_input_bytes();
     const std::optional<std::string> text = Loader::read_stream(input, env, "<input>");
-    auto its = iec3_tokens_from_string(text ? *text : std::string(), env.get_remove_comments(), 1);
+    // The stream starts on this call's own Env line, so lexer diagnostics
+    // (PP20/22/23) use the same line base as set_top_lineno() above.
+    const LineNo first_lineno = env.get_lineno();
+    auto its = iec3_tokens_from_string(text ? *text : std::string(), env.get_remove_comments(),
+                                       first_lineno);
     std::vector<Token> ots;
     // No leading line marker here (unlike the jiepp command line), so tell
     // the compaction which line the stream starts on.
-    const LineNo first_lineno = env.get_lineno();
     expand(its, ots, env);
     jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
                                jiepp::BlankLineMode::Markers, env.is_standard_pragma_style(),

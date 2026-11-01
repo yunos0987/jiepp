@@ -17,7 +17,7 @@ namespace {
 // Unified handler for (* ... *) and /* ... */ families.
 // opener is '(' or '/'; pos points to the opener char.
 void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
-                      std::size_t n, int& lineno, std::vector<Token>& result,
+                      std::size_t n, LineNo& lineno, std::vector<Token>& result,
                       LexOptions opts) {
     if (pos + 2 < n && text[pos + 2] == '!') {
         // Doc comment: (*! or /*!
@@ -44,7 +44,7 @@ void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
     }
 }
 
-std::vector<Token> tokenize(const std::string& text, int lineno, LexOptions opts) {
+std::vector<Token> tokenize(const std::string& text, LineNo lineno, LexOptions opts) {
     std::vector<Token> r;
     r.reserve(text.size() / 8);
 
@@ -219,7 +219,7 @@ std::vector<Token> tokenize(const std::string& text, int lineno, LexOptions opts
 // Public API
 // ---------------------------------------------------------------------------
 
-std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, int lineno) {
+std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, LineNo lineno) {
     // kludge
     std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     return iec3_tokens_from_string(text, remove_comments, lineno);
@@ -229,7 +229,7 @@ namespace {
 
 // Shared by iec3_tokens_from_string() and iec3_relex(), so the two cannot
 // drift apart (BOM stripping, comment removal).
-std::vector<Token> lex_text(const std::string& input, bool remove_comments, int lineno,
+std::vector<Token> lex_text(const std::string& input, bool remove_comments, LineNo lineno,
                             LexOptions opts) {
     std::string text = input;
     // Strip UTF-8 BOM if present
@@ -255,7 +255,7 @@ std::vector<Token> lex_text(const std::string& input, bool remove_comments, int 
 
 } // anonymous namespace
 
-std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno,
+std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, LineNo lineno,
                                            bool report_nested_brace) {
     return lex_text(input, remove_comments, lineno,
                     LexOptions{.report_nested_brace = report_nested_brace});

@@ -42,25 +42,27 @@ struct LexOptions {
 // the current file (source lexing), or at the current Issue location
 // unchanged (re-lexing, LexOptions::at_current_location).
 template <typename F>
-void report_lex_issue(int lineno, LexOptions o, F&& fn) {
+void report_lex_issue(LineNo lineno, LexOptions o, F&& fn) {
     if (o.at_current_location) {
         fn();
         return;
     }
-    Issue::LineGuard guard(lineno);
+    // The counter is not wrapped while lexing; wrap it here like the other
+    // line counters (LineNo wraps at 2^32).
+    Issue::LineGuard guard(wrap_lineno(lineno));
     fn();
 }
 
 // Comment readers (lexer_comment.cpp)
 Token read_block_comment(const std::string& text, std::size_t& pos,
-                         int& lineno, char opener1, int type,
+                         LineNo& lineno, char opener1, int type,
                          LexOptions opts);
 Token read_line_comment(const std::string& text, std::size_t& pos,
-                        int& lineno, int type);
+                        LineNo& lineno, int type);
 
 // Pragma/directive reader (lexer_pragma.cpp)
 Token read_pragma_body(const std::string& text, std::size_t& pos,
-                       int& lineno, char opener_sign,
+                       LineNo& lineno, char opener_sign,
                        std::vector<Token>& extra_nl,
                        LexOptions opts);
 

@@ -32,6 +32,32 @@ TEST_F(PreprocessTest, Bom) {
     EXPECT_TRUE(empty());
 }
 
+// ---- lexer diagnostics start at the Env's own line ----
+
+TEST_F(PreprocessTest, LexerDiagnosticLineStartsAtEnvLineno) {
+    // A reused Env: each call's PP20 (unclosed comment, found by the lexer)
+    // is reported relative to that call's Env line, not always from line 1.
+    Issue::ContinueMode guard({});
+    auto env = setup();
+    env.set_lineno(7);
+    (void)pp("\n(* x", env);
+    auto first = messages();
+    ASSERT_EQ(1u, first.size());
+    EXPECT_THAT(first[0], ::testing::HasSubstr(":8.0: error: PP20"));
+
+    env.set_lineno(50);
+    (void)pp("\n(* x", env);
+    auto second = messages();
+    ASSERT_EQ(1u, second.size());
+    EXPECT_THAT(second[0], ::testing::HasSubstr(":51.0: error: PP20"));
+
+    // PP22 (a raw '{' inside a pragma) and PP23 use the same base.
+    env.set_lineno(20);
+    (void)pp("\n{ { a }", env);
+    for (const auto& m : messages())
+        EXPECT_THAT(m, ::testing::HasSubstr(":21.0:")) << m;
+}
+
 // ---- test_lexer_error ----
 
 TEST_F(PreprocessTest, LexerError) {

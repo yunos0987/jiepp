@@ -52,7 +52,7 @@ bool directive_string_closes(const std::string& text, std::size_t pos) {
 
 Token read_pragma_body(const std::string& text,
                        std::size_t& pos,
-                       int& lineno,
+                       LineNo& lineno,
                        char opener_sign,
                        std::vector<Token>& extra_nl,
                        LexOptions opts)

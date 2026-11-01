@@ -12,11 +12,11 @@
 // preprocess()) do not use it: they read through Loader::read_file() /
 // Loader::read_stream(), which count bytes for --max-input-bytes (PP67) and
 // report read errors (PP10).
-std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, int lineno = 1);
+std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, LineNo lineno = 1);
 
 // Tokenize text string (source text: diagnostics at the text's own lines,
 // counted from lineno). report_nested_brace: as for iec3_relex() below.
-std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno = 1,
+std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, LineNo lineno = 1,
                                            bool report_nested_brace = true);
 
 // Re-lexes text that is not read verbatim from a source file: a decoded

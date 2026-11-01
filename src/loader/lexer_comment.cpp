@@ -3,7 +3,7 @@
 namespace jiepp::detail {
 
 Token read_block_comment(const std::string& text, std::size_t& pos,
-                         int& lineno, char opener1, int type,
+                         LineNo& lineno, char opener1, int type,
                          LexOptions opts) {
     char closer_end = (opener1 == '(') ? ')' : '/';
     std::string body;
@@ -51,7 +51,7 @@ Token read_block_comment(const std::string& text, std::size_t& pos,
 }
 
 Token read_line_comment(const std::string& text, std::size_t& pos,
-                        int& lineno, int type) {
+                        LineNo& lineno, int type) {
     std::string body = "//";
     while (pos < text.size() && !is_nl_char(text[pos])) {
         body += text[pos++];
