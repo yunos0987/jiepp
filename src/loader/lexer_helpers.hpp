@@ -69,7 +69,16 @@ bool try_push_date_or_time(std::vector<Token>& result,
                            const std::string& text, std::size_t& pos);
 bool try_push_number(std::vector<Token>& result,
                      const std::string& text, std::size_t& pos);
-void push_string_token(std::vector<Token>& result, int type, std::string str,
+// State of push_string_token() for one tokenize() pass: tokens
+// [0, scanned) of the result have been examined, and ws_run_begin is the
+// index just after the last non-Token::WS token among them (0 if none).
+// Valid only while tokens before `scanned` are not removed or retyped.
+struct StringMergeState {
+    std::size_t ws_run_begin = 0;
+    std::size_t scanned = 0;
+};
+void push_string_token(std::vector<Token>& result, StringMergeState& state,
+                       int type, std::string str,
                        int num_of_lines = 0, bool unterminated = false);
 
 } // namespace jiepp::detail

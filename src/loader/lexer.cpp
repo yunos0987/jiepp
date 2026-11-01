@@ -50,6 +50,7 @@ std::vector<Token> tokenize(const std::string& text, int lineno, LexOptions opts
 
     const std::size_t n = text.size();
     std::size_t p = 0;
+    StringMergeState merge_state;
 
     while (p < n) {
         char c = text[p];
@@ -153,7 +154,8 @@ std::vector<Token> tokenize(const std::string& text, int lineno, LexOptions opts
             lineno += dollar_nl;
             // No closing quote (ended by a newline or the end of the input):
             // never merged with the next literal; core/ reports PP29.
-            push_string_token(r, tok_type, text.substr(start, p - start), dollar_nl, !closed);
+            push_string_token(r, merge_state, tok_type, text.substr(start, p - start),
+                              dollar_nl, !closed);
             continue;
         }
 
