@@ -72,7 +72,9 @@ bool try_push_number(std::vector<Token>& result,
 // State of push_string_token() for one tokenize() pass: tokens
 // [0, scanned) of the result have been examined, and ws_run_begin is the
 // index just after the last non-Token::WS token among them (0 if none).
-// Valid only while tokens before `scanned` are not removed or retyped.
+// Valid only while tokens before `scanned` are not removed or retyped;
+// push_string_token() asserts this in Debug builds and does not recover in
+// Release builds.
 struct StringMergeState {
     std::size_t ws_run_begin = 0;
     std::size_t scanned = 0;

@@ -149,16 +149,15 @@ TEST_F(LexerLiteralTest, StringSequence2) {
 // ---- zombie WS/newline token regression (F1) ----
 
 TEST_F(LexerLiteralTest, StringLiteralNotFirstTokenLeavesNoZombie) {
-    // push_string_token() pops the trailing WS/newline run off `result`
-    // into a local buffer and re-appends it; before the fix, the popped
-    // slots were never actually removed from `result` (no resize/erase),
-    // so a moved-from-but-still-WS-typed "zombie" token (empty text, but
-    // a real, nonzero num_of_lines carried over from Token's defaulted
-    // move) survived in the vector ahead of the freshly re-appended copy.
-    // This only manifests when the string literal is NOT the first token
-    // in the stream (i.e. there is a real trailing-WS run to pop), which
-    // is why the pre-existing DollarNewlineContinuationCountsLines test
-    // (string literal as the sole/first input token) never caught it.
+    // Pins the token stream after a string literal that follows a WS/newline
+    // run: the run must appear exactly once, before the literal. History: the
+    // old push_string_token() popped the trailing WS run and re-appended it,
+    // but the popped slots were never removed from `result`, so a moved-from
+    // WS-typed "zombie" token (empty text, nonzero num_of_lines) stayed ahead
+    // of the re-appended copy. That only showed when the literal was NOT the
+    // first token, which DollarNewlineContinuationCountsLines (literal as the
+    // first input token) never caught. Since 79ab404 the merge is in place
+    // and WS tokens are never moved.
     const auto toks = ts("A;\n'x';");
     int ws_tokens_before_string = 0;
     int total_num_of_lines = 0;

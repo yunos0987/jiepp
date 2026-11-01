@@ -1,5 +1,7 @@
 #include "lexer_helpers.hpp"
 
+#include <cassert>
+
 namespace jiepp::detail {
 
 namespace {
@@ -212,14 +214,20 @@ void push_string_token(std::vector<Token>& result, StringMergeState& state,
     // the previous call are examined, so each token is looked at once per
     // tokenize() pass; rescanning (or popping and re-pushing) the whole run
     // on every call made a long chain of literals quadratic.
-    if (state.scanned > result.size())
-        state = StringMergeState{};
+    // The state is valid only while tokens before `scanned` are neither
+    // removed nor retyped (see StringMergeState); Debug builds check that.
+    assert(state.scanned <= result.size());
     for (std::size_t i = state.scanned; i < result.size(); ++i) {
         if (result[i].type != Token::WS)
             state.ws_run_begin = i + 1;
     }
     state.scanned = result.size();
     const std::size_t scan = state.ws_run_begin;
+    // O(1) cross-checks of the recorded run start: the candidate is a
+    // non-WS token, and the token after it (if any) is WS.
+    assert(scan <= result.size());
+    assert(scan == 0 || result[scan - 1].type != Token::WS);
+    assert(scan >= result.size() || result[scan].type == Token::WS);
 
     // A literal ended by a newline has no closing quote to drop; merging
     // used to drop its last character ('abc<LF>'def' gave 'abdef').
