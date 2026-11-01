@@ -439,6 +439,8 @@ TEST_F(RobustnessTestRelexLineno, T12_NestedDirectiveInPragmas) {
                   kLoc + "3.0: error: PP22: Invalid syntax for pragma; '{'",
                   kLoc + "3.0: error: PP22: Invalid syntax for pragma; '{ {#define Q 1 '",
                   kLoc + "3.0: error: PP23: Invalid preprocessor syntax; '{#define Q 1 '",
+                  // The re-lex of the pragma body drops the directive (R1).
+                  kLoc + "3.0: error: PP23: Invalid preprocessor syntax; '{#define Q 1 }'",
               }),
               relex_diags(*this, "\n\n{ { {#define Q 1 }\n"));
 }

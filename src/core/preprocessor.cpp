@@ -63,6 +63,19 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
     // U1: re-lexed text is not source text, so its diagnostics go to the
     // current Issue location (the directive/pragma being processed).
     auto ts = iec3_relex(text, remove_comments, report_nested_brace);
+    // A directive is only what the source-file lexer reads as a raw "{#".
+    // Re-lexed text (a $-decoded operand, a macro replacement list, a pragma
+    // body, a -D value) never forms one: a "{#" found here came from "${#" /
+    // "$7B#" decoding or, in a pragma body, was already reported by the
+    // source lexer, so the directive is not run and not output. Drop it and
+    // report PP23 with its text (the lexer's appended '}' of an unclosed
+    // directive stays in the text; the source text cannot be rebuilt).
+    std::erase_if(ts, [](const Token& t) {
+        if (t.type != Token::DIRECTIVE)
+            return false;
+        ISSUE(INVALID_PP_SYNTAX, t.text);
+        return true;
+    });
     for (auto& t : ts) {
         if (t.unterminated && found_unterminated)
             *found_unterminated = true;
@@ -91,29 +104,6 @@ std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
         for (auto& t : its)
             if (t.type == Token::PRAGMA)
                 t.relexed_pragma = true;
-        // A directive whose '{' follows an odd number of '$' was written
-        // "${#...": the source lexer read "${" as an escaped pair, not as a
-        // raw '{', so the text was never a directive there. It must not run
-        // here either: a pragma body is text of the pragma, not a place for
-        // directives. Drop the token (it is not copied into the pragma
-        // text) and report PP22, the code a raw '{' in a pragma body gets
-        // (read_pragma_body()). Every such directive is reported, in both
-        // pragma kinds: no earlier pass met it, as the source lexer paired
-        // its '{' with the '$'. A directive after an even number of '$' has
-        // a raw '{' (already PP22 in the source lex) and is unchanged.
-        std::size_t dollars = 0; // run of "$" tokens right before this one
-        std::erase_if(its, [&dollars](const Token& t) {
-            if (t.type == Token::ANY && t.text == "$") {
-                ++dollars;
-                return false;
-            }
-            const bool escaped_opener = t.type == Token::DIRECTIVE && dollars % 2 == 1;
-            dollars = 0;
-            if (!escaped_opener)
-                return false;
-            ISSUE(INVALID_PRAGMA_SYNTAX, t.text);
-            return true;
-        });
     }
     // Every newline in an operand is a decoded $n/$l/$r/$0A/$0D escape: the
     // raw newlines of the directive are counted by the lexer separately

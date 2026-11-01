@@ -163,9 +163,16 @@ TEST_F(DirectiveTest, UnknownDirectiveReportedOncePerInclusion) {
     EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, cs[1]);
 }
 
-TEST_F(DirectiveTest, SpecialInDirective) {
-    EXPECT_EQ(";'0';'1'", pp("{#define L ${## __COUNTER__$}};L;L"));
-    EXPECT_TRUE(empty());
+// A directive decoded from "${#...$}" in a macro replacement list is not a
+// directive (R1: only a raw "{#" read by the source lexer is one). It is not
+// run, not output, and reported with PP23 once, at the definition. (It used
+// to run the directive at each use: `;'0';'1'`.)
+TEST_F(DirectiveTest, DecodedDirectiveInDefineIsDropped) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";;", pp("{#define L ${## __COUNTER__$}};L;L"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_PP_SYNTAX, cs[0]);
 }
 
 TEST_F(DirectiveTest, Ignore) {

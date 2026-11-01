@@ -797,7 +797,9 @@ TEST_F(SmokeTest, UnclosedDirectiveInDeepRelexKeepsPP23) {
 
     auto r = run("\"" + input.generic_string() + "\"");
     EXPECT_EQ(r.exit_code, 1);
-    EXPECT_EQ(count_lines_with(r.err, ": PP23:"), 1u) << "stderr: " << r.err;
+    // The source lex reports the unclosed directive; the re-lex of the
+    // pragma body then drops the directive and reports it again.
+    EXPECT_EQ(count_lines_with(r.err, ": PP23:"), 2u) << "stderr: " << r.err;
     EXPECT_NE(r.err.find(": PP23: Invalid preprocessor syntax; '{#define Q 1 '"),
               std::string::npos) << "stderr: " << r.err;
     // The source lex runs before {#ignore PP22} takes effect.

@@ -502,11 +502,21 @@ TEST_F(FuncMacroTest, ParamListExpectedParameterName) {
     expect_param_list_error("F('s') ok", reason);
     expect_param_list_error("F(%IX0.1) ok", reason);
     expect_param_list_error("F(${x$}) ok", reason);
-    expect_param_list_error("F(${#undef X$}) ok", reason);
     expect_param_list_error("F(@a) ok", reason);
     expect_param_list_error("F((a)) ok", reason);
     expect_param_list_error("F([a]) ok", reason);
     expect_param_list_error("F(\xE5\xA4\x89\xE6\x95\xB0) ok", reason);
+}
+
+// R1: a directive decoded from "${#...$}" in a parameter list is dropped
+// (PP23) before the list is parsed, so the list is "()" and F is defined.
+// (It used to be PP30 "expected parameter name" with F left undefined.)
+TEST_F(FuncMacroTest, ParamListDecodedDirectiveIsDropped) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("D", pp("{#define F(${#undef X$}) ok}{#ifdef F}D{#else}U{#endif}"));
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::INVALID_PP_SYNTAX, PlainTextMessage::parse_code(msgs[0]));
 }
 
 // R3: the parameter list runs out of tokens before a closing ')'.
