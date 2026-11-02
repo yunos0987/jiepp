@@ -1,3 +1,5 @@
+![jiepp expands an IEC 61131-3 source with define, token-paste and if directives into plain text](docs/jiepp-banner.svg)
+
 # Jiepp
 
 [![CI](https://github.com/yunos0987/jiepp/actions/workflows/ci.yml/badge.svg)](https://github.com/yunos0987/jiepp/actions/workflows/ci.yml)

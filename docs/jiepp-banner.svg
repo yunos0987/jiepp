@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-labelledby="title desc">
+  <title id="title">jiepp: a preprocessor for IEC 61131-3</title>
+  <desc id="desc">An IEC 61131-3 source with define, token-paste and if directives passes through jiepp and comes out as one expanded line: var sensor_1 : int := 100; end_var.</desc>
+  <style>
+    .code { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 19px; fill: #cbd5e1; }
+    .head { font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 15px; fill: #94a3b8; }
+    .dir { fill: #fbbf24; }
+    .mac { fill: #67e8f9; }
+    .out { fill: #86efac; font-weight: 700; }
+    .mark { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 46px; font-weight: 700; fill: #f8fafc; }
+    .sub { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #94a3b8; }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#fbbf24"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="300" fill="#0f172a"/>
+
+  <!-- Source -->
+  <rect x="30" y="40" width="470" height="220" rx="10" fill="#1e293b" stroke="#334155"/>
+  <text class="head" x="50" y="70">source.iec</text>
+  <line x1="30" y1="84" x2="500" y2="84" stroke="#334155"/>
+  <text class="code" x="50" y="115"><tspan class="dir">{#define LIMIT 100}</tspan></text>
+  <text class="code" x="50" y="147"><tspan class="dir">{#define CH(n) sensor_@@n}</tspan></text>
+  <text class="code" x="50" y="179"><tspan class="dir">{#if LIMIT &gt; 50}</tspan></text>
+  <text class="code" x="50" y="211">var <tspan class="mac">CH(1)</tspan> : int := <tspan class="mac">LIMIT</tspan>; end_var</text>
+  <text class="code" x="50" y="243"><tspan class="dir">{#endif}</tspan></text>
+
+  <!-- Tool -->
+  <line x1="508" y1="150" x2="538" y2="150" stroke="#fbbf24" stroke-width="3" marker-end="url(#tip)"/>
+  <text class="mark" x="600" y="165" text-anchor="middle">jiepp</text>
+  <text class="sub" x="600" y="191" text-anchor="middle">IEC 61131-3</text>
+  <text class="sub" x="600" y="209" text-anchor="middle">preprocessor</text>
+  <line x1="662" y1="150" x2="692" y2="150" stroke="#fbbf24" stroke-width="3" marker-end="url(#tip)"/>
+
+  <!-- Output -->
+  <rect x="700" y="40" width="470" height="220" rx="10" fill="#1e293b" stroke="#334155"/>
+  <text class="head" x="720" y="70">$ jiepp -P source.iec</text>
+  <line x1="700" y1="84" x2="1170" y2="84" stroke="#334155"/>
+  <text class="code" x="720" y="211">var <tspan class="out">sensor_1</tspan> : int := <tspan class="out">100</tspan>; end_var</text>
+</svg>
