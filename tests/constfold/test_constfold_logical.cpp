@@ -152,6 +152,70 @@ TEST_F(ConstfoldTest, DepthResetAfterAbort) {
 }
 
 // ---- Value-dependent diagnostics in unevaluated operands (SPEC 6.4) ----
+// && and || are other spellings of \and\ and \or\.
+
+TEST_F(ConstfoldTest, AmpAmpIsLogicalAnd) {
+    EXPECT_EQ(1LL, eval_const_expr("TRUE && TRUE"));
+    EXPECT_EQ(0LL, eval_const_expr("TRUE && FALSE"));
+    EXPECT_EQ(1LL, eval_const_expr("2 && 4"));   // "2 & 4" would be 0
+    EXPECT_EQ(1LL, eval_const_expr("1=1&&2=2"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, BarBarIsLogicalOr) {
+    EXPECT_EQ(1LL, eval_const_expr("FALSE || TRUE"));
+    EXPECT_EQ(0LL, eval_const_expr("FALSE || FALSE"));
+    EXPECT_EQ(1LL, eval_const_expr("1=0||2=2"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, AmpAmpAndBarBarKeepPrecedenceOfEscapedForms) {
+    // \or\ binds loosest, \and\ next, both looser than a comparison.
+    EXPECT_EQ(1LL, eval_const_expr("TRUE || FALSE && FALSE"));
+    EXPECT_EQ(0LL, eval_const_expr("(TRUE || FALSE) && FALSE"));
+    EXPECT_EQ(1LL, eval_const_expr(R"(TRUE || FALSE \and\ FALSE)"));
+    EXPECT_EQ(1LL, eval_const_expr(R"(TRUE \or\ FALSE && FALSE)"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, AmpAmpAndBarBarShortCircuit) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(0LL, eval_const_expr("FALSE && 1/0 = 1"));
+    EXPECT_EQ(1LL, eval_const_expr("TRUE || 1 mod 0 = 0"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, SingleBarStaysInvalidAndSingleAmpStaysBitAnd) {
+    // eval_const_expr() gives the truth value; the bit result is DWORD#2.
+    EXPECT_EQ(1LL, eval_const_expr("(6 & 3) = DWORD#2"));
+    EXPECT_EQ(0LL, eval_const_expr("2 & 4"));
+    EXPECT_THROW(eval_const_expr("1 | 0"), Issue::Exception);
+    EXPECT_THROW(eval_const_expr("1 && "), Issue::Exception);
+    EXPECT_THROW(eval_const_expr("|| 1"), Issue::Exception);
+}
+
+// ! is C's logical not: unary precedence, unlike \not\ (looser than "=").
+
+TEST_F(ConstfoldTest, BangIsLogicalNot) {
+    EXPECT_EQ(1LL, eval_const_expr("!0"));
+    EXPECT_EQ(0LL, eval_const_expr("!2"));
+    EXPECT_EQ(1LL, eval_const_expr("!FALSE"));
+    EXPECT_EQ(1LL, eval_const_expr("!BYTE#0"));
+    EXPECT_EQ(1LL, eval_const_expr("!!3"));
+    EXPECT_EQ(1LL, eval_const_expr("!(1 = 2)"));
+    EXPECT_EQ(1LL, eval_const_expr("!0 && !FALSE"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(ConstfoldTest, BangBindsTighterThanComparison) {
+    EXPECT_EQ(1LL, eval_const_expr("!0 = TRUE"));          // (!0) = TRUE
+    EXPECT_EQ(1LL, eval_const_expr(R"(\not\ 0 = 1)"));     // \not\ (0 = 1)
+    EXPECT_THROW(eval_const_expr("!2 = 0"), Issue::Exception);  // Bool = Int
+    EXPECT_THROW(eval_const_expr("!1.5"), Issue::Exception);
+    EXPECT_THROW(eval_const_expr("!"), Issue::Exception);
+    EXPECT_THROW(eval_const_expr("1 != 2"), Issue::Exception);
+}
+
 // Division/modulo by zero and a float value out of the integer range are not
 // reported in the right operand of \and\ / \or\ that is not evaluated, and
 // the float range is then no evaluation failure either.

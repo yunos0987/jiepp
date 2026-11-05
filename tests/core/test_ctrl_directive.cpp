@@ -22,6 +22,16 @@ TEST_F(CtrlDirectiveTest, IfBoolean) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(CtrlDirectiveTest, IfAmpAmpAndBarBar) {
+    EXPECT_EQ("1e", strip(pp("{#define A 1}{#if defined(A) && A = 1}1{#endif}e")));
+    EXPECT_EQ("e",  strip(pp("{#if defined(B) && B = 1}1{#endif}e")));
+    EXPECT_EQ("1e", strip(pp("{#if defined(B) || 1}1{#endif}e")));
+    // A macro may supply the operator.
+    EXPECT_EQ("1e", strip(pp("{#define BOTH(x, y) x && y}{#if BOTH(1, 1)}1{#endif}e")));
+    EXPECT_EQ("2e", strip(pp("{#if 0}1{#elif 0 || 1}2{#endif}e")));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(CtrlDirectiveTest, SkippedGroupDoesNotReportDirectiveOperands) {
     // An invalid escape (PP21) in a directive matters only where it is reached.
     EXPECT_EQ("e", strip(pp("{#if 0}{#define A $q}{#if $q}{#endif}{#unknown $q}{#endif}e")));

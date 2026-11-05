@@ -47,6 +47,8 @@ ALPHA   [A-Za-z_]
 "\\not\\"   { return cf::CfParser::token::CF_LNOT; }
 "\\and\\"   { return cf::CfParser::token::CF_LAND; }
 "\\or\\"    { return cf::CfParser::token::CF_LOR; }
+"&&"        { return cf::CfParser::token::CF_LAND; }
+"||"        { return cf::CfParser::token::CF_LOR; }
 "\\xor\\"   { return cf::CfParser::token::CF_LXOR; }
 
 [0-9]+#[+-]?(_?[0-9A-Za-z])+ {
@@ -231,6 +233,7 @@ ALPHA   [A-Za-z_]
 "*"     { return cf::CfParser::token::CF_STAR; }
 "/"     { return cf::CfParser::token::CF_SLASH; }
 "&"     { return cf::CfParser::token::CF_AMP; }
+"!"     { return cf::CfParser::token::CF_BANG; }
 "#"     { return cf::CfParser::token::CF_HASH; }
 
 .   { return cf::CfParser::token::CF_UNKNOWN; }

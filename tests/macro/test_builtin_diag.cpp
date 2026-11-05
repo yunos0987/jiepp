@@ -196,6 +196,11 @@ TEST_F(BuiltinDiagTest, AssertDeadOperandNotFailure) {
     EXPECT_EQ(Strings({"PP91: 'm'"}), diags());
     EXPECT_EQ(";", pp("__assert(TRUE \\or\\ 1/0 = 1, m);"));
     EXPECT_EQ(Strings(), diags());
+    // The C spellings behave the same.
+    EXPECT_EQ(";", pp("__assert(!TRUE && BYTE#1.0e30 = BYTE#0, m);"));
+    EXPECT_EQ(Strings({"PP91: 'm'"}), diags());
+    EXPECT_EQ(";", pp("__assert(!FALSE || 1/0 = 1, m);"));
+    EXPECT_EQ(Strings(), diags());
 }
 
 // E11

@@ -314,6 +314,11 @@ TEST_F(NamedCounterTest, SetDeadOperandNotFailure) {
     EXPECT_EQ(Strings(), diags());
     EXPECT_EQ("0", pp("__counter_set(b, FALSE \\and\\ BYTE#1.0e30 = BYTE#0)__counter_peek(b)"));
     EXPECT_EQ(Strings(), diags());
+    // The C spellings behave the same.
+    EXPECT_EQ("1", pp("__counter_set(c, !FALSE || 10 / 0 = 1)__counter_peek(c)"));
+    EXPECT_EQ(Strings(), diags());
+    EXPECT_EQ("0", pp("__counter_set(d, !TRUE && BYTE#1.0e30 = BYTE#0)__counter_peek(d)"));
+    EXPECT_EQ(Strings(), diags());
 }
 
 // E27 (L4): a counter in an __assert expression counts once per evaluation.

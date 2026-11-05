@@ -137,6 +137,16 @@ TEST_F(WundefTest, OrRightUnevaluated) {
     EXPECT_THAT(undefs("FALSE \\or\\ FOO", env), ElementsAre("PP54 FOO"));
 }
 
+TEST_F(WundefTest, CSpellingsShortCircuitAlike) {
+    enable();
+    Env env = setup();
+    EXPECT_THAT(undefs("FALSE && FOO", env), ElementsAre());
+    EXPECT_THAT(undefs("TRUE || FOO", env), ElementsAre());
+    EXPECT_THAT(undefs("!1 && FOO", env), ElementsAre());
+    EXPECT_THAT(undefs("TRUE && FOO", env), ElementsAre("PP54 FOO"));
+    EXPECT_THAT(undefs("!FOO || BAR", env), ElementsAre("PP54 FOO"));
+}
+
 TEST_F(WundefTest, LeftAlwaysEvaluated) {
     enable();
     Env env = setup();
