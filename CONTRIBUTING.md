@@ -116,6 +116,7 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
   ```
 - 設定用キャッシュ変数: `JIEPP_PERF_REPEAT`（既定 10）、`JIEPP_PERF_MODE`（`all`|`greedy`|`greedy2`、既定 `all`）、`JIEPP_PERF_RESULTS_DIR`（既定 `<build>/perftest/results`）、`JIEPP_PERF_CASES`（セミコロン区切りのケース名リストで対象を絞り込み、既定は空 = 全ケース。存在しないケース名を含むとエラー終了）。
 - TSV 形式: `build/<preset>/perftest/results/stats.<YYYYmmdd_HHMMSS>.tsv`。ヘッダは `case name`, `time_1 [ms]` … `time_N [ms]`, `min [ms]`, `median [ms]`, `mean [ms]`, `stdev [ms]`（小数点以下 3 桁）。
+- **実際の使い方に近いケース**: `boost_*` は Boost.Preprocessor のテスト入力を `{#syspath}` で読み込みます（`boost_library_load`: ライブラリ全体の読み込みと再インクルード、`boost_repeat`: `BOOST_PP_REPEAT` の入れ子、`boost_arithmetic`: `BOOST_PP_WHILE` を使う算術、`boost_seq_list`: 長いシーケンスとリスト、`boost_variadic_tuple`: 引数の多い可変長マクロ、`boost_local_iterate`: `{#if}` の連鎖による反復）。`skipped_directive_groups` はスキップされるグループ内の長いディレクティブ、`include_guard_repeat` はガード付きヘッダの繰り返しインクルードです。ボトルネックを探すときは、実行時間より再現性の高い命令数（Linux の `valgrind --tool=callgrind`）が便利です。
 - **ケースの追加**: `bench/cases/<name>/<name>.py` に `ns`（サイズのタプル）と `file(o, n)`（または `generate(testid, dirpath)`）を書きます。同じディレクトリにあるほかのファイル（`samefile.dat` など）は入力と一緒にコピーされ、直接は実行されません（拡張子 `.gxxx`・`.gtxt`・`.txt` のファイルは入力として実行されるので、付けないでください）。`perftest.py run` は jiepp の終了コードが 0 以外だと失敗します。固定で渡すのは展開の深さなどの上限だけで、`--max-include-count`（既定 10000）と `--error-limit`（既定 1000）は既定値のままです。インクルードの回数を上限より少なくし、エラーを出さない入力にしてください（抑制できるコードなら `{#ignore}` を使えます）。`perftest_smoke` は 2 ケースだけの自己診断なので、ケースを足しても変更は要りません。
 - 計測値は必ず Release プリセットで取得してください。Debug ビルドでも動作しますが `WARNING` が出力され、数値は代表値になりません。
 
