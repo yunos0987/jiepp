@@ -16,7 +16,7 @@
 // #
 {# include <boost/preprocessor/config/config.hpp>}
 // #
-{# if  not BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_MWCC() \and\  not BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_DMC()}
+{# if  not BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_MWCC() &&  not BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_DMC()}
 {#    define BOOST_PP_EXPAND(x) BOOST_PP_EXPAND_I(x)}
 {# else}
 {#    define BOOST_PP_EXPAND(x) BOOST_PP_EXPAND_OO((x))}

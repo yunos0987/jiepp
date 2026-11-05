@@ -25,11 +25,11 @@
 {# define BOOST_PP_CONFIG_DMC() 16#0040}
 // #
 {# ifndef BOOST_PP_CONFIG_FLAGS}
-{#    if defined(__GCCXML__) \or\ defined(__WAVE__) \or\ defined(__MWERKS__) \and\ __MWERKS__ >= 16#3200}
+{#    if defined(__GCCXML__) || defined(__WAVE__) || defined(__MWERKS__) && __MWERKS__ >= 16#3200}
 {#        define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_STRICT())}
-{#    elif defined(__EDG__) \or\ defined(__EDG_VERSION__)}
-{#        if defined(_MSC_VER) \and\ \not\defined(__clang__) \and\ (defined(__INTELLISENSE__) \or\ __EDG_VERSION__ >= 308)}
-{#           if \not\defined(_MSVC_TRADITIONAL) \or\ _MSVC_TRADITIONAL}
+{#    elif defined(__EDG__) || defined(__EDG_VERSION__)}
+{#        if defined(_MSC_VER) && !defined(__clang__) && (defined(__INTELLISENSE__) || __EDG_VERSION__ >= 308)}
+{#           if !defined(_MSVC_TRADITIONAL) || _MSVC_TRADITIONAL}
 {#               define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_MSVC())}
 {#           else}
 {#               define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_STRICT())}
@@ -37,18 +37,18 @@
 {#        else}
 {#            define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_EDG()  or  BOOST_PP_CONFIG_STRICT())}
 {#        endif}
-{#    elif defined(_MSC_VER) \and\ defined(__clang__)}
+{#    elif defined(_MSC_VER) && defined(__clang__)}
 {#        define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_STRICT())}
 {#    elif defined(__MWERKS__)}
 {#        define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_MWCC())}
 {#    elif defined(__DMC__)}
 {#        define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_DMC())}
-{#    elif defined(__BORLANDC__) \and\ __BORLANDC__ >= 16#581}
+{#    elif defined(__BORLANDC__) && __BORLANDC__ >= 16#581}
 {#        define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_STRICT())}
-{#    elif defined(__BORLANDC__) \or\ defined(__IBMC__) \or\ defined(__IBMCPP__) \or\ defined(__SUNPRO_CC)}
+{#    elif defined(__BORLANDC__) || defined(__IBMC__) || defined(__IBMCPP__) || defined(__SUNPRO_CC)}
 {#        define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_BCC())}
 {#    elif defined(_MSC_VER)}
-{#        if \not\defined(_MSVC_TRADITIONAL) \or\ _MSVC_TRADITIONAL}
+{#        if !defined(_MSVC_TRADITIONAL) || _MSVC_TRADITIONAL}
 {#           define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_MSVC())}
 {#        else}
 {#           define BOOST_PP_CONFIG_FLAGS() (BOOST_PP_CONFIG_STRICT())}
@@ -83,7 +83,7 @@
 {#    undef BOOST_PP_VARIADICS_MSVC}
 {# endif}
 {# define BOOST_PP_VARIADICS 1}
-{# if defined _MSC_VER \and\ _MSC_VER >= 1400 \and\ \not\defined(__clang__) \and\ (defined(__INTELLISENSE__) \or\ (defined(__INTEL_COMPILER) \and\ __INTEL_COMPILER >= 1700) \or\ \not\(defined __EDG__ \or\ defined __GCCXML__ \or\ defined __PATHSCALE__ \or\ defined __DMC__ \or\ defined __CODEGEARC__ \or\ defined __BORLANDC__ \or\ defined __MWERKS__ \or\ defined __SUNPRO_CC \or\ defined __HP_aCC \or\ defined __MRC__ \or\ defined __SC__ \or\ defined __IBMCPP__ \or\ defined __PGI)) \and\ (\not\defined(_MSVC_TRADITIONAL) \or\ _MSVC_TRADITIONAL)}
+{# if defined _MSC_VER && _MSC_VER >= 1400 && !defined(__clang__) && (defined(__INTELLISENSE__) || (defined(__INTEL_COMPILER) && __INTEL_COMPILER >= 1700) || !(defined __EDG__ || defined __GCCXML__ || defined __PATHSCALE__ || defined __DMC__ || defined __CODEGEARC__ || defined __BORLANDC__ || defined __MWERKS__ || defined __SUNPRO_CC || defined __HP_aCC || defined __MRC__ || defined __SC__ || defined __IBMCPP__ || defined __PGI)) && (!defined(_MSVC_TRADITIONAL) || _MSVC_TRADITIONAL)}
 {#     define BOOST_PP_VARIADICS_MSVC 1}
 {# else}
 {#     define BOOST_PP_VARIADICS_MSVC 0}

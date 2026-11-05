@@ -20,13 +20,13 @@
 {# include <boost/preprocessor/list/adt.hpp>}
 {# include <boost/preprocessor/tuple/elem.hpp>}
 {# include <boost/preprocessor/tuple/rem.hpp>}
-{# if BOOST_PP_VARIADICS_MSVC \and\ (_MSC_VER <= 1400)}
+{# if BOOST_PP_VARIADICS_MSVC && (_MSC_VER <= 1400)}
 {# include <boost/preprocessor/control/iif.hpp>}
 {# endif}
 // #
 // # /* BOOST_PP_LIST_TO_ARRAY */
 // #
-{# if BOOST_PP_VARIADICS_MSVC \and\ (_MSC_VER <= 1400)}
+{# if BOOST_PP_VARIADICS_MSVC && (_MSC_VER <= 1400)}
 {# define BOOST_PP_LIST_TO_ARRAY(list) /*n*/    BOOST_PP_IIF /*n*/        ( /*n*/        BOOST_PP_LIST_IS_NIL(list), /*n*/        BOOST_PP_LIST_TO_ARRAY_VC8ORLESS_EMPTY, /*n*/        BOOST_PP_LIST_TO_ARRAY_VC8ORLESS_DO /*n*/        ) /*n*/    (list) /*n*//**/}
 {# define BOOST_PP_LIST_TO_ARRAY_VC8ORLESS_EMPTY(list) (0,())}
 {# define BOOST_PP_LIST_TO_ARRAY_VC8ORLESS_DO(list) BOOST_PP_LIST_TO_ARRAY_I(BOOST_PP_WHILE, list)}
@@ -51,7 +51,7 @@
 // #
 // # /* BOOST_PP_LIST_TO_ARRAY_D */
 // #
-{# if BOOST_PP_VARIADICS_MSVC \and\ (_MSC_VER <= 1400)}
+{# if BOOST_PP_VARIADICS_MSVC && (_MSC_VER <= 1400)}
 {# define BOOST_PP_LIST_TO_ARRAY_D(d, list) /*n*/    BOOST_PP_IIF /*n*/        ( /*n*/        BOOST_PP_LIST_IS_NIL(list), /*n*/        BOOST_PP_LIST_TO_ARRAY_D_VC8ORLESS_EMPTY, /*n*/        BOOST_PP_LIST_TO_ARRAY_D_VC8ORLESS_DO /*n*/        ) /*n*/    (d, list) /*n*//**/}
 {# define BOOST_PP_LIST_TO_ARRAY_D_VC8ORLESS_EMPTY(d, list) (0,())}
 {# define BOOST_PP_LIST_TO_ARRAY_D_VC8ORLESS_DO(d, list) BOOST_PP_LIST_TO_ARRAY_I(BOOST_PP_WHILE_ @@ d, list)}

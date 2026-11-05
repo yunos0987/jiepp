@@ -20,7 +20,7 @@
 // #
 {# define BOOST_PP_LOCAL_ITERATE() <boost/preprocessor/iteration/detail/local.hpp>}
 // #
-{# define BOOST_PP_LOCAL_C(n) (BOOST_PP_LOCAL_S) <= n \and\ (BOOST_PP_LOCAL_F) >= n}
-{# define BOOST_PP_LOCAL_R(n) (BOOST_PP_LOCAL_F) <= n \and\ (BOOST_PP_LOCAL_S) >= n}
+{# define BOOST_PP_LOCAL_C(n) (BOOST_PP_LOCAL_S) <= n && (BOOST_PP_LOCAL_F) >= n}
+{# define BOOST_PP_LOCAL_R(n) (BOOST_PP_LOCAL_F) <= n && (BOOST_PP_LOCAL_S) >= n}
 // #
 {# endif}

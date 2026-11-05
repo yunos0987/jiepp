@@ -52,6 +52,18 @@ CMake Tools 拡張を使用している場合、CMakePresets.json が自動検�
 
 Tests live in `tests/` and use Google Test. Group related tests in the appropriate subdirectory (`constfold/`, `core/`, `env/`, `jiepp/`, `loader/`, `macro/`, `util/`). The shared e2e/assertion helpers live directly at `tests/test_helper.hpp` (not in its own subdirectory).
 
+## Boost.Preprocessor テスト入力の更新 / Updating the Boost Test Corpus
+
+`tests/jiepp/input/boost/preprocessor/` は上流の [boostorg/preprocessor](https://github.com/boostorg/preprocessor) を `tools/convert_boost_pp.py` で jiepp の構文に機械変換したものです（現在は Boost 1.92.0）。手で編集しないでください。変換規則はスクリプトの先頭に書いてあります。
+
+```bash
+git clone --depth 1 --branch boost-1.92.0 https://github.com/boostorg/preprocessor <dir>
+python tools/convert_boost_pp.py <dir>/include/boost/preprocessor tests/jiepp/input/boost/preprocessor
+python tools/convert_boost_pp.py --check <dir>/include/boost/preprocessor tests/jiepp/input/boost/preprocessor
+```
+
+更新後は Release の ctest で `BoostPreprocessorIntegration` を実行し、出力が変わった場合は「テスト期待値（ゴールデン）の更新」の手順で `tests/jiepp/output/boost.*` を更新します。
+
 ## サンプルの更新 / Updating Samples
 
 `iec_61131-3/samples/` 配下の `.iec` ファイルを変更した場合、`.piec` ファイルを再生成する必要があります。また、ドキュメント内でのサンプル引用と `.piec` 出力が一致することを確認してください。
