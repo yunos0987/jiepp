@@ -165,6 +165,10 @@ void DirectiveLexState::feed(char c, bool raw, std::size_t off) {
 }
 
 std::string decode_directive_text(std::string_view t, bool* has_invalid) {
+    // Every decision below is about a '$': without one the text decodes to
+    // itself, and most directives have none.
+    if (t.find('$') == std::string_view::npos)
+        return std::string(t);
     std::string r;
     r.reserve(t.size());
     DirectiveLexState lex;

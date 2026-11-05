@@ -22,6 +22,16 @@ TEST_F(CtrlDirectiveTest, IfBoolean) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(CtrlDirectiveTest, SkippedGroupDoesNotReportDirectiveOperands) {
+    // An invalid escape (PP21) in a directive matters only where it is reached.
+    EXPECT_EQ("e", strip(pp("{#if 0}{#define A $q}{#if $q}{#endif}{#unknown $q}{#endif}e")));
+    EXPECT_EQ("e", strip(pp("{#if 0}{#if 1}{#else $q}{#endif $q}{#elif 0}{#endif}e")));
+    EXPECT_TRUE(empty());
+    // The same operand is reported once its enclosing group is active.
+    EXPECT_THROW(pp("{#if 0}{#else $q}{#endif}"), Issue::Exception);
+    EXPECT_THROW(pp("{#if 1}{#else}{#endif $q}"), Issue::Exception);
+}
+
 TEST_F(CtrlDirectiveTest, IfInteger) {
     EXPECT_EQ("1e", strip(pp("{#if -1}1{#endif}e")));
     EXPECT_EQ("e",  strip(pp("{#if -0}1{#endif}e")));

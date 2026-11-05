@@ -29,6 +29,8 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     // bounded reader; a read error is PP10 '<input>' (the stream has no
     // path; the location is the caller's current Issue location).
     env.reset_input_bytes();
+    // A file may have moved since the previous call on this Env.
+    env.reset_resolved_paths();
     const std::optional<std::string> text = Loader::read_stream(input, env, "<input>");
     // The stream starts on this call's own Env line, so lexer diagnostics
     // (PP20/22/23) use the same line base as set_top_lineno() above.

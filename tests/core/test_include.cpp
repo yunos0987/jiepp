@@ -1,5 +1,9 @@
 #include "test_helper.hpp"
 
+#include "loader/loader.hpp"
+
+#include <sstream>
+
 static const std::filesystem::path DIR = "tests/core/test_include";
 
 class IncludeTest : public JieppTest {};
@@ -32,6 +36,66 @@ b;
 3;
 )", o);
     EXPECT_TRUE(empty());
+}
+
+TEST_F(IncludeTest, RepeatedIncludeOfResolvedFileGivesSameOutput) {
+    const fs::path dir = fs::temp_directory_path() / "jiepp_include_repeat";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    {
+        std::ofstream(dir / "h.iec", std::ios::binary) << "h\n";
+        std::ofstream(dir / "m.iec", std::ios::binary)
+            << "{#include 'h.iec'}\n{#include 'h.iec'}\n{#include 'h.iec'}\n";
+    }
+    std::string o;
+    EXPECT_NO_THROW({ o = pp_file(dir / "m.iec"); });
+    std::size_t count = 0;
+    for (std::size_t p = o.find("h\n"); p != std::string::npos; p = o.find("h\n", p + 1))
+        ++count;
+    EXPECT_EQ(3u, count) << o;
+    EXPECT_TRUE(empty());
+    fs::remove_all(dir, ec);
+}
+
+TEST_F(IncludeTest, FileAppearingAfterAFailedLookupIsFound) {
+    // Only a found file is remembered: a miss looks again the next time.
+    const fs::path dir = fs::temp_directory_path() / "jiepp_include_miss";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    Env env = setup();
+    const std::string header = (dir / "late.iec").generic_string();
+    EXPECT_TRUE(Loader::fullpath(header, Loader::LoadType::INCLUDE, env).empty());
+    { std::ofstream(dir / "late.iec", std::ios::binary) << "x\n"; }
+    EXPECT_FALSE(Loader::fullpath(header, Loader::LoadType::INCLUDE, env).empty());
+    fs::remove_all(dir, ec);
+}
+
+TEST_F(IncludeTest, PreprocessForgetsResolvedPathsOfThePreviousCall) {
+    // Each preprocess() call looks at the file system again, so a removed
+    // header is an error, as it was before paths were remembered.
+    const fs::path dir = fs::temp_directory_path() / "jiepp_include_stale";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const fs::path header = dir / "h.iec";
+    { std::ofstream(header, std::ios::binary) << "x\n"; }
+    Env env = setup();
+    const std::string text = "{#include '" + header.generic_string() + "'}\n";
+    {
+        std::istringstream in(text);
+        std::ostringstream out;
+        EXPECT_NO_THROW(preprocess(in, out, env));
+    }
+    fs::remove(header, ec);
+    {
+        std::istringstream in(text);
+        std::ostringstream out;
+        EXPECT_THROW(preprocess(in, out, env), Issue::Exception);
+        EXPECT_NE(std::string::npos, message().find("PP11")) << message();
+    }
+    fs::remove_all(dir, ec);
 }
 
 TEST_F(IncludeTest, IncludeSingle) {

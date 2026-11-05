@@ -21,6 +21,19 @@ unsigned char pragma_hex_value(char c) {
     return static_cast<unsigned char>(u - 'A' + 10);
 }
 
+// True for a character that read_pragma_body() only appends to the body: not
+// the start of an escape, a newline, a brace, or anything the directive lexical
+// state reacts to (see DirectiveLexState::feed_plain_run()).
+bool is_plain_pragma_char(char c) {
+    switch (c) {
+    case '$': case '\n': case '\r': case '{': case '}':
+    case '\'': case '"': case '/': case '(': case ')': case '*':
+        return false;
+    default:
+        return true;
+    }
+}
+
 // Raw newlines are folded to spaces here, before parse_directive() decodes
 // '$' escapes and the handlers re-lex the text. To end a '//' comment at a
 // raw newline like C does, read_pragma_body() tracks -- over the *decoded*
@@ -115,6 +128,20 @@ Token read_pragma_body(const std::string& text,
     };
 
     while (pos < len) {
+        // Copy a run of characters that the rules below only append.
+        if (pending_hex < 0) {
+            std::size_t run = pos;
+            while (run < len && is_plain_pragma_char(text[run]))
+                ++run;
+            if (run > pos) {
+                body.append(text, pos, run - pos);
+                if (is_directive)
+                    lc.feed_plain_run(text[run - 1], body.size() - 1);
+                pos = run;
+                continue;
+            }
+        }
+
         char c = text[pos];
 
         // Dollar-escape

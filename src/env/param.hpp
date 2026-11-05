@@ -120,6 +120,13 @@ public:
     std::shared_ptr<const std::vector<Token>> get_cache(const std::string& key) const;
     void set_cache(std::string key, std::vector<Token> tokens);
 
+    // ---- Resolved include paths (candidate path -> canonical path) ----
+    // Files found so far in this preprocess()/preprocess_text() call or jiepp
+    // run. Null if `candidate` has not been resolved yet.
+    const std::string* resolved_path(const std::string& candidate) const;
+    void set_resolved_path(std::string candidate, std::string canonical);
+    void reset_resolved_paths();
+
     // ---- Named counters (__counter / __counter_peek / __counter_set) ----
     // Separate namespace from macros: {#define}/{#undef} never touch it. Lives
     // as long as the Env (like the state of __COUNTER__ in its CounterMacro),

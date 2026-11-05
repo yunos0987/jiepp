@@ -20,6 +20,49 @@ TEST_F(LexerPragmaTest, Error) {
     EXPECT_EQ("<unknown location>:1.0: error: PP22: Invalid syntax for pragma; '{id:'", message());
 }
 
+// ---- the run of plain characters read_pragma_body() copies at once ----
+
+TEST_F(LexerPragmaTest, PlainRunsKeepCommentAndStringState) {
+    // A ')' right after '*' closes a block comment, though it is in no way
+    // special outside one: the rest of the body is not comment text.
+    auto r1 = ts("{#define A (* x *) // c\n 1}");
+    ASSERT_FALSE(r1.empty());
+    EXPECT_EQ("{#define A (* x *)  1}", r1[0].text);
+
+    // Inside a block comment "//" is no line comment, so the newline keeps
+    // the text after it.
+    auto r2 = ts("{#define B (* // x\n y *) 2}");
+    ASSERT_FALSE(r2.empty());
+    EXPECT_EQ("{#define B (* // x  y *) 2}", r2[0].text);
+
+    // Inside a string "//" is no comment either.
+    auto r3 = ts("{#define C 'a//b' 3}");
+    ASSERT_EQ(1u, r3.size());
+    EXPECT_EQ("{#define C 'a//b' 3}", r3[0].text);
+
+    // A slash ended by a plain run does not pair with a later slash.
+    auto r4 = ts("{#define D a/b/ /c 4}");
+    ASSERT_EQ(1u, r4.size());
+    EXPECT_EQ("{#define D a/b/ /c 4}", r4[0].text);
+
+    // The line comment is cut at the raw newline after a plain run, from the
+    // offset where it starts.
+    auto r5 = ts("{#define E abc//def ghi\n 5}");
+    ASSERT_FALSE(r5.empty());
+    EXPECT_EQ("{#define E abc  5}", r5[0].text);
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(LexerPragmaTest, PlainRunAfterHalfOfHexEscapeIsOneEscape) {
+    auto r = ts("{#define F $4G}");
+    ASSERT_EQ(1u, r.size());
+    EXPECT_EQ("{#define F $4G}", r[0].text);
+    auto r2 = ts("{#define G $2F/x}");   // $2F is '/', and "/" + "/x" starts a comment
+    ASSERT_EQ(1u, r2.size());
+    EXPECT_EQ("{#define G $2F/x}", r2[0].text);
+    EXPECT_TRUE(empty());
+}
+
 // ---- pragma closer normal cases ----
 
 TEST_F(LexerPragmaTest, CloserNormal) {
