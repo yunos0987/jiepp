@@ -44,17 +44,6 @@ std::optional<char> decode_directive_only_escape(char nc);
 class DirectiveLexState {
 public:
     void feed(char c, bool raw, std::size_t off = 0);
-    // Same as feed() of each character of a run ending in `last` at `last_off`,
-    // when no character of the run can change the state: not a quote, '$', '/',
-    // '(', ')', '*' or a newline.
-    void feed_plain_run(char last, std::size_t last_off) {
-        switch (state_) {
-        case State::Normal: prev_ = last; prev_off_ = last_off; break;
-        case State::Str:    esc_ = false; break;
-        case State::Line:   break;
-        case State::Block:  star_ = false; break;
-        }
-    }
     bool in_raw_string() const { return state_ == State::Str && raw_str_; }
     // Whether feeding c now would open a string literal.
     bool opens_string(char c) const {

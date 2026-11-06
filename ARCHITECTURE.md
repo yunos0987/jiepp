@@ -45,7 +45,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 | `util/` | `path.hpp/cpp`, `text.hpp/cpp`, `iec_61131-3.hpp/cpp`, `stack_guard.hpp/cpp` | `Util` 名前空間の低レベルヘルパー: パス正規化 (`absolute_path()`, `canonical_path()`)、トリム (`ltrim_view()`/`rtrim_view()`/`trim_view()`)、IEC 文字列エンコード (`encode_iec_string()`。行マーカーのファイル名は `$`・`{`・`}` も `$24`・`$7B`・`$7D` にする `encode_line_marker_path()`)、スタック枯渇ガード（`note_stack_base()`/`stack_nearly_exhausted()`。スレッド入口で基点を記録し、`expand()` 入口と `subst_va_opt_content()`（`subst()` の自己再帰の直前）で残量を検査する） |
 | `bench/` | `perftest.py`, `cases/<name>/<name>.py` | 性能測定ハーネス（`src/` 外）。CMake `bench` ターゲットが `jiepp` を直接起動して計測（詳細は CONTRIBUTING.md「性能測定 / Benchmark」） |
 
-`Loader::fullpath()` はインクルードパス解決結果を `Util::canonical_path()`（symlink 解決・OS 正規化）で正規化する。この正規化済みパスは `Loader::tokens()` のトークンキャッシュキーと `-M`/`-MM` 依存関係の重複排除に使う同一性キー。見つかったファイルの解決結果は `Param` に覚え（`preprocess()` の呼び出しごとに消す）、同じ候補パスではファイルシステムを見に行かない。見つからなかった候補は覚えない。`{#pragma once}` の処理済みファイル集合は、ファイルの実体を表す `Util::file_id`（Windows はボリューム + ファイル ID、POSIX は `st_dev` + `st_ino`）をキーにする（`src/env/file_context.cpp`。ファイルでない入力はパス文字列で代用する）。
+`Loader::fullpath()` はインクルードパス解決結果を `Util::canonical_path()`（symlink 解決・OS 正規化）で正規化する。この正規化済みパスは `Loader::tokens()` のトークンキャッシュキーと `-M`/`-MM` 依存関係の重複排除に使う同一性キー。見つかったファイルの解決結果は、トークンキャッシュと同じく `Env` の寿命のあいだ `Param` に覚え、同じ候補パスではファイルシステムを見に行かない。見つからなかった候補は覚えない。`{#pragma once}` の処理済みファイル集合は、ファイルの実体を表す `Util::file_id`（Windows はボリューム + ファイル ID、POSIX は `st_dev` + `st_ino`）をキーにする（`src/env/file_context.cpp`。ファイルでない入力はパス文字列で代用する）。
 
 ### env/ の内部構成
 

@@ -234,10 +234,6 @@ void Param::set_resolved_path(std::string candidate, std::string canonical) {
     cache_->resolved_paths.insert_or_assign(std::move(candidate), std::move(canonical));
 }
 
-void Param::reset_resolved_paths() {
-    cache_->resolved_paths.clear();
-}
-
 // ---------------------------------------------------------------------------
 // Named counters
 // ---------------------------------------------------------------------------

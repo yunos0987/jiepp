@@ -72,10 +72,10 @@ TEST_F(IncludeTest, FileAppearingAfterAFailedLookupIsFound) {
     fs::remove_all(dir, ec);
 }
 
-TEST_F(IncludeTest, PreprocessForgetsResolvedPathsOfThePreviousCall) {
-    // Each preprocess() call looks at the file system again, so a removed
-    // header is an error, as it was before paths were remembered.
-    const fs::path dir = fs::temp_directory_path() / "jiepp_include_stale";
+TEST_F(IncludeTest, ResolvedPathIsKeptForTheLifetimeOfTheEnv) {
+    // Like the token cache: a header found by one preprocess() call is still
+    // found by the next call on the same Env after the file is removed.
+    const fs::path dir = fs::temp_directory_path() / "jiepp_include_kept";
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir);
@@ -92,9 +92,10 @@ TEST_F(IncludeTest, PreprocessForgetsResolvedPathsOfThePreviousCall) {
     {
         std::istringstream in(text);
         std::ostringstream out;
-        EXPECT_THROW(preprocess(in, out, env), Issue::Exception);
-        EXPECT_NE(std::string::npos, message().find("PP11")) << message();
+        EXPECT_NO_THROW(preprocess(in, out, env));
+        EXPECT_NE(std::string::npos, out.str().find("x\n")) << out.str();
     }
+    EXPECT_TRUE(empty());
     fs::remove_all(dir, ec);
 }
 

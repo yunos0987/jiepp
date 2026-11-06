@@ -533,49 +533,44 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
 std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ots, Env& env) {
     ExpansionDepthGuard depth_guard(env);
 
-    // back() = next token to process; see WorkStack.
-    WorkStack work(its);
+    // Reversed work stack: back() = next token to process.
+    // pop_back/push_back are O(1), eliminating the O(N²) erase+insert pattern
+    // that previously shifted the entire vector on every macro expansion.
+    std::vector<Token> work(its.rbegin(), its.rend());
     std::vector<CtrlState> ctrl = {{false, true}};
 
     while (!work.empty()) {
-        // A directive and anything in a skipped group is handled in place:
-        // copying its text just to drop it is most of the cost of an {#include}
-        // of a header that is mostly {#define}s or skipped groups.
-        {
-            const Token& next = work.back();
+        Token t = std::move(work.back());
+        work.pop_back();
 
-            // Work budget (PP64): charged for every token taken off the work
-            // stack, before the active/inactive check below, so skipped
-            // {#if 0} groups, directive tokens and repeated {#include}s cost
-            // steps too. See Param::charge_expansion_steps().
-            env.charge_expansion_steps(1 + next.text.size() / 64);
-
-            const bool is_directive = next.type == Token::DIRECTIVE;
-            if (is_directive || !ctrl_is_active(ctrl)) {
-                if (next.num_of_lines > 0 && !next.lineno_counted)
-                    advance_lineno(next.num_of_lines, env);
-                // ── jiepp extension: directive processing ──
-                if (is_directive)
-                    dispatch_directive(next, ctrl, env, ots);
-                else if (next.num_of_lines > 0)
-                    ots.push_back(Token::newline(next.num_of_lines));
-                work.pop_back();
-                continue;
-            }
-        }
-
-        Token t = work.take();
+        // Work budget (PP64): charged for every token taken off the work
+        // stack, before the active/inactive check below, so skipped
+        // {#if 0} groups, directive tokens and repeated {#include}s cost
+        // steps too. See Param::charge_expansion_steps().
+        env.charge_expansion_steps(1 + t.text.size() / 64);
 
         // PP29 only where the literal is processed (not in a skipped group,
         // like clang; gcc also warns there), before its own "$"+newline
         // continuations advance the counter, so its first line is reported.
         // Only source tokens still carry the mark: operands, macro bodies and
         // arguments were reported and cleared already.
-        if (t.unterminated)
+        if (t.unterminated && ctrl_is_active(ctrl))
             jiepp::preprocessor_detail::report_unterminated_literal(t);
 
         if (t.num_of_lines > 0 && !t.lineno_counted) {
             advance_lineno(t.num_of_lines, env);
+        }
+
+        // ── jiepp extension: directive processing ──
+        if (t.type == Token::DIRECTIVE) {
+            dispatch_directive(t, ctrl, env, ots);
+            continue;
+        }
+
+        if (!ctrl_is_active(ctrl)) {
+            if (t.num_of_lines > 0)
+                ots.push_back(Token::newline(t.num_of_lines));
+            continue;
         }
 
         // ── jiepp extension: pragma expansion ──
@@ -628,7 +623,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 // discards the whole (already-erroring) condition anyway.
                 std::string operand;
                 if (!work.empty() && work.back().type == Token::ANY && iec3_is_identifier(work.back().text)) {
-                    operand = work.take().text;
+                    operand = std::move(work.back().text);
+                    work.pop_back();
                 } else {
                     if (!defop->operand_error) {
                         defop->operand_error = true;
@@ -683,10 +679,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 while (!work.empty()) {
                     if (work.back().type & Token::MASK_WS) {
                         env.charge_expansion_steps(1 + work.back().text.size() / 64);
-                        pre_lp.push_back(work.take());
+                        pre_lp.push_back(std::move(work.back()));
+                        work.pop_back();
                     } else if (work.back().type == Token::LP) {
                         env.charge_expansion_steps(1);
-                        pre_lp.push_back(work.take());
+                        pre_lp.push_back(std::move(work.back()));
+                        work.pop_back();
                         found_lp = true;
                         break;
                     } else {
@@ -742,7 +740,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     int excess_token_uncounted = -1;
 
                     while (!work.empty()) {
-                        Token pt = work.take();
+                        Token pt = std::move(work.back());
+                        work.pop_back();
                         // Work budget (PP64): macro arguments are tokens
                         // popped off the work stack too.
                         env.charge_expansion_steps(1 + pt.text.size() / 64);
@@ -1061,7 +1060,9 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     }
 
                     // Push replacement in reverse for re-scanning
-                    work.push_reversed(replaced);
+                    for (auto rit = replaced.rbegin(); rit != replaced.rend(); ++rit) {
+                        work.push_back(std::move(*rit));
+                    }
                     continue;
                 }
 
@@ -1075,7 +1076,9 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 ts_mark_output_only(repl);
 
                 // Push replacement in reverse for re-scanning
-                work.push_reversed(repl);
+                for (auto rit = repl.rbegin(); rit != repl.rend(); ++rit) {
+                    work.push_back(std::move(*rit));
+                }
                 continue;
             }
             }

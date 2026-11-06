@@ -8,7 +8,6 @@
 #include "../env/issue.hpp"
 #include "../macro/macro.hpp"
 
-#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -53,52 +52,12 @@ bool macro_name_is_defined(std::string_view name, Env& env);
 // that is still a built-in kind (is_builtin_macro()); 0 otherwise.
 bool has_builtin(std::string_view name, Env& env);
 
-// expand()'s stack of tokens still to process: the replacements pushed so far
-// on top of the unread rest of the input. pop_back/push_back are O(1), which
-// avoids shifting the input on every macro expansion. The input is read in
-// place, and a token of it is copied only if take() needs it as a value, so
-// `its` must outlive the stack and stay unchanged.
-class WorkStack {
-public:
-    explicit WorkStack(const std::vector<Token>& its) noexcept
-        : next_(its.data()), end_(its.data() + its.size()) {}
-
-    bool empty() const noexcept { return pushed_.empty() && next_ == end_; }
-    const Token& back() const noexcept { return pushed_.empty() ? *next_ : pushed_.back(); }
-    void pop_back() noexcept {
-        if (pushed_.empty())
-            ++next_;
-        else
-            pushed_.pop_back();
-    }
-    void push_back(Token&& t) { pushed_.push_back(std::move(t)); }
-    // Pushes `ts` so that its first token becomes back(), growing the stack
-    // once instead of token by token.
-    void push_reversed(std::vector<Token>& ts) {
-        pushed_.insert(pushed_.end(), std::make_move_iterator(ts.rbegin()),
-                       std::make_move_iterator(ts.rend()));
-    }
-    // back() as a value, popped.
-    Token take() {
-        if (pushed_.empty())
-            return *next_++;
-        Token t = std::move(pushed_.back());
-        pushed_.pop_back();
-        return t;
-    }
-
-private:
-    const Token* next_;
-    const Token* end_;
-    std::vector<Token> pushed_;
-};
-
 // The __has_builtin operator branch of expand(), called with the operator
 // token already popped from `work` while the transient 'defined' operator is
 // active and not suspended. Pushes "1"/"0" to `ots`; an operand error is
 // reported once per condition through `defop` like the 'defined' branch.
 // noinline so the expand() frame does not grow.
-[[gnu::noinline]] void expand_has_builtin(WorkStack& work,
+[[gnu::noinline]] void expand_has_builtin(std::vector<Token>& work,
                                           std::vector<Token>& ots,
                                           Env& env,
                                           DefinedOperator& defop);

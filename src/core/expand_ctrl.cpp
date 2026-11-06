@@ -762,7 +762,7 @@ bool has_builtin(std::string_view name, Env& env) {
 // already popped. Errors follow the 'defined' branch (first error per
 // condition only, state kept in the DefinedOperator, remaining text not
 // evaluated by the caller); the result token is "1"/"0".
-[[gnu::noinline]] void expand_has_builtin(WorkStack& work,
+[[gnu::noinline]] void expand_has_builtin(std::vector<Token>& work,
                                           std::vector<Token>& ots,
                                           Env& env,
                                           DefinedOperator& defop) {
@@ -800,7 +800,8 @@ bool has_builtin(std::string_view name, Env& env) {
                  Util::escape_line_breaks(work.back().text));
         return;
     }
-    std::string operand = work.take().text;
+    std::string operand = std::move(work.back().text);
+    work.pop_back();
     skip_ws();
     if (work.empty() || work.back().type != Token::RP) {
         fail(Issue::Code::INVALID_EXPRESSION, "missing ')' after '__has_builtin'");

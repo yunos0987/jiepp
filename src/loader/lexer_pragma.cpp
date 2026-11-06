@@ -21,13 +21,13 @@ unsigned char pragma_hex_value(char c) {
     return static_cast<unsigned char>(u - 'A' + 10);
 }
 
-// True for a character that read_pragma_body() only appends to the body: not
-// the start of an escape, a newline, a brace, or anything the directive lexical
-// state reacts to (see DirectiveLexState::feed_plain_run()).
+// True for a character that read_pragma_body() only appends to the body and
+// feeds to the directive lexical state as is: not the start of an escape, a
+// newline, a brace, or a quote (whether a quote opens a string depends on the
+// text after it).
 bool is_plain_pragma_char(char c) {
     switch (c) {
-    case '$': case '\n': case '\r': case '{': case '}':
-    case '\'': case '"': case '/': case '(': case ')': case '*':
+    case '$': case '\n': case '\r': case '{': case '}': case '\'': case '"':
         return false;
     default:
         return true;
@@ -128,7 +128,8 @@ Token read_pragma_body(const std::string& text,
     };
 
     while (pos < len) {
-        // Copy a run of characters that the rules below only append.
+        // Copy a run of characters that the rules below only append, in one
+        // step; lc still sees each of them.
         if (pending_hex < 0) {
             std::size_t run = pos;
             while (run < len && is_plain_pragma_char(text[run]))
@@ -136,7 +137,8 @@ Token read_pragma_body(const std::string& text,
             if (run > pos) {
                 body.append(text, pos, run - pos);
                 if (is_directive)
-                    lc.feed_plain_run(text[run - 1], body.size() - 1);
+                    for (std::size_t i = pos; i < run; ++i)
+                        lc.feed(text[i], true, body.size() - (run - i));
                 pos = run;
                 continue;
             }

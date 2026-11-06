@@ -24,10 +24,11 @@ namespace {
 // without clearing an already-set flag) and reports no match, so callers
 // keep searching remaining candidates.
 bool try_resolve(const fs::path& candidate, bool* found_directory, std::string& out, Env& env) {
-    // A file already resolved in this run needs no file system calls, which
+    // A file already resolved by this Env needs no file system calls, which
     // are the expensive part (canonicalising looks at every path component);
     // an {#include} guard re-reads the same headers many times. Only a hit is
-    // remembered, so a missing file is looked for again each time.
+    // remembered, so a missing file is looked for again each time. Like the
+    // token cache, a hit is kept for the Env's lifetime.
     std::string key = candidate.generic_string();
     if (const std::string* resolved = env.resolved_path(key)) {
         out = *resolved;
