@@ -277,12 +277,11 @@ std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
                     /*strip_bom=*/false);
 }
 
-std::string iec3_blank_out_comments(std::string_view s, bool header_name) {
+std::string iec3_blank_out_comments(std::string_view s) {
     std::string r;
     r.reserve(s.size());
     const std::size_t n = s.size();
     std::size_t p = 0;
-    bool seen_token = false;
     while (p < n) {
         const char c = s[p];
         const char d = (p + 1 < n) ? s[p + 1] : '\0';
@@ -300,15 +299,6 @@ std::string iec3_blank_out_comments(std::string_view s, bool header_name) {
             if (q < n && s[q] == c) ++q;
             r.append(s.substr(p, q - p));
             p = q;
-            seen_token = true;
-            continue;
-        }
-        if (header_name && !seen_token && c == '<') {
-            std::size_t q = s.find('>', p + 1);
-            q = (q == std::string_view::npos) ? n : q + 1;
-            r.append(s.substr(p, q - p));
-            p = q;
-            seen_token = true;
             continue;
         }
         const bool block = (c == '(' || c == '/') && d == '*';
@@ -326,7 +316,6 @@ std::string iec3_blank_out_comments(std::string_view s, bool header_name) {
                 while (end + 1 < n && !(s[end] == '*' && s[end + 1] == closer)) ++end;
                 end = (end + 1 < n) ? end + 2 : n;
             }
-            seen_token = seen_token || pragma || doc;
             if (pragma) { r.append(s.substr(p, 2)); p += 2; continue; }
             if (doc) { r.append(s.substr(p, end - p)); p = end; continue; }
             r += ' ';
@@ -334,7 +323,6 @@ std::string iec3_blank_out_comments(std::string_view s, bool header_name) {
             continue;
         }
         r += c;
-        if (!is_ws_char(c) && !is_nl_char(c)) seen_token = true;
         ++p;
     }
     return r;

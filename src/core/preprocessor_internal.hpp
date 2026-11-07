@@ -37,11 +37,12 @@ void handle_stringize(const std::string& raw_arg,
                       Env& env,
                       std::vector<Token>& ots,
                       bool wide);
-// is_marker_form: true for the nameless marker directive ({#:N}, key == ""),
-// false for the named gcc-style directive ({#line N} / {#set_line N} /
-// {#set-line N}). See handle_setline()'s definition (directive_handlers.cpp)
-// for how this changes the effective line number (unit C, U1(a)).
-void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, std::vector<Token>& ots);
+// key: the directive name as written -- "" for the nameless marker directive
+// ({#:N}), "line"/"set_line"/"set-line" for the named gcc-style directive.
+// See handle_setline()'s definition (directive_handlers.cpp) for how the two
+// forms differ in the effective line number (unit C, U1(a)); the name is
+// also the context of a PP49 for tokens after the operand.
+void handle_setline(const std::string& raw_arg, const std::string& key, Env& env, std::vector<Token>& ots);
 void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ots);
 void handle_include(const std::string& raw_arg,
                     Env& env,
@@ -87,6 +88,46 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
                                bool* found_unterminated = nullptr,
                                bool report_unclosed_comment = true,
                                bool* found_directive = nullptr);
+
+// ---- Path operands (SPEC §7, §7.5, §9): {#include}, {#sinclude},
+// {#syspath}, {#line}'s file name and __has_include's operand. Judged on
+// tokens, as gcc/clang do; see ARCHITECTURE.md. ----
+
+// Whether t is a '...' or "..." literal closed by its own quote. Reads the
+// one token's text (string_literal_end()): an unterminated literal (`'a$'`)
+// is not a path.
+bool is_terminated_literal(const Token& t);
+
+// Index of the first token at or after i that is not whitespace or a
+// comment (Token::MASK_WS), or ts.size().
+std::size_t skip_blanks(const std::vector<Token>& ts, std::size_t i);
+
+// Reads a header name written directly: the '<' has just been taken from
+// `work`, a reversed token stack (back() is the next token). Like gcc/clang,
+// which read a header name from the source characters, the name is the
+// spellings of the next tokens up to the first '>' character, so a comment
+// opener or a quote inside <...> is part of the name and nothing in it is
+// macro-expanded. The lexer may have read that '>' inside a longer token (a
+// comment, a literal): the token is cut after the '>' and the rest of its
+// text is lexed again (without diagnostics: the source lex reported them)
+// and pushed back onto `work`. The tokens read move to `read` in order, the
+// cut token holding its text up to the '>'. Returns false, with every token
+// moved to `read`, when no token has a '>'. Each token is read once.
+bool read_header_name(std::vector<Token>& work, std::string& name, std::vector<Token>& read);
+
+// The path at the start of macro-expanded tokens, as gcc/clang read the
+// result of expanding an #include operand: after blanks, one terminated
+// string literal (`text` is the literal as written, escapes not decoded), or
+// a '<' token and the tokens up to the next '>' token (`text` is their
+// spellings joined, a comment as one blank). `end` is the index just past
+// the path, for the caller's check of the tokens after it.
+struct ExpandedPath {
+    enum class Kind { none, quoted, angle };
+    Kind kind = Kind::none;
+    std::string text;
+    std::size_t end = 0;
+};
+ExpandedPath expanded_path(const std::vector<Token>& ts);
 
 // What expand_operand_tokens() lexes (A2 / S-02):
 // - operand: a directive operand or message text.

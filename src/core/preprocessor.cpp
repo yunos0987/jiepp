@@ -91,6 +91,77 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
     return ts;
 }
 
+bool is_terminated_literal(const Token& t) {
+    return (t.type == Token::STRING || t.type == Token::WSTRING) && !t.text.empty() &&
+           string_literal_end(t.text, 0) == t.text.size();
+}
+
+std::size_t skip_blanks(const std::vector<Token>& ts, std::size_t i) {
+    while (i < ts.size() && (ts[i].type & Token::MASK_WS))
+        ++i;
+    return i;
+}
+
+bool read_header_name(std::vector<Token>& work, std::string& name, std::vector<Token>& read) {
+    while (!work.empty()) {
+        Token u = std::move(work.back());
+        work.pop_back();
+        const std::size_t gt = u.text.find('>');
+        if (gt == std::string::npos) {
+            name += u.text;
+            read.push_back(std::move(u));
+            continue;
+        }
+        name.append(u.text, 0, gt);
+        if (gt + 1 < u.text.size()) {
+            // The rest of a comment or literal that the '>' ends early. Its
+            // newlines stay counted on the cut token, which keeps
+            // num_of_lines.
+            std::vector<Token> rest;
+            {
+                Issue::Ignoring quiet({Issue::Code::UNCLOSED_COMMENT,
+                                       Issue::Code::INVALID_PRAGMA_SYNTAX,
+                                       Issue::Code::INVALID_PP_SYNTAX});
+                rest = lex_operand(u.text.substr(gt + 1), /*remove_comments=*/false,
+                                   /*report_unterminated=*/false);
+            }
+            ts_mark_output_only(rest);
+            for (auto it = rest.rbegin(); it != rest.rend(); ++it)
+                work.push_back(std::move(*it));
+            u.text.resize(gt + 1);
+        }
+        read.push_back(std::move(u));
+        return true;
+    }
+    return false;
+}
+
+ExpandedPath expanded_path(const std::vector<Token>& ts) {
+    ExpandedPath p;
+    std::size_t i = skip_blanks(ts, 0);
+    if (i >= ts.size())
+        return p;
+    if (is_terminated_literal(ts[i])) {
+        p.kind = ExpandedPath::Kind::quoted;
+        p.text = ts[i].text;
+        p.end = i + 1;
+        return p;
+    }
+    if (ts[i].type != Token::ANY || ts[i].text != "<")
+        return p;
+    std::string name;
+    for (std::size_t j = i + 1; j < ts.size(); ++j) {
+        if (ts[j].type == Token::ANY && ts[j].text == ">") {
+            p.kind = ExpandedPath::Kind::angle;
+            p.text = std::move(name);
+            p.end = j + 1;
+            return p;
+        }
+        name += ts[j].type == Token::C ? std::string(" ") : ts[j].text;
+    }
+    return p;
+}
+
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
                                          bool report_unterminated, OperandKind kind,
                                          bool* found_unterminated,

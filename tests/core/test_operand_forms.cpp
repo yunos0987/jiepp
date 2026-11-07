@@ -9,10 +9,10 @@
 // Pins the accepted and rejected forms of the directive operands that are
 // read as a path or a number ({#include}, {#sinclude}, {#syspath}, {#line},
 // {#max_*}) and of the __has_include operator: the output and every
-// diagnostic (code and context, in order). The expectations were taken from
-// the tree before the {#max_*} operand was judged on lex_operand() tokens,
-// and the file uses nothing newer, so it also runs unchanged against that
-// tree.
+// diagnostic (code and context, in order). The path and {#line} operands
+// follow gcc/clang's rules (SPEC §7, §9): a path written directly is not
+// macro-expanded, a header name ends at the first '>', and tokens after the
+// operand are PP49.
 
 namespace {
 
@@ -104,6 +104,10 @@ std::string pp11(const std::string& context) {
     return kAt + "error: PP11: No such file or directory; '" + context + "'";
 }
 
+std::string pp49(const std::string& context) {
+    return kAt + "warning: PP49: Extra tokens at end of directive; '" + context + "'";
+}
+
 } // namespace
 
 // ---- {#include} / {#sinclude} ----
@@ -144,28 +148,62 @@ TEST_F(OperandFormTest, IncludeMacroExpandedPath) {
 TEST_F(OperandFormTest, IncludeMalformedPathIsPP47) {
     check({
         {"{#include f.iec}A", kA, {pp47("f.iec")}},
-        {"{#include 'f.iec' x}A", kA, {pp47("'f.iec' x")}},
-        {"{#include 'f' + 'g'}A", kA, {pp47("'f' + 'g'")}},
         {"{#include <s.iec}A", kA, {pp47("<s.iec")}},
         {"{#include s.iec>}A", kA, {pp47("s.iec>")}},
-        {"{#include <s.iec> x}A", kA, {pp47("<s.iec> x")}},
-        {"{#include 'f.iec' (*! d *)}A", kA, {pp47("'f.iec' (*! d *)")}},
         {"{#include //! d$n'f.iec'}A", kA, {pp47("//! d$n'f.iec'")}},
         {"{#include}A", kA, {kAt + "error: PP47: Invalid path"}},
-        {"{#sinclude 'f.iec' x}A", kA, {pp47("'f.iec' x")}},
         {"{#include 'f.iec}A",
          kA,
          {kAt + "warning: PP29: Missing terminating quote character; ''f.iec'", pp47("'f.iec")}},
+        // A macro that makes '/' and '*' does not make a comment: the
+        // expanded operand starts with '/' (study row a2).
+        {"{#define S /}{#include S* c */ 'f.iec'}A", kA, {pp47("S* c */ 'f.iec'")}},
+        // An empty macro expands to nothing (gcc/clang).
+        {"{#define E}{#include E}A", kA, {pp47("E")}},
     });
 }
 
-TEST_F(OperandFormTest, IncludeAnglePathEndsAtTheLastGreaterThan) {
-    // The path runs from the '<' to the last '>' of the operand; a comment
-    // after the first '>' is one blank.
+TEST_F(OperandFormTest, IncludeExtraTokensArePP49) {
+    // Tokens after the path are a warning and the file is still included,
+    // like gcc/clang's -Wextra-tokens (study rows a1, a3b). After a path
+    // written directly they are macro-expanded first, so an empty macro adds
+    // nothing.
     check({
-        {"{#include <s.iec>>}A", kA, {pp11("s.iec>")}},
-        {"{#include <s.iec> x>}A", kA, {pp11("s.iec> x")}},
-        {"{#include <a> (* c *) b>}A", kA, {pp11("a>   b")}},
+        {"{#include 'f.iec' x}A", kF + kA, {pp49("{#include 'f.iec' x}")}},
+        {"{#include 'f' + 'g'}A", kA, {pp49("{#include 'f' + 'g'}"), pp11("f")}},
+        {"{#include <s.iec> x}A", kS + kA, {pp49("{#include <s.iec> x}")}},
+        {"{#include 'f.iec' (*! d *)}A", kF + kA, {pp49("{#include 'f.iec' (*! d *)}")}},
+        {"{#sinclude 'f.iec' x}A", kA, {pp49("{#sinclude 'f.iec' x}"), pp11("f.iec")}},
+        {"{#define S /}{#include 'f.iec' S/x}A", kF + kA, {pp49("{#include 'f.iec' S/x}")}},
+        {"{#define H 'f.iec'}{#include H extra}A", kF + kA, {pp49("{#include H extra}")}},
+        {"{#define P <s.iec> x}{#include P}A", kS + kA, {pp49("{#include P}")}},
+        {"{#define E}{#include 'f.iec' E}A", kF + kA, {}},
+        {"{#define E}{#include <s.iec> E (* c *)}A", kS + kA, {}},
+    });
+}
+
+TEST_F(OperandFormTest, IncludeAnglePathIsAHeaderName) {
+    // A '<' written directly starts a header name up to the first '>'
+    // character, as gcc/clang read it from the source: nothing in it is
+    // macro-expanded (study row a4), and a '>' read inside a comment ends it
+    // there. What follows the '>' is extra tokens.
+    check({
+        {"{#define P s}{#include <P.iec>}A", kA, {pp11("P.iec")}},
+        {"{#include <s.iec>>}A", kS + kA, {pp49("{#include <s.iec>>}")}},
+        {"{#include <s.iec> x>}A", kS + kA, {pp49("{#include <s.iec> x>}")}},
+        {"{#include <a> (* c *) b>}A", kA, {pp49("{#include <a> (* c *) b>}"), pp11("a")}},
+        {"{#include <a (* > *) b>}A", kA, {pp49("{#include <a (* > *) b>}"), pp11("a (* ")}},
+    });
+}
+
+TEST_F(OperandFormTest, IncludeMacroExpandedAnglePath) {
+    // From a macro, <...> is the '<' token to the next '>' token, their
+    // spellings joined; a comment among them is one blank (gcc/clang).
+    // Blanks are kept as written (study row a4c).
+    check({
+        {"{#define P < a . iec >}{#include P}A", kA, {pp11(" a . iec ")}},
+        {"{#define P <s(* c *).iec>}{#include P}A", kA, {pp11("s .iec")}},
+        {"{#define P <s.iec}{#include P>}A", kS + kA, {}},
     });
 }
 
@@ -188,7 +226,8 @@ TEST_F(OperandFormTest, SyspathForms) {
         {"{#syspath \"sys\"}{#sinclude 's.iec'}A", "(*{syspath:'sys'}*)" + kS + kA, {}},
         {"{#syspath <sys>}A", "(*{syspath:'sys'}*)A", {}},
         {"{#syspath sys}A", "A", {pp47("sys")}},
-        {"{#syspath 'sys' x}A", "A", {pp47("'sys' x")}},
+        {"{#syspath 'sys' x}A", "(*{syspath:'sys'}*)A", {pp49("{#syspath 'sys' x}")}},
+        {"{#define D 'sys'}{#syspath D}A", "(*{syspath:'sys'}*)A", {}},
         {"{#syspath <sys}A", "A", {pp47("<sys")}},
     });
 }
@@ -207,6 +246,22 @@ TEST_F(OperandFormTest, LineForms) {
         {"{#line 5 'a' 'b'}\n__LINE__ __FILE__", "(*{#:4 'ab'}*)\n5 'ab'", {}},
         {"{#line 05 // c}\n__LINE__", "(*{#:4}*)\n5", {}},
         {"{#line 4294967295}\n", "(*{#:4294967294}*)\n", {}},
+        {"{#line /* x */ 5}\n__LINE__", "(*{#:4}*)\n5", {}},
+        {"{#define E}{#line 5 'f' E}\n__LINE__", "(*{#:4 'f'}*)\n5", {}},
+    });
+}
+
+TEST_F(OperandFormTest, LineExtraTokensArePP49) {
+    // Tokens after the file name are a warning and the line is still set,
+    // like gcc/clang (study row a6c). The context names the directive as
+    // written.
+    check({
+        {"{#line 5 'f' x}\n__LINE__ __FILE__", "(*{#:4 'f'}*)\n5 'f'", {pp49("{#line 5 'f' x}")}},
+        {"{#set_line 5 'f' 'g' (*! d *)}\n__LINE__",
+         "(*{#:4 'fg'}*)\n5",
+         {pp49("{#set_line 5 'f' 'g' (*! d *)}")}},
+        {"{#:5 'f' x}\n__LINE__", "(*{#:5 'f'}*)\n6", {pp49("{#:5 'f' x}")}},
+        {"{#define L 5 'f' x}{#line L}\n__LINE__", "(*{#:4 'f'}*)\n5", {pp49("{#line L}")}},
     });
 }
 
@@ -220,8 +275,12 @@ TEST_F(OperandFormTest, LineRejectedForms) {
         {"{#line 5abc}A", "A", {pp41 + "; '5abc'"}},
         {"{#line 5.0}A", "A", {pp41 + "; '5.0'"}},
         {"{#line 5_0}A", "A", {pp41 + "; '5_0'"}},
-        {"{#line 5 'f' x}A", "A", {pp41 + "; '5 'f' x'"}},
         {"{#line 5 (*! d *)}A", "A", {pp41 + "; '5 (*! d *)'"}},
+        {"{#line 5 x}A", "A", {pp41 + "; '5 x'"}},
+        // A macro that makes '/' and '*' does not make a comment (study rows
+        // a5, a6).
+        {"{#define S /}{#line S* x */ 5}A", "A", {pp41 + "; 'S* x */ 5'"}},
+        {"{#define S /}{#line 5 S/x}A", "A", {pp41 + "; '5 S/x'"}},
         {"{#line 'f'}A", "A", {pp41 + "; ''f''"}},
         {"{#line}A", "A", {pp41}},
     });

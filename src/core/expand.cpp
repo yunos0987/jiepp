@@ -303,7 +303,7 @@ void dispatch_directive(const Token& t,
     case DirectiveToken::SETLINE:
         // U1(a)/C1/C2: key == "" is the nameless marker form ({#:N}); a
         // named key ("line"/"set_line"/"set-line") is the gcc-style form.
-        jiepp::preprocessor_detail::handle_setline(raw_arg, key.empty(), env, ots);
+        jiepp::preprocessor_detail::handle_setline(raw_arg, key, env, ots);
         break;
     case DirectiveToken::SYSPATH:
 #ifdef JIEPP_SANDBOX

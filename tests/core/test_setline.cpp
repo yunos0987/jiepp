@@ -330,9 +330,10 @@ TEST_F(SetlineTest, SetLineFilenameWithSpaces) {
 }
 
 TEST_F(SetlineTest, SetLineTrailingGarbageRejected) {
-    // Fact: extra words after a quoted filename are rejected, not silently ignored.
-    EXPECT_THROW(pp("{#line 2 'a.iec' junk}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::INVALID_SETLINE_OPERAND, code());
+    // Like gcc/clang (-Wextra-tokens), extra words after a quoted filename
+    // are a warning (PP49), not silently ignored, and the line is still set.
+    EXPECT_EQ("(*{#:1 'a.iec'}*)1;", pp("{#line 2 'a.iec' junk}__LINE__;"));
+    EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, code());
 }
 
 TEST_F(SetlineTest, SetLineAngleBracketRejected) {

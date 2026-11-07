@@ -441,9 +441,10 @@ TEST_F(IncludeTest, CommentsAroundIncludeOperand) {
     EXPECT_EQ(sinc, pp("{#syspath 'tests/core/test_include' // c}{#sinclude 'a.iec' (* c *)}"));
     EXPECT_TRUE(empty());
 
-    // A document comment is a token, not whitespace: still an error.
-    EXPECT_THROW(pp("{#include 'tests/core/test_include/a.iec' (*! d *)}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::INVALID_PATH, code());
+    // A document comment is a token, not whitespace: an extra token after
+    // the path, a warning (PP49), and the file is still included.
+    EXPECT_EQ(plain, pp("{#include 'tests/core/test_include/a.iec' (*! d *)}"));
+    EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, code());
 }
 
 TEST_F(IncludeTest, PragmaOnceWithCommentOrExtraTokens) {
