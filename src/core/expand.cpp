@@ -380,9 +380,22 @@ void dispatch_directive(const Token& t,
     case DirectiveToken::PP_OUTPUT_PRAGMA_STYLE:
         jiepp::preprocessor_detail::handle_pragma_style(raw_arg, env);
         break;
-    case DirectiveToken::PRAGMA_ONCE:
-        jiepp::preprocessor_detail::handle_pragma_once(raw_arg, env);
+    case DirectiveToken::PRAGMA_ONCE: {
+        // Under -dD a {#pragma pop_macro} that changed the definition is
+        // echoed as the {#define}/{#undef} it amounts to, like those two
+        // directives are echoed only when they change something. A restored
+        // built-in macro has no {#define} form (as in -dM), so it is not
+        // echoed. push_macro never changes anything and is not echoed.
+        std::string name;
+        if (jiepp::preprocessor_detail::handle_pragma(raw_arg, env, &name) && env.is_dd_mode()) {
+            const Macro* m = env.lookup(name);
+            std::string text = m ? jiepp::preprocessor_detail::define_directive_text(name, *m)
+                                 : "{#undef " + encode_directive_text(name) + "}";
+            if (!text.empty())
+                ots.push_back(Token::create(Token::DIRECTIVE, std::move(text)));
+        }
         break;
+    }
     case DirectiveToken::NOP:
         break;
     default:

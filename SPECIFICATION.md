@@ -336,7 +336,7 @@ Y)
 Y)   (* → OPERATION_NOT_ALLOWED: 'include' inside macro argument: ... *)
 ```
 
-- 状態のみを変更するディレクティブ（`{#define}` / `{#undef}` / `{#warning}` / `{#error}` / `{#info}` / `{#severe}` / `{#ignore}` / `{#pragma once}` / `{#nop}` / `{#max_*}` 制限ディレクティブ / `{#pp_output_pragma_style}`）は出力トークンを生成しないため引数リスト内でも許可される。`-dD` 指定時、引数リスト内の `{#define}`/`{#undef}` もマクロ呼び出し自身の展開結果より先にインライン出力される
+- 状態のみを変更するディレクティブ（`{#define}` / `{#undef}` / `{#warning}` / `{#error}` / `{#info}` / `{#severe}` / `{#ignore}` / `{#pragma once}` / `{#pragma push_macro}` / `{#pragma pop_macro}`（§3.8） / `{#nop}` / `{#max_*}` 制限ディレクティブ / `{#pp_output_pragma_style}`）は出力トークンを生成しないため引数リスト内でも許可される。`-dD` 指定時、引数リスト内の `{#define}`/`{#undef}`（と定義を変えた `{#pragma pop_macro}` の出力）もマクロ呼び出し自身の展開結果より先にインライン出力される
 - `OPERATION_NOT_ALLOWED` (`PP02`) は SEVERE 分類のため `{#ignore PP02}` でも抑制されない（`{#ignore}` は SEVERE に効果なし、§10）。上記の制御・出力ディレクティブの拒否は `{#ignore}` で無効化できない不変条件
 
 ### 3.3 可変長引数 / Variadic Macros
@@ -449,7 +449,7 @@ LOG('code=%d', 42);    (* → write_log('code=%d' , 42); — 本体の `fmt` の
 名前がない・識別子でない `{#undef}` は `PP30` エラーになり、何もしない（`-dD` にも出ない）。
 `NAME` の後に余分なトークンがあると（`{#undef A B}`・`{#undef A(x)}` など）`EXTRA_TOKENS_AT_END_OF_DIRECTIVE` (`PP49`) 警告を出し、`NAME` だけを解除する（gcc/clang と同じ）。後ろのコメントは空白として扱うので警告にならないが、ドキュメントコメント `(*! … *)` はトークンとして数える。
 
-ビルトインマクロを `{#undef}` または `-U` で解除すると、`MACRO_REDEFINED` (`PP35`) 警告を補足情報 `NAME: undefining built-in macro` 付きで出す（clang の `-Wbuiltin-macro-redefined` と同じ）。解除はそのまま行われ、同じ `Env` では元に戻せない。対象は §12.1・§12.2 の動的なマクロ（`__COUNTER__`・`__LINE__`・`__FILE__`・`__DATE__` など）、ビルトイン関数マクロ `__error`・`__assert`（§12.9）、`__counter`・`__counter_peek`・`__counter_set`（§12.10）と `__nosplit`（§12.11）、`__xmlattr`・`__xmltext`（§12.12）、`__arg_lhs`・`__arg_rhs`・`__arg_dir`（§12.13）、`{#undef __has_builtin}`、および通常ビルドの `{#undef __has_include}`（`__has_builtin` と `__has_include` は演算子で、解除後も働く。§5.2）。§12.3〜§12.7 の値を持つ定義済みマクロ（`__INT_MAX__`・`_JIEPP` など）は対象外で、警告なしに解除できる（clang の `__INT_MAX__` と同じ）。`PP35` は警告なので、`-Werror` を付けると終了コードが 1 になる。
+ビルトインマクロを `{#undef}` または `-U` で解除すると、`MACRO_REDEFINED` (`PP35`) 警告を補足情報 `NAME: undefining built-in macro` 付きで出す（clang の `-Wbuiltin-macro-redefined` と同じ）。解除はそのまま行われ、`{#define}` では元に戻せない。解除の前に `{#pragma push_macro}` で退避していれば、`{#pragma pop_macro}` で元のビルトインに戻せる（§3.8）。対象は §12.1・§12.2 の動的なマクロ（`__COUNTER__`・`__LINE__`・`__FILE__`・`__DATE__` など）、ビルトイン関数マクロ `__error`・`__assert`（§12.9）、`__counter`・`__counter_peek`・`__counter_set`（§12.10）と `__nosplit`（§12.11）、`__xmlattr`・`__xmltext`（§12.12）、`__arg_lhs`・`__arg_rhs`・`__arg_dir`（§12.13）、`{#undef __has_builtin}`、および通常ビルドの `{#undef __has_include}`（`__has_builtin` と `__has_include` は演算子で、解除後も働く。§5.2）。§12.3〜§12.7 の値を持つ定義済みマクロ（`__INT_MAX__`・`_JIEPP` など）は対象外で、警告なしに解除できる（clang の `__INT_MAX__` と同じ）。`PP35` は警告なので、`-Werror` を付けると終了コードが 1 になる。
 
 ### 3.6 マクロ再定義 / Redefinition
 
@@ -462,6 +462,41 @@ LOG('code=%d', 42);    (* → write_log('code=%d' , 42); — 本体の `fmt` の
 ### 3.7 再帰防止 / Recursion Prevention
 
 C プリプロセッサと同様の "paint-blue" アルゴリズムを使う。展開中のマクロはマーク（hide-set）され再帰展開を防止する。再帰はエラーにならず、展開済みマクロの名前はそのままテキストとして出力される。
+
+### 3.8 `{#pragma push_macro}` / `{#pragma pop_macro}` — マクロの退避と復元
+
+```
+{#pragma push_macro('NAME')}
+{#pragma pop_macro('NAME')}
+```
+
+C の `#pragma push_macro("NAME")` / `#pragma pop_macro("NAME")`（gcc/clang/MSVC）と同じ。ヘッダの中で一時的にマクロを置き換え、後で元に戻すために使う。
+
+```
+{#define X 1}
+{#pragma push_macro('X')}
+{#undef X}
+{#define X 2}
+X                          (* → 2 *)
+{#pragma pop_macro('X')}
+X                          (* → 1 *)
+```
+
+- `{#pragma push_macro('NAME')}` は、`NAME` の現在の定義（未定義という状態を含む）を `NAME` ごとのスタックに積む。定義は変えない
+- `{#pragma pop_macro('NAME')}` はスタックの先頭を取り出し、`NAME` の定義をそれに戻す。未定義を積んでいれば `{#undef NAME}` と同じく未定義に戻る。関数マクロはパラメータごと戻る。スタックが空なら何もせず、診断も出さない（gcc と同じ。clang は警告する）
+- 同じ名前を複数回 push すれば、同じ回数だけ pop で 1 段ずつ戻る
+- スタックはファイルをまたいで 1 つである。`{#include}` したファイルの中で push したものを、インクルードした側で pop できる
+- 引数は `'NAME'` または `"NAME"` の文字列リテラル 1 個で、両方同じ意味（§2「引数の引用符」。2 つの形は同じスタックを使う）。`NAME` はマクロ展開しない。引用符の中は書いたとおりに名前として読み、`$` エスケープは解釈しない（`$` を含む文字列は名前にならない）。プラグマ名の後・括弧の前後・文字列の前後の空白とコメントは空白として扱う
+- 文字列の中身が識別子でない場合（`'1'`、`'X Y'`、`''`）は、何もせず診断も出さない（そのような名前のマクロはないため。gcc と同じ）
+- 引数は §2 のとおり字句解析するので、空白だけを挟んで並ぶ同じ引用符の文字列は 1 個に結合される（§2「隣接文字列リテラルの結合」）。`push_macro('X' 'Y')` は `push_macro('XY')` と同じ（gcc/clang は文字列が 2 個あるのでエラーにする。jiepp はほかの引数と同じ規則を優先する）
+- 引数がない・括弧がない・文字列でない（`push_macro(X)`）・結合されない文字列が 2 個以上ある（`push_macro('X' "Y")`、`push_macro('X' (*c*) 'Y')`）・文字列が閉じていない・`)` がない場合は `INVALID_PUSH_POP_MACRO` (`PP82`) エラーを出し、そのプラグマを無視する（gcc/clang もエラーにする）
+- `)` の後に余分なトークンがある場合（`{#pragma push_macro('X') y}`）は `EXTRA_TOKENS_AT_END_OF_DIRECTIVE` (`PP49`) 警告を出し、プラグマはそのまま働く（`{#pragma once x}` と同じ。§7.6）
+- ビルトインマクロ（§3.5 の範囲）も対象である。`{#undef}` による解除の `PP35` は従来どおり出るが、pop による復元では `PP35` も再定義の警告も出さない。復元したビルトインは解除前の状態を引き継ぐ（`__COUNTER__` は解除前の続きの値を返す）。演算子 `__has_include`・`__has_builtin`（§5.2）はシンボル表の項目がないので、push は「未定義」を積み、pop はユーザーの定義を消して演算子だけが働く状態に戻す
+- `defined` は `{#define}`・`{#undef}` できない名前（`PP02`、§3.5）なので、`{#pragma push_macro('defined')}` / `{#pragma pop_macro('defined')}` は何もせず、診断も出さない
+- pop による復元は定義を変えるだけで、`{#define}`/`{#undef}` の診断（`PP30`・`PP35` など）は出さない
+- 関数マクロの引数リストの中でも使える（状態のみを変更するディレクティブ、§3.2）
+- 偽の条件グループ（`{#if 0}` など）の中では何もしない
+- `-dD`（§13）: pop が定義を変えたときだけ、戻した結果を `{#define NAME …}`（戻した定義。`-dM` と同じ形）または `{#undef NAME}` として出力する。変わらないとき（同じ内容に戻ったとき、空のスタックの pop）と push は何も出さない。`{#define}` で表せないビルトインに戻したときも何も出さない（`-dM` にビルトインが出ないのと同じ）。`-dM` は現在の定義だけを出し、スタックの中身は出さない
 
 ---
 
@@ -891,7 +926,7 @@ VAR CONSTANT MAX_SIZE : INT := 100; END_VAR
 | `{#pragma once}` | 簡潔。ファイルの実体（ファイル ID / inode）で判定するので確実 | エディタがコピーしたファイルを同一視する場合あり |
 | マクロガード | ポータブル | 記述が冗長。同名マクロとの衝突リスク |
 
-**未知のプラグマ**: `{#pragma}` で認識するのは `once` だけである。`{#pragma foo}` のように名前が未知のプラグマは、診断を出さずに捨て、出力にも書かない（gcc/clang の `-E` は未知の `#pragma` をそのまま出力するが、jiepp は意図的に異なる。§17）。
+**未知のプラグマ**: `{#pragma}` で認識する名前は `once`・`push_macro`・`pop_macro`（§3.8）である。`{#pragma foo}` のように名前が未知のプラグマは、診断を出さずに捨て、出力にも書かない（gcc/clang の `-E` は未知の `#pragma` をそのまま出力するが、jiepp は意図的に異なる。§17）。
 
 ### 7.7 マクロベースのインクルードガード / Macro-Based Include Guards
 
@@ -1290,7 +1325,7 @@ __error(unsupported target);   (* → ; PP91 'unsupported target' *)
 
 **診断と終了**: `PP91` は `{#error}` と同じ扱い（§8・§16）。ライブラリ利用（`preprocess()` 等）では呼び出しの時点で `Issue::Exception`（`ERROR_MESSAGE`）を投げ、jiepp コマンドではエラーを数えて処理を続け、終了コードは `1` で、`-o`・依存ファイルは書かない。`{#ignore PP91}` は `{#error}`・`__error`・`__assert` の報告をまとめて抑制する（抑制しても条件は評価し、偽ならメッセージも展開する）。`{#ignore}` はファイル単位ではなく全体に効くので、インクルードされたヘッダの `{#ignore PP91}` は、その後のインクルードした側の `__assert` も黙らせる（§10）。
 
-**定義・解除・`-dM`**: `__COUNTER__` と同じくシンボル表の通常の項目で、`{#ifdef __error}` や `defined(__assert)` は真になる。`{#undef __assert}` / `-U __assert` で解除でき、`PP35`（`__assert: undefining built-in macro`）を出す。解除した後の `__assert(...)` はただのテキストとして出力され、同じ `Env` では元に戻せない。つまり `-U __assert`・`-D __assert=`・`{#undef __assert}` は検査を無効にする。ただしこの 3 つは呼び出しを消さない。`-U` と `{#undef}` は `__assert(0, m)` をそのまま出力し、`-D __assert=` は空のオブジェクト形式マクロを定義するので `(0, m)` という引数テキストが残る。呼び出しごと消すには関数形式で定義する（`-D '__assert(...)='`。`(` `)` をシェルが解釈しないよう引用符で囲む。`{#define __assert(...)}` も同じ）。このとき出る `PP35` は警告なので、終了コードは `0` のままになる。`-Werror` を付けると `PP35` がエラーになり、終了コードは `1` になる。`-w` は `PP35` の表示を隠す。`{#define __error ...}` / `-D __error=...` は `PP35`（`__error: redefining built-in macro`）を出し、ユーザーの定義が使われる（§3.5・§3.6）。`-dM` には出ない（gcc/clang の `-dM` が `__COUNTER__` を出さないのと同じ）。
+**定義・解除・`-dM`**: `__COUNTER__` と同じくシンボル表の通常の項目で、`{#ifdef __error}` や `defined(__assert)` は真になる。`{#undef __assert}` / `-U __assert` で解除でき、`PP35`（`__assert: undefining built-in macro`）を出す。解除した後の `__assert(...)` はただのテキストとして出力され、`{#define}` では元に戻せない（解除の前に `{#pragma push_macro('__assert')}` で退避していれば、`{#pragma pop_macro('__assert')}` で戻せる。§3.8）。つまり `-U __assert`・`-D __assert=`・`{#undef __assert}` は検査を無効にする。ただしこの 3 つは呼び出しを消さない。`-U` と `{#undef}` は `__assert(0, m)` をそのまま出力し、`-D __assert=` は空のオブジェクト形式マクロを定義するので `(0, m)` という引数テキストが残る。呼び出しごと消すには関数形式で定義する（`-D '__assert(...)='`。`(` `)` をシェルが解釈しないよう引用符で囲む。`{#define __assert(...)}` も同じ）。このとき出る `PP35` は警告なので、終了コードは `0` のままになる。`-Werror` を付けると `PP35` がエラーになり、終了コードは `1` になる。`-w` は `PP35` の表示を隠す。`{#define __error ...}` / `-D __error=...` は `PP35`（`__error: redefining built-in macro`）を出し、ユーザーの定義が使われる（§3.5・§3.6）。`-dM` には出ない（gcc/clang の `-dM` が `__COUNTER__` を出さないのと同じ）。
 
 **サンドボックス**: 使える（ファイルにアクセスしない）。メッセージからは、ほかのすべての診断と同じく制御文字を取り除く。本文の LF・CR は `{#error}` と同じく残す（§14）。条件式の中の `__has_include(...)` は `PP62` を出し（入れ子のビルトイン関数マクロの引数の中は除く。上の「条件式」）、呼び出しのテキストが式に残るため続けて `PP52` を出す（`{#if __has_include('x')}` と同じ組）。`PP91` は出さない。
 
@@ -1769,6 +1804,8 @@ jiepp -- -unusual-name.iec
 | `{#sinclude 'file'}` | §7.2 | システムパス限定インクルード |
 | `{#syspath 'dir'}` | §7.4 | インクルード検索パス追加 |
 | `{#pragma once}` | §7.6 | 重複インクルード防止 |
+| `{#pragma push_macro('NAME')}` | §3.8 | マクロの定義をスタックに退避 |
+| `{#pragma pop_macro('NAME')}` | §3.8 | 退避したマクロの定義を復元 |
 | `{#if EXPR}` | §5.1 | 条件コンパイル開始 |
 | `{#elif EXPR}` | §5.1 | 条件分岐 |
 | `{#else}` | §5.1 | 条件分岐（上記すべて偽のとき） |
@@ -1850,7 +1887,7 @@ jiepp: error: PP10: An error occurred with the file; '<stdout>'
 | 50-59 | Expression |
 | 60-69 | Runtime/Limit |
 | 70-79 | CLI/Option |
-| 80-89 | マクロ（続き） / Macro (continued) |
+| 80-89 | マクロとマクロのプラグマ（続き） / Macro and macro pragmas (continued) |
 | 90-99 | Message passthrough |
 
 ### 重大度 / Severity
@@ -1952,6 +1989,7 @@ jiepp: error: PP10: An error occurred with the file; '<stdout>'
 | PP76 | `STACK_LIMIT_FAILED` | ERROR | Failed to set stack limit | スタックサイズの設定失敗（POSIX） |
 | PP80 | `VA_OPT_OUTSIDE_VARIADIC_MACRO` | WARNING | __VA_OPT__ outside a variadic macro | 可変長引数でない関数形式マクロとオブジェクト形式マクロの本体の `__VA_OPT__`（定義時に 1 個につき 1 件。補足情報はマクロ名。§3.4）。定義が別の理由で拒否されるときも clang と同じ位置に出す |
 | PP81 | `ARG_SEPARATOR_MISSING` | ERROR | No ':=' or '=>' in the argument of a built-in macro | `__arg_lhs` / `__arg_rhs` / `__arg_dir` の引数の最上位（`( )` と `[ ]` の外）に `:=` も `=>` もない。空の引数も含む。補足情報は `__arg_lhs: no ':=' or '=>' at the top level`（名前は呼んだマクロ）。何も出力しない（§12.13） |
+| PP82 | `INVALID_PUSH_POP_MACRO` | ERROR | Invalid push_macro or pop_macro pragma | `{#pragma push_macro}` / `{#pragma pop_macro}` の引数が `('NAME')` の形でない（引数・括弧がない、文字列でない、文字列が 2 個以上、`)` がない）。補足情報はプラグマ全体（`{#pragma push_macro(X)}`）。プラグマは無視する（§3.8） |
 | PP90 | `SEVERE_MESSAGE` | SEVERE | #severe | `{#severe}` ディレクティブによる致命的エラー |
 | PP91 | `ERROR_MESSAGE` | ERROR | #error | `{#error}` ディレクティブ、または `__error` / `__assert`（§12.9）によるエラー |
 | PP92 | `WARNING_MESSAGE` | WARNING | #warning | `{#warning}` ディレクティブによる警告 |
@@ -1984,6 +2022,7 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | `#arg` (stringize) | `@arg` | IEC 61131-3 では `#` が別の意味を持つため。空白・コメントの扱いは C の `#` と同じ（トークン間は 1 個のスペース、両端はなし、§4.1）。ただし gcc/clang の `-C`/`-CC` と異なり、jiepp のコメントは `-nC` の有無に関わらず常に空白として扱う（§4.1） |
 | `##` (token paste) | `@@` | 同上 |
 | `#pragma once` | `{#pragma once}` | 同等。ファイルの実体（ファイル ID / inode）ベースで判定 |
+| `#pragma push_macro("NAME")` / `#pragma pop_macro("NAME")` | `{#pragma push_macro('NAME')}` / `{#pragma pop_macro('NAME')}` | 同等（`"NAME"` も可）。空のスタックの pop は gcc と同じく診断なし（clang は警告）。引数の誤りは gcc/clang と同じくエラー（`PP82`）。ビルトインマクロも退避・復元できる（§3.8） |
 | 未知の `#pragma foo`（`-E` でそのまま出力される） | 未知の `{#pragma foo}` | 診断を出さずに捨て、出力にも書かない（意図的な差異、§7.6） |
 | `__VA_OPT__(tokens)` | `__VA_OPT__(tokens)` | 同等。`__VA_ARGS__` 空→なし、非空→tokens展開。関数形式マクロの入れ子・`(` がない・閉じ括弧がない `__VA_OPT__` は定義時に `PP37` で、定義しない（clang と同じ。§3.4）。可変長引数でないマクロでは警告 `PP80` と clang と同じ展開（`F(a)` は可変長引数が空のときと同じ、`F()` とオブジェクト形式マクロでは普通の識別子。gcc は書いたとおりに出力する）。何も生成しない `__VA_OPT__(…)` は `@@` の左辺でもプレースマーカー（gcc/clang と同じ）。中身の端の空の実引数は、gcc と同じく括弧の外の `@@` に対してプレースマーカーにしない（意図的な差異。clang はする。§4.3） |
 | `__VA_ARGS__` | `__VA_ARGS__` | 同等。`, @@ __VA_ARGS__` は gcc/clang の GNU 拡張（既定の gnu モード）と同じく、可変長引数が省略されたときだけカンマを削除し、連結はしない（§3.3）。`-std=c17` などの規格モードの gcc/clang は、可変長引数だけのマクロ `F(...)` の `F()` でカンマを残すが、jiepp は gnu モードに合わせて削除する。`__VA_ARGS__`（名前付き可変長引数でも同じ）の通常の展開も `@__VA_ARGS__`（文字列化、§4.1）も、呼び出し元の可変長引数のカンマ前後の空白を clang と同じく再現する: 呼び出しで空白（またはコメント）があった側に空白を 1 個だけ置き（量は再現しない）、なければ置かない（`F(a ,  b)` → `a , b`、`F(a,b)` → `a,b`、`F(a, b)` → `a, b`）。トークンの直前が改行だけの場合は空白と数えない（clang と同じ。`F(a⏎, b)` → `a, b`。gcc は改行を空白と数えて `a , b` になる）。文字列化だけは改行も空白と数える（`@` の `S(a⏎, b)` → `'a , b'`）。空の引数は何も加えない（`F(a , )` → `a ,`） |

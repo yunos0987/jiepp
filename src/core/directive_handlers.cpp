@@ -802,19 +802,91 @@ void handle_pragma_style(const std::string& raw_arg, Env& env) {
     env.set_pragma_style(ts[0].text);
 }
 
-void handle_pragma_once(const std::string& raw_arg, Env& env) {
-    // Only "once" is recognised; other pragma names are silently ignored.
+namespace {
+
+// The operand of {#pragma push_macro(...)} / {#pragma pop_macro(...)}, read
+// from its tokens `ts` (ts[0] is the pragma name; blanks and comments are
+// MASK_WS): '(' then one terminated '...' or "..." literal then ')'. On
+// success stores the literal's text without its quotes in `name` (escapes
+// as written, so a $ escape never forms an identifier) and whether tokens
+// follow the ')' in `extra`. The lexer has already joined adjacent literals
+// of the same quote (SPEC 2), so ('X' 'Y') names XY.
+bool push_pop_macro_name(const std::vector<Token>& ts, std::string& name, bool& extra) {
+    std::size_t i = 1;
+    auto at_token = [&]() {
+        while (i < ts.size() && (ts[i].type & Token::MASK_WS))
+            ++i;
+        return i < ts.size();
+    };
+    if (!at_token() || ts[i].type != Token::LP)
+        return false;
+    ++i;
+    if (!at_token() || (ts[i].type != Token::STRING && ts[i].type != Token::WSTRING) ||
+        ts[i].unterminated)
+        return false;
+    name = ts[i].text.substr(1, ts[i].text.size() - 2);
+    ++i;
+    if (!at_token() || ts[i].type != Token::RP)
+        return false;
+    ++i;
+    extra = at_token();
+    return true;
+}
+
+} // namespace
+
+bool handle_pragma(const std::string& raw_arg, Env& env, std::string* restored_name) {
+    // Recognised names: "once", "push_macro" and "pop_macro" (SPEC 3.8);
+    // other pragma names are silently ignored.
     // Comments are whitespace; tokens after "once" are a warning and the
     // pragma still applies, like clang. A document comment is a token.
-    // lex_operand() reports PP29 before the "once" check below, so an
+    // lex_operand() reports PP29 before the name check below, so an
     // unrecognised pragma name still gets it, e.g. {#pragma foo 'x}.
     auto ts = ts_trim(lex_operand(raw_arg, /*remove_comments=*/true));
-    if (ts.empty() || ts[0].type != Token::ANY || ts[0].text != "once")
-        return;
-    if (ts.size() > 1)
-        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
-              "{#pragma " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
-    env.record_pragma_once(env.current_file(), env.current_file_from_disk());
+    if (ts.empty() || ts[0].type != Token::ANY)
+        return false;
+    const std::string context =
+        "{#pragma " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}";
+    if (ts[0].text == "once") {
+        if (ts.size() > 1)
+            ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, context);
+        env.record_pragma_once(env.current_file(), env.current_file_from_disk());
+        return false;
+    }
+    const bool push = ts[0].text == "push_macro";
+    if (!push && ts[0].text != "pop_macro")
+        return false;
+    // Like gcc/clang: a malformed operand is an error and the pragma is
+    // ignored; tokens after the ')' only warn (gcc), as for "once" above.
+    std::string name;
+    bool extra = false;
+    if (!push_pop_macro_name(ts, name, extra)) {
+        ISSUE(INVALID_PUSH_POP_MACRO, context);
+        return false;
+    }
+    if (extra)
+        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, context);
+    // A string that is not an identifier ('1', 'X Y', '') never names a
+    // macro, so there is nothing to save or restore (gcc/clang are silent
+    // too). 'defined' cannot be {#define}d or {#undef}ined (PP02), so it is
+    // never saved or restored either.
+    if (!iec3_is_identifier(name) || name == "defined")
+        return false;
+    if (push) {
+        env.push_macro(name);
+        return false;
+    }
+    // Restoring is silent (no PP35 for a built-in macro, no redefinition
+    // warning). Report a change for -dD only if the definition differs.
+    Macro* before = env.lookup(name);
+    if (!env.pop_macro(name))
+        return false;
+    Macro* after = env.lookup(name);
+    if (before == after || (before && after && before->equal(*after)))
+        return false;
+    if (restored_name)
+        *restored_name = name;
+    return true;
 }
 
 } // namespace jiepp::preprocessor_detail

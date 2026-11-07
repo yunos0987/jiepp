@@ -49,6 +49,39 @@ void Symtab::undef(std::string_view name) {
     }
 }
 
+void Symtab::push_macro(std::string_view name) {
+    std::shared_ptr<Macro> current;
+    if (auto it = sym_index_.find(name); it != sym_index_.end())
+        current = sym_order_[it->second].macro;
+    auto st = push_stacks_.find(name);
+    if (st == push_stacks_.end())
+        st = push_stacks_.emplace(std::string(name), std::vector<std::shared_ptr<Macro>>{}).first;
+    st->second.push_back(std::move(current));
+}
+
+bool Symtab::pop_macro(std::string_view name) {
+    auto st = push_stacks_.find(name);
+    if (st == push_stacks_.end() || st->second.empty())
+        return false;
+    std::shared_ptr<Macro> saved = std::move(st->second.back());
+    st->second.pop_back();
+    auto it = sym_index_.find(name);
+    if (it == sym_index_.end()) {
+        // The name has never been defined, so `saved` is "undefined" too: a
+        // pushed definition had a SymEntry, and entries are never removed.
+        return true;
+    }
+    SymEntry& entry = sym_order_[it->second];
+    if (entry.macro == saved)
+        return true;
+    // Retire (do not destroy) the definition being replaced: see the
+    // lifetime invariant in symtab.hpp (F14). The slot stays mapped (F11).
+    if (entry.macro)
+        retired_.push_back(std::move(entry.macro));
+    entry.macro = std::move(saved);
+    return true;
+}
+
 std::vector<std::pair<std::string, Macro*>> Symtab::symbols() const {
     std::vector<std::pair<std::string, Macro*>> result;
     result.reserve(sym_order_.size());

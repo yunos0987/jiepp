@@ -59,7 +59,11 @@ void handle_max_expansion_depth(const std::string& raw_arg, Env& env);
 void handle_max_if_nesting(const std::string& raw_arg, Env& env);
 void handle_max_blank_lines(const std::string& raw_arg, Env& env);
 void handle_pragma_style(const std::string& raw_arg, Env& env);
-void handle_pragma_once(const std::string& raw_arg, Env& env);
+// {#pragma once}, {#pragma push_macro('NAME')} and {#pragma pop_macro('NAME')}
+// (SPEC 7.6, 3.8); other names are ignored. Returns true iff a pop_macro
+// changed NAME's definition, and then stores NAME in *restored_name (for the
+// -dD echo).
+bool handle_pragma(const std::string& raw_arg, Env& env, std::string* restored_name);
 
 // PP29 (UNTERMINATED_STRING_LITERAL) at the current Issue location if the
 // lexer marked t (Token::unterminated); clears the mark first, so neither

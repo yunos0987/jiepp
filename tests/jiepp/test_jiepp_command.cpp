@@ -1278,6 +1278,60 @@ TEST_F(JieppCommandTest, DDDollarEscapePreserved) {
         << "-dD corrupted dollar-escape: expected {#define DOLLAR $$}";
 }
 
+TEST_F(JieppCommandTest, DDEchoesPopMacroOnlyWhenItChangesTheDefinition) {
+    // -dD: a {#pragma pop_macro} that changes the definition is echoed as the
+    // {#define}/{#undef} it amounts to; a pop that changes nothing and every
+    // push echo nothing (SPECIFICATION.md 3.8).
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "dd_push_pop.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define X 1}\n"
+             "{#pragma push_macro('X')}\n"
+             "{#undef X}\n"
+             "{#define X 2}\n"
+             "{#pragma pop_macro('X')}\n"   // X: 2 -> 1, echoes {#define X 1}
+             "{#pragma push_macro('X')}\n"
+             "{#pragma pop_macro('X')}\n"   // unchanged, echoes nothing
+             "{#pragma push_macro('Y')}\n"
+             "{#define Y 1}\n"
+             "{#pragma pop_macro('Y')}\n"   // Y: 1 -> undefined, echoes {#undef Y}
+             "VAR v: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dd_push_pop.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+    opts.dD = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    auto count = [&](const std::string& needle) {
+        std::size_t n = 0;
+        for (std::size_t pos = 0; (pos = content.find(needle, pos)) != std::string::npos;
+             pos += needle.size())
+            ++n;
+        return n;
+    };
+    // The original {#define X 1} and the echo of the first pop.
+    EXPECT_EQ(2u, count("{#define X 1}")) << content;
+    EXPECT_EQ(1u, count("{#undef X}")) << content;
+    EXPECT_EQ(1u, count("{#define X 2}")) << content;
+    EXPECT_EQ(1u, count("{#define Y 1}")) << content;
+    EXPECT_EQ(1u, count("{#undef Y}")) << content;
+    EXPECT_EQ(0u, count("push_macro")) << content;
+    EXPECT_EQ(0u, count("pop_macro")) << content;
+    // The echo comes after {#define X 2}, in place of the pop.
+    EXPECT_LT(content.find("{#define X 2}"), content.rfind("{#define X 1}")) << content;
+    EXPECT_NE(std::string::npos, content.find("v: INT")) << content;
+}
+
 // ─── F6: -MD / -MMD ─────────────────────────────────────────────────────────
 
 TEST_F(JieppCommandTest, MDWritesDepFileAndOutput) {
