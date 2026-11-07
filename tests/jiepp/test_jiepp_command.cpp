@@ -1426,6 +1426,121 @@ TEST_F(JieppCommandTest, MDDefaultFalse) {
     EXPECT_FALSE(fs::exists(dep_out)) << ".d file created without -MD";
 }
 
+// ─── -MP ────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// A fresh directory with mp_main.iec including mp_a.iec and mp_b.iec, where
+// mp_b.iec includes mp_a.iec again; the current directory is that directory
+// until destruction (relative names keep the expected rules exact). It is
+// actual_dir()/mp (per build tree and per test), so `ctest -j` processes and
+// a concurrent Debug/Release run never share it.
+struct MpTree {
+    fs::path dir;
+    MpTree() {
+        fs::current_path(jiepp_root_dir());
+        dir = fs::absolute(actual_dir() / "mp");
+        fs::remove_all(dir);
+        fs::create_directories(dir);
+        write("mp_main.iec", "{#include 'mp_a.iec'}{#include 'mp_b.iec'}m\n");
+        write("mp_a.iec", "a\n");
+        write("mp_b.iec", "{#include 'mp_a.iec'}b\n");
+        fs::current_path(dir);
+    }
+    ~MpTree() { fs::current_path(jiepp_root_dir()); }
+    void write(const std::string& name, const std::string& text) const {
+        std::ofstream f(dir / name, std::ios::binary);
+        f << text;
+    }
+    std::string read(const std::string& name) const {
+        std::ifstream f(dir / name, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+};
+
+} // namespace
+
+TEST_F(JieppCommandTest, DepMPAddsEmptyRulePerHeader) {
+    // gcc/clang -MP: after the rule, one empty rule per prerequisite except
+    // the main input, in rule order, each once (mp_a.iec is included twice).
+    MpTree t;
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_main.iec"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "x.d";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mp_main.output: \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\n"
+              "mp_a.iec:\nmp_b.iec:\n",
+              t.read("x.d"));
+
+    // Without -MP: the rule only.
+    opts.MP = false;
+    opts.dep_file = "y.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mp_main.output: \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\n", t.read("y.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, DepMPIncludesForceIncludedFile) {
+    // A -include file is a prerequisite other than the main input, so it gets
+    // an empty rule too (gcc/clang).
+    MpTree t;
+    t.write("mp_pre.iec", "p\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_main.iec"};
+    opts.include_filepaths = {"mp_pre.iec"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "x.d";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mp_main.output: \\\n  mp_pre.iec \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\n"
+              "mp_pre.iec:\nmp_a.iec:\nmp_b.iec:\n",
+              t.read("x.d"));
+}
+
+TEST_F(JieppCommandTest, DepMPWithMTKeepsHeaderNames) {
+    // -MT renames the rule's target only.
+    MpTree t;
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_main.iec"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "x.d";
+    opts.dep_target = "tgt";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("tgt: \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\nmp_a.iec:\nmp_b.iec:\n", t.read("x.d"));
+}
+
+TEST_F(JieppCommandTest, DepMPEscapesLikePrerequisites) {
+    MpTree t;
+    t.write("mp_s.iec", "{#include 'mp s.iec'}\n");
+    t.write("mp s.iec", "s\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_s.iec"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "x.d";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mp_s.output: \\\n  mp_s.iec \\\n  mp\\ s.iec\nmp\\ s.iec:\n", t.read("x.d"));
+}
+
+TEST_F(JieppCommandTest, DepMPAloneChangesNothing) {
+    // -MP without -M/-MM/-MD/-MMD: same output, no .d file, no diagnostic.
+    MpTree t;
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_main.iec"};
+    opts.output_filepath = "plain.iec";
+    ASSERT_EQ(0, jiepp_command(opts));
+    opts.MP = true;
+    opts.output_filepath = "mp.iec";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ(t.read("plain.iec"), t.read("mp.iec"));
+    EXPECT_FALSE(fs::exists(t.dir / "mp_main.d"));
+    EXPECT_FALSE(fs::exists(t.dir / "mp.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
 // ─── F3: __VA_OPT__ ─────────────────────────────────────────────────────────
 
 TEST_F(JieppCommandTest, VaOptBasicEmpty) {

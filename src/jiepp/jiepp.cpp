@@ -90,12 +90,16 @@ std::string format_dep_target(const JieppOptions& opts) {
 // Write Makefile-style dependency rules. `target_text` must already be in
 // its final, rule-ready form (see format_dep_target()): verbatim for a
 // user-supplied -MT value, or pre-escaped for an auto-derived target. It is
-// written as-is here, never re-escaped.
-void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostream& output, const Env& env) {
+// written as-is here, never re-escaped. With `phony` (-MP), an empty rule
+// follows for each prerequisite except the main input, whose resolved path is
+// `main_resolved` (empty when the main input is stdin), like gcc/clang -MP.
+void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostream& output, const Env& env,
+                     bool phony, const std::string& main_resolved) {
     // Collect dependencies with deduplication by resolved_path
     // Track resolved paths we've already seen (only first display_path is output)
     std::unordered_set<std::string> seen_resolved;
     std::vector<std::string> deps;
+    std::vector<std::string> phony_targets;
 
     for (const auto& dep : env.dependencies()) {
         // Skip system includes if -MM mode
@@ -105,6 +109,8 @@ void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostr
         if (seen_resolved.find(dep.resolved_path) == seen_resolved.end()) {
             seen_resolved.insert(dep.resolved_path);
             deps.push_back(escape_make_path(dep.display_path));
+            if (phony && dep.resolved_path != main_resolved)
+                phony_targets.push_back(deps.back());
         }
     }
 
@@ -113,6 +119,8 @@ void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostr
     for (const auto& d : deps)
         output << " \\\n  " << d;
     output << "\n";
+    for (const auto& p : phony_targets)
+        output << p << ":\n";
 }
 
 // E0/E1: codes that still stop processing outright in continue mode --
@@ -418,6 +426,9 @@ int jiepp_command(const JieppOptions& opts)
         // where this guard's scope ends
         // does not change behavior there either.
         bool aborted = false;
+        // Index in env.dependencies() of the main input file's entry (none
+        // for stdin); see write_dep_rules().
+        std::size_t main_dep_index = static_cast<std::size_t>(-1);
         {
             Issue::ContinueMode continue_guard(jiepp_continue_abort_codes());
             try {
@@ -465,6 +476,9 @@ int jiepp_command(const JieppOptions& opts)
                 } else {
                     // Exactly one input file here: more than one was already
                     // rejected (PP13) before this point.
+                    // -MP leaves the main input out of the empty rules: it is
+                    // the dependency expand() records first for this file.
+                    main_dep_index = env.dependencies().size();
                     expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env, dispath);
                 }
             } catch (const Issue::Exception&) {
@@ -540,6 +554,9 @@ int jiepp_command(const JieppOptions& opts)
         }
 
         bool dep_has_separate_file = dep && effective_dep_file.has_value() && !effective_dep_file->empty();
+        const std::string main_dep_resolved = main_dep_index < env.dependencies().size()
+                                                  ? env.dependencies()[main_dep_index].resolved_path
+                                                  : std::string();
 
         // E4b: the dependency-file write and the -o open and write are
         // wrapped in their own try -- gcc has already flushed its
@@ -566,7 +583,7 @@ int jiepp_command(const JieppOptions& opts)
                     ISSUE(FILE_ERROR, *effective_dep_file);
                 if (dep_output.is_open())
                     dep_file_opened = *effective_dep_file;
-                write_dep_rules(dep_target_text, opts.dep_mode, dep_output, env);
+                write_dep_rules(dep_target_text, opts.dep_mode, dep_output, env, opts.MP, main_dep_resolved);
                 // A8: close() flushes; a failed write leaves badbit and a
                 // failed flush or close sets failbit.
                 dep_output.close();
@@ -598,7 +615,8 @@ int jiepp_command(const JieppOptions& opts)
 
                 if (need_dep_to_stream) {
                     // No dep file: write dep rules to main output stream (-M / -MM without -MF)
-                    write_dep_rules(format_dep_target(opts), opts.dep_mode, *output_stream, env);
+                    write_dep_rules(format_dep_target(opts), opts.dep_mode, *output_stream, env, opts.MP,
+                                    main_dep_resolved);
                 }
 
                 // A8: check that everything got out. -o is closed here (not

@@ -100,6 +100,7 @@ void display_help_and_exit(int exit_code = 0) {
         "  -MMD                     Like -MD but exclude system includes\n"
         "  -MF FILE                 Write dependency rules to file\n"
         "  -MT TARGET               Set dependency target name\n"
+        "  -MP                      Add an empty rule for each header (with -M/-MM/-MD/-MMD)\n"
         "  --max-include-depth N    Maximum include depth (default: 100)\n"
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
         "  --max-expansion-steps N  Maximum macro expansion work in steps (default: 16777216; 0 = no limit)\n"
@@ -274,6 +275,11 @@ JieppOptions parse_args(int argc, char* argv[]) {
 
         if (arg == "-Werror=undef") {
             opts.werror_undef = true;
+            ++i; continue;
+        }
+
+        if (arg == "-MP") {
+            opts.MP = true;
             ++i; continue;
         }
 

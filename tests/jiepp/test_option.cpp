@@ -734,6 +734,24 @@ TEST_F(OptionTest, ParseArgsMDFlagDefault) {
     auto opts = parse_args(1, argv);
     EXPECT_FALSE(opts.MD);
     EXPECT_FALSE(opts.MMD);
+    EXPECT_FALSE(opts.MP);
+}
+
+TEST_F(OptionTest, ParseArgsMPFlag) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-MM"), const_cast<char*>("-MP")};
+    auto opts = parse_args(3, argv);
+    EXPECT_TRUE(opts.MP);
+    EXPECT_EQ(opts.dep_mode, DepMode::USER);
+}
+
+TEST_F(OptionTest, ParseArgsMPAloneIsAccepted) {
+    // -MP without -M/-MM/-MD/-MMD is accepted (no PP70) and selects no
+    // dependency output by itself, like -MT/-MF alone.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-MP")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.MP);
+    EXPECT_EQ(opts.dep_mode, DepMode::NONE);
+    EXPECT_TRUE(empty());
 }
 
 TEST_F(OptionTest, CLICodeSeverityClassification) {

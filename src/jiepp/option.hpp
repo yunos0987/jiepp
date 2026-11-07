@@ -28,6 +28,7 @@ struct JieppOptions {
     bool dD = false;                // -dD: emit {#define}/{#undef} lines inline
     bool MD = false;                // -MD:  dep side-effect + normal output (ALL deps)
     bool MMD = false;               // -MMD: dep side-effect + normal output (USER deps only)
+    bool MP = false;                // -MP: an empty rule per prerequisite except the main input
     bool silent = false;
     bool suppress_warnings = false;  // -w: suppress warning output
     bool werror = false;             // -Werror: promote warnings to errors
