@@ -44,9 +44,13 @@ Token read_block_comment(const std::string& text, std::size_t& pos,
         ++pos;
     }
 
-    report_lex_issue(lineno, opts, [&] {
-        ISSUE(UNCLOSED_COMMENT, body);
-    });
+    if (opts.found_unclosed_comment)
+        *opts.found_unclosed_comment = true;
+    if (opts.report_unclosed_comment) {
+        report_lex_issue(lineno, opts, [&] {
+            ISSUE(UNCLOSED_COMMENT, body);
+        });
+    }
     return Token::create(type, std::move(body), lines_in_comment);
 }
 

@@ -426,17 +426,18 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
     std::string expanded_body;
     int body_lines = 0;
     using jiepp::preprocessor_detail::OperandKind;
-    // PP29 for an unterminated literal in the body: a pragma in a macro
-    // argument is expanded here once when the argument is pre-expanded and
-    // again on every rescan of the substituted text (one per use of the
-    // parameter). The rewritten text still holds the same literal, so the
-    // first pass reports it and marks `out`; a later pass over that text
-    // (pragma_unterminated_reported) only lexes it silently.
+    // PP29 for an unterminated literal and PP20 for an unclosed comment in
+    // the body: a pragma in a macro argument is expanded here once when the
+    // argument is pre-expanded and again on every rescan of the substituted
+    // text (one per use of the parameter). The rewritten text still holds
+    // the same literal or comment, so the first pass reports it and marks
+    // `out`; a later pass over that text (pragma_unterminated_reported) only
+    // lexes it silently.
     bool found_unterminated = false;
     for (const auto& et : jiepp::preprocessor_detail::expand_operand_tokens(
              body, env, !t.pragma_unterminated_reported,
              t.relexed_pragma ? OperandKind::nested_pragma_body : OperandKind::pragma_body,
-             &found_unterminated)) {
+             &found_unterminated, !t.pragma_unterminated_reported)) {
         expanded_body += et.text;
         body_lines += et.num_of_lines;
     }

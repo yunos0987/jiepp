@@ -265,12 +265,15 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
 }
 
 std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
-                              bool report_nested_brace) {
+                              bool report_nested_brace, bool report_unclosed_comment,
+                              bool* found_unclosed_comment) {
     // The line counter only feeds diagnostics, which at_current_location
     // reports at the current Issue location instead; 1 is never shown.
     return lex_text(text, remove_comments, 1,
                     LexOptions{.report_nested_brace = report_nested_brace,
-                               .at_current_location = true},
+                               .at_current_location = true,
+                               .report_unclosed_comment = report_unclosed_comment,
+                               .found_unclosed_comment = found_unclosed_comment},
                     /*strip_bom=*/false);
 }
 

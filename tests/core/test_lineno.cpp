@@ -402,8 +402,9 @@ TEST_F(RobustnessTestRelexLineno, T5_FunctionMacroPragmaAtClosingParenLine) {
 }
 
 TEST_F(RobustnessTestRelexLineno, T6_PragmaInMacroArgumentAtClosingParenLine) {
+    // Once, at the closing ')' line: the rescan of the substituted argument
+    // does not report the comment again.
     EXPECT_EQ((std::vector<std::string>{
-                  kLoc + "5.0: error: PP20: Unclosed comment; '(* arg '",
                   kLoc + "5.0: error: PP20: Unclosed comment; '(* arg '",
               }),
               relex_diags(*this, "{#define F(x) x}\n\nF(\n{ (* arg }\n)\n"));

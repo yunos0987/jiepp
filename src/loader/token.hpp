@@ -44,8 +44,9 @@ struct Token {
     bool        relexed_pragma = false;
     // True for a PRAGMA token whose rewritten text (expand_pragma_token())
     // came from a pass that already reported PP29 for an unterminated literal
-    // in its body: a later rescan of that text (macro argument used in the
-    // body) lexes the same literal again and must not report it again.
+    // or PP20 for an unclosed comment in its body: a later rescan of that
+    // text (macro argument used in the body) lexes the same literal or
+    // comment again and must not report it again.
     // Cleared wherever the text is rewritten again (glue_tokens()). Reuses
     // the padding before `text`; excluded from operator== like the other
     // bookkeeping flags.

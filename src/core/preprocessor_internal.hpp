@@ -76,11 +76,14 @@ void report_unterminated_literal(Token& t);
 // so its own diagnostics (PP20/PP22/PP23) are also reported at the current
 // Issue location; report_nested_brace is passed to it.
 // found_unterminated, if not null, is set to true when the text has an
-// unterminated literal (whether or not it was reported); never set to false.
+// unterminated literal or an unclosed comment (whether or not it was
+// reported); never set to false. report_unclosed_comment == false lexes an
+// unclosed comment without PP20 (the rescan of an already reported pragma).
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
                                bool report_unterminated = true,
                                bool report_nested_brace = true,
-                               bool* found_unterminated = nullptr);
+                               bool* found_unterminated = nullptr,
+                               bool report_unclosed_comment = true);
 
 // What expand_operand_tokens() lexes (A2 / S-02):
 // - operand: a directive operand or message text.
@@ -103,7 +106,8 @@ enum class OperandKind { operand, pragma_body, nested_pragma_body };
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
                                          bool report_unterminated = true,
                                          OperandKind kind = OperandKind::operand,
-                                         bool* found_unterminated = nullptr);
+                                         bool* found_unterminated = nullptr,
+                                         bool report_unclosed_comment = true);
 // Concatenated text of expand_operand_tokens().
 std::string expand_operand_text(const std::string& text, Env& env,
                                 bool report_unterminated = true);

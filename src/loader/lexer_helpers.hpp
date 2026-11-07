@@ -33,9 +33,16 @@ int consume_one_nl(const std::string& s, std::size_t& pos);
 // at_current_location: true for a re-lex (iec3_relex()): the text's
 //   newlines are not source lines, so a diagnostic is reported at the
 //   current Issue location instead of at the lexer's own line counter.
+// report_unclosed_comment: whether an unclosed comment is reported (PP20).
+//   false only for the rescan of a pragma body whose first pass already
+//   reported it (Token::pragma_unterminated_reported).
+// found_unclosed_comment: if not null, set to true when an unclosed comment
+//   is met (whether or not it is reported); never set to false.
 struct LexOptions {
     bool report_nested_brace = true;
     bool at_current_location = false;
+    bool report_unclosed_comment = true;
+    bool* found_unclosed_comment = nullptr;
 };
 
 // Runs fn, which raises a lexer diagnostic: at the lexer's line `lineno` of

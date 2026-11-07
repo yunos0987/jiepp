@@ -459,6 +459,47 @@ TEST_F(UnterminatedStringTest, PragmaDirectiveInArgumentReportedOnce) {
     EXPECT_EQ(Issue::Code::UNTERMINATED_STRING_LITERAL, cs[0]);
 }
 
+// PP20 (unclosed comment) in a bare pragma in a macro argument follows the
+// same rule as PP29: the first pass reports it, a rescan does not.
+TEST_F(UnterminatedStringTest, UnclosedCommentInPragmaArgumentReportedOnce) {
+    Issue::ContinueMode guard({});
+    const std::string out = pp("{#define G(x) [x][x]}\nG(\n{ y (* abc }\n)\n");
+    EXPECT_NE(std::string::npos, out.find("[(*{y (* abc }*)][(*{y (* abc }*)]")) << out;
+    EXPECT_EQ((std::vector<std::string>{
+                  "<unknown location>:4.0: error: PP20: Unclosed comment; '(* abc '"}),
+              messages());
+}
+
+TEST_F(UnterminatedStringTest, UnclosedCommentInPragmaArgumentUsedThreeTimesReportedOnce) {
+    Issue::ContinueMode guard({});
+    (void)pp("{#define H(x) x x x}\nH(\n{ x (* abc }\n)\n");
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::UNCLOSED_COMMENT, cs[0]);
+}
+
+// Both in one argument: each is reported once.
+TEST_F(UnterminatedStringTest, LiteralAndCommentInPragmaArgumentEachReportedOnce) {
+    Issue::ContinueMode guard({});
+    (void)pp("{#define G(x) [x][x]}\nG(\n{ x 'abc }\n{ y (* q }\n)\n");
+    auto cs = codes();
+    ASSERT_EQ(2u, cs.size());
+    EXPECT_EQ(Issue::Code::UNTERMINATED_STRING_LITERAL, cs[0]);
+    EXPECT_EQ(Issue::Code::UNCLOSED_COMMENT, cs[1]);
+}
+
+// A pragma that is not rescanned (outside a macro argument) still reports
+// the comment, and a macro body pragma reports it at each expansion (a
+// fresh pragma each time, as for PP29).
+TEST_F(UnterminatedStringTest, UnclosedCommentInPragmaOutsideArgumentStillReported) {
+    Issue::ContinueMode guard({});
+    (void)pp("{ a (* x }\n{#define P ${ (* y $}}\nP P\n");
+    auto cs = codes();
+    ASSERT_EQ(3u, cs.size());
+    for (auto c : cs)
+        EXPECT_EQ(Issue::Code::UNCLOSED_COMMENT, c);
+}
+
 // ---- PP29: suppression ----
 
 TEST_F(UnterminatedStringTest, IgnorePP29SuppressesLaterLiterals) {

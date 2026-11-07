@@ -30,9 +30,14 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
 // was itself produced by re-lexing a pragma body (Token::relexed_pragma):
 // a raw '{' inside a nested pragma/directive body is then not reported
 // (PP22), since the enclosing pass already reported it. Every other
-// diagnostic is reported as usual.
+// diagnostic is reported as usual, except that report_unclosed_comment ==
+// false skips PP20 (unclosed comment), for the rescan of a pragma body that
+// already reported it. found_unclosed_comment, if not null, is set to true
+// when the text has an unclosed comment (reported or not); never set to false.
 std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
-                              bool report_nested_brace = true);
+                              bool report_nested_brace = true,
+                              bool report_unclosed_comment = true,
+                              bool* found_unclosed_comment = nullptr);
 
 // True iff `s` is exactly one identifier as tokenize() lexes it:
 // [A-Za-z_][A-Za-z0-9_]* (ASCII only, like IEC 61131-3 identifiers).
