@@ -217,6 +217,19 @@ TEST_F(HasIncludeTest, HasIncludeInsideAssert) {
     EXPECT_NE(std::string::npos, ms[0].find("PP91: 'missing'")) << ms[0];
 }
 
+// A macro-named operand whose ')' is missing consumes the rest of the
+// condition as the text of the malformed call, unexpanded: the PP52 text
+// shows M, not its value, and the nested call is not read on its own.
+TEST_F(HasIncludeTest, MacroOperandWithoutCloseParenConsumesTheRest) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("n", pp_hi("{#define M 'existing.iec'}{#if __has_include(M __has_include(M 1}y{#else}n{#endif}"));
+    auto ms = messages();
+    ASSERT_EQ(1u, ms.size());
+    EXPECT_NE(std::string::npos,
+              ms[0].find("PP52: Invalid expression; '__has_include(M __has_include(M 1'"))
+        << ms[0];
+}
+
 // H4: regression -- __has_include_next is not implemented, so it reads as
 // undefined and never appears in a macro dump.
 TEST_F(HasIncludeTest, HasIncludeNextNotImplemented) {
@@ -776,6 +789,26 @@ TEST_F(HasIncludeTest, NestedMalformedCalls_TimingGuard) {
             << s.name;
         EXPECT_LT(secs, 3.0) << s.name << " n=" << s.n << " took " << secs << "s";
     }
+}
+
+// A macro-named operand whose ')' is missing: the search for it reads the
+// rest of the condition once and consumes it as the text of the malformed
+// call, so repeated calls stay linear. Pre-fix: every call searched the rest
+// again; with the default step limit n=4000 already gave PP64 instead of PP52.
+TEST_F(HasIncludeTest, MacroOperandWithoutCloseParen_TimingGuard) {
+    constexpr int kN = 20000;
+    const std::string src =
+        "{#define M 'existing.iec'}{#if " + hi_repeat("__has_include(M ", kN) + "1}y{#else}n{#endif}";
+    Issue::ContinueMode guard({});
+    auto t0 = std::chrono::steady_clock::now();
+    std::string out = pp_hi(src);
+    double secs = hi_seconds(t0);
+    EXPECT_EQ("n", out);
+    auto ms = messages();
+    ASSERT_EQ(1u, ms.size());
+    EXPECT_NE(std::string::npos, ms[0].find("error: PP52: Invalid expression; '__has_include(M "))
+        << ms[0].substr(0, 80);
+    EXPECT_LT(secs, 3.0) << "n=" << kN << " took " << secs << "s";
 }
 
 // '<' operands in an {#if} whose '>' is far away: many flat calls with the

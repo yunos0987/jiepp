@@ -578,8 +578,9 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
 // one is passed through, so the next token is read by the main loop. A
 // header name consumes every token it reads, the call resolved or not, so
 // no token is read by two header names; the same holds for the operand of a
-// macro-expanded call once its ')' is found. A search for a ')' that is not
-// there reads to the end of `work` and is charged to the work budget (PP64).
+// macro-expanded call once its ')' is found, and when the ')' is not there
+// the search reads to the end of `work` once and consumes everything it read
+// as the text of the malformed call.
 // In a sandbox build the operator is a filesystem probe: its first use in a
 // condition is PP62 (sandbox_has_include_reported()), and the call is left
 // as text.
@@ -694,8 +695,14 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
     std::size_t close = n - 1;
     for (int depth = 0;; --close) {
         if (close == 0) {
-            env.charge_expansion_steps(n);
-            return false;
+            // No ')' in the rest of the condition: the call is malformed
+            // whatever follows (the evaluator reports PP52 for the text), so
+            // the rest is consumed as its text, unexpanded, instead of being
+            // searched again by every later __has_include (linear time).
+            std::vector<Token> head = take_head(0);
+            std::vector<Token> none;
+            pass(head, none);
+            return true;
         }
         const int ty = work[close - 1].type;
         if (ty == Token::RP && depth == 0)
