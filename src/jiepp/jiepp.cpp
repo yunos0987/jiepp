@@ -14,6 +14,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -326,13 +328,39 @@ int jiepp_command(const JieppOptions& opts)
         // --error-limit: the CLI's default (1000, or 100 in a sandbox build)
         // applies when the option is absent; the library's default is 0.
         Issue::error_limit_ = opts.error_limit.value_or(DEFAULT_ERROR_LIMIT);
-        // -Wundef (PP54) is off by default; enabled here, before -D/-U, like
-        // the options above.
-        if (opts.warn_undef)
-            Issue::enable(Issue::Code::UNDEFINED_IDENTIFIER);
-        // -Werror=undef: -Wundef, with PP54 reported as an error.
-        if (opts.werror_undef)
-            Issue::add_werror(Issue::Code::UNDEFINED_IDENTIFIER);
+        // -W<name> / -Wno-<name> / -Werror=<name> / -Wno-error=<name>
+        // (SPEC 13), applied here, before -D/-U, like the options above.
+        // opts.warnings is in command-line order; folding it front to back
+        // gives each code its last on/off option (-W, -Wno-, -Werror=) and,
+        // separately, its last error option (-Werror=, -Wno-error=), as in
+        // gcc/clang. -Wno-error=<name> also exempts the code from -Werror,
+        // whichever comes first (also gcc/clang). A winning -Wno-<name> is
+        // {#ignore <code>}, which happen() checks before promotion, so it
+        // hides a -Werror=<name> that came earlier.
+        struct WarningState {
+            std::optional<bool> on;
+            std::optional<bool> error;
+        };
+        std::map<Issue::Code, WarningState> warning_states;
+        for (const auto& w : opts.warnings) {
+            WarningState& st = warning_states[w.code];
+            switch (w.action) {
+            case WarningAction::ENABLE:  st.on = true; break;
+            case WarningAction::DISABLE: st.on = false; break;
+            case WarningAction::PROMOTE: st.on = true; st.error = true; break;
+            case WarningAction::DEMOTE:  st.error = false; break;
+            }
+        }
+        for (const auto& [code, st] : warning_states) {
+            if (st.on == true)
+                Issue::enable(code);
+            else if (st.on == false)
+                Issue::add_ignoring(code);
+            if (st.error == true)
+                Issue::add_werror(code);
+            else if (st.error == false)
+                Issue::remove_werror(code);
+        }
 
         std::vector<std::pair<std::string,std::string>> predefine_macros;
         for (const auto& dm : opts.define_macros)

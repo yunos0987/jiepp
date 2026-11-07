@@ -3,6 +3,7 @@
 #include "../env/param_constants.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -67,6 +68,45 @@ void require_value(int i, int argc, const std::string& opt_name) {
         ISSUE(MISSING_OPTION_VALUE, opt_name);
 }
 
+// "PP" and two digits, "PP" in either case: the shape of a code name in
+// -W<name> and friends. {#ignore}'s operand has the same shape but upper
+// case only (handle_ignore(), directive_handlers.cpp).
+bool has_code_shape(const std::string& name) {
+    return name.size() == 4 &&
+        (name[0] == 'P' || name[0] == 'p') && (name[1] == 'P' || name[1] == 'p') &&
+        std::isdigit(static_cast<unsigned char>(name[2])) &&
+        std::isdigit(static_cast<unsigned char>(name[3]));
+}
+
+// <name> of -W<name> / -Wno-<name> / -Werror=<name> / -Wno-error=<name>
+// (SPEC 13): the alias "undef" (PP54), or a code name (has_code_shape())
+// whose code has WARNING severity. Anything else -- an ERROR/SEVERE code,
+// an unassigned number (severity_of() reports it as SEVERE), any other
+// text -- is nullopt.
+std::optional<Issue::Code> warning_code(const std::string& name) {
+    if (name == "undef")
+        return Issue::Code::UNDEFINED_IDENTIFIER;
+    if (!has_code_shape(name))
+        return std::nullopt;
+    const auto code = static_cast<Issue::Code>(
+        static_cast<unsigned int>((name[2] - '0') * 10 + (name[3] - '0')));
+    if (!Issue::is_warning(code))
+        return std::nullopt;
+    return code;
+}
+
+// Appends {action, <name>'s code} to opts.warnings, where <name> is `arg`
+// after its `prefix_len`-character prefix; an invalid <name> is PP71 with
+// `arg` as typed.
+void add_warning_option(JieppOptions& opts, const std::string& arg,
+                        std::size_t prefix_len, WarningAction action) {
+    if (auto code = warning_code(arg.substr(prefix_len))) {
+        opts.warnings.push_back({action, *code});
+        return;
+    }
+    ISSUE(INVALID_OPTION_VALUE, arg + ": must be a warning code (PPnn) or undef");
+}
+
 // A8: --help and --version exit with `exit_code` only when their text got
 // out: std::cout's state after a flush, then fflush(stdout) and
 // ferror(stdout) of the C stream it is synced with. Otherwise exit 1
@@ -91,9 +131,14 @@ void display_help_and_exit(int exit_code = 0) {
         "  -I PATH                  Add syspath\n"
         "  -include FILE            Force-include file before input\n"
         "  -w                       Suppress warnings\n"
-        "  -Werror                  Promote warnings to errors\n"
+        "  -Werror                  Promote warnings to errors (-Wno-error: cancel)\n"
+        "  -W<name>                 Enable warning <name> (only PP54 is off by default)\n"
+        "  -Wno-<name>              Do not report warning <name>\n"
+        "  -Werror=<name>           Enable warning <name> and report it as an error\n"
+        "  -Wno-error=<name>        Keep warning <name> a warning under -Werror / -Werror=<name>\n"
+        "                           <name>: a warning code (PP35, pp35, ...) or undef (= PP54);\n"
+        "                           for the same <name> the last option wins\n"
         "  -Wundef                  Warn when an undefined identifier in a condition evaluates to 0\n"
-        "  -Werror=undef            Like -Wundef, but report it as an error\n"
         "  -M                       Output Makefile dependency rules\n"
         "  -MM                      Like -M but exclude system includes\n"
         "  -MD                      Write dependency rules to .d file (keep normal output)\n"
@@ -268,13 +313,33 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
-        if (arg == "-Wundef") {
-            opts.warn_undef = true;
+        if (arg == "-Wno-error") {
+            opts.werror = false;
             ++i; continue;
         }
 
-        if (arg == "-Werror=undef") {
-            opts.werror_undef = true;
+        // Per-code warning options (SPEC 13), kept in order in
+        // opts.warnings. After -Wno-error=, -Werror= and -Wno- any <name>
+        // that warning_code() rejects is PP71. -W<name> is taken only for
+        // "undef" or a code-shaped <name>, so other -W... spellings (-Wall,
+        // -Wmacro-redefined, ...) stay unknown options (PP70).
+        if (arg.starts_with("-Wno-error=")) {
+            add_warning_option(opts, arg, 11, WarningAction::DEMOTE);
+            ++i; continue;
+        }
+
+        if (arg.starts_with("-Werror=")) {
+            add_warning_option(opts, arg, 8, WarningAction::PROMOTE);
+            ++i; continue;
+        }
+
+        if (arg.starts_with("-Wno-")) {
+            add_warning_option(opts, arg, 5, WarningAction::DISABLE);
+            ++i; continue;
+        }
+
+        if (arg.starts_with("-W") && (arg.substr(2) == "undef" || has_code_shape(arg.substr(2)))) {
+            add_warning_option(opts, arg, 2, WarningAction::ENABLE);
             ++i; continue;
         }
 

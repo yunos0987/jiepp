@@ -1,9 +1,26 @@
 #pragma once
+#include "../env/issue.hpp"
+
 #include <optional>
 #include <string>
 #include <vector>
 
 enum class DepMode { NONE, ALL, USER };
+
+// One per-code warning option (SPEC 13), kept in command-line order in
+// JieppOptions::warnings. jiepp_command() folds the list front to back, so
+// for the same code a later option wins.
+enum class WarningAction {
+    ENABLE,    // -W<name>: turn the warning on (no effect on a default-on code by itself)
+    DISABLE,   // -Wno-<name>: do not report it ({#ignore <code>} from the start)
+    PROMOTE,   // -Werror=<name>: turn it on and report it as an error
+    DEMOTE,    // -Wno-error=<name>: keep it a warning under -Werror / -Werror=<name>
+};
+
+struct WarningOption {
+    WarningAction action;
+    Issue::Code code;   // a WARNING-severity code; the alias "undef" is PP54
+};
 
 struct JieppOptions {
     std::vector<std::string> input_filepaths;
@@ -31,9 +48,8 @@ struct JieppOptions {
     bool MP = false;                // -MP: an empty rule per prerequisite except the main input
     bool silent = false;
     bool suppress_warnings = false;  // -w: suppress warning output
-    bool werror = false;             // -Werror: promote warnings to errors
-    bool warn_undef = false;         // -Wundef: warn (PP54) on an undefined identifier in a condition
-    bool werror_undef = false;       // -Werror=undef: -Wundef, with PP54 reported as an error
+    bool werror = false;             // -Werror / -Wno-error: promote warnings to errors (last one wins)
+    std::vector<WarningOption> warnings;   // -W<name> / -Wno-<name> / -Werror=<name> / -Wno-error=<name>, in order
     DepMode dep_mode = DepMode::NONE;           // -M / -MM
     std::optional<std::string> dep_file;        // -MF: dependency output file
     std::optional<std::string> dep_target;      // -MT: dependency target name

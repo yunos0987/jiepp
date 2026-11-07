@@ -793,28 +793,96 @@ TEST_F(OptionTest, ParseArgsUnknownOptionMessageFormat) {
 
 TEST_F(OptionTest, ParsesWundef) {
     char* plain[] = {const_cast<char*>("jiepp")};
-    EXPECT_FALSE(parse_args(1, plain).warn_undef);
+    EXPECT_TRUE(parse_args(1, plain).warnings.empty());
 
     char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Wundef")};
     auto opts = parse_args(2, argv);
-    EXPECT_TRUE(opts.warn_undef);
+    ASSERT_EQ(1u, opts.warnings.size());
+    EXPECT_EQ(WarningAction::ENABLE, opts.warnings[0].action);
+    EXPECT_EQ(Issue::Code::UNDEFINED_IDENTIFIER, opts.warnings[0].code);
     EXPECT_FALSE(opts.werror);
 }
 
 TEST_F(OptionTest, ParsesWerrorUndef) {
     char* plain[] = {const_cast<char*>("jiepp")};
-    EXPECT_FALSE(parse_args(1, plain).werror_undef);
+    EXPECT_TRUE(parse_args(1, plain).warnings.empty());
 
     char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Werror=undef")};
     auto opts = parse_args(2, argv);
-    EXPECT_TRUE(opts.werror_undef);
+    ASSERT_EQ(1u, opts.warnings.size());
+    EXPECT_EQ(WarningAction::PROMOTE, opts.warnings[0].action);
+    EXPECT_EQ(Issue::Code::UNDEFINED_IDENTIFIER, opts.warnings[0].code);
     EXPECT_FALSE(opts.werror);
-    EXPECT_FALSE(opts.warn_undef);
 
-    // No other -Werror= / -Wno- form is accepted.
-    for (const char* bad : {"-Werror=foo", "-Wno-undef", "-Wno-error=undef"}) {
-        char* argv2[] = {const_cast<char*>("jiepp"), const_cast<char*>(bad)};
-        EXPECT_THROW(parse_args(2, argv2), Issue::Exception) << bad;
+    // A -Werror= name that is neither a warning code nor undef is PP71.
+    char* argv2[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Werror=foo")};
+    EXPECT_THROW(parse_args(2, argv2), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_OPTION_VALUE, code());
+}
+
+// -W<name> / -Wno-<name> / -Werror=<name> / -Wno-error=<name> (SPEC 13):
+// kept in command-line order; <name> is a warning code in either case or
+// undef (PP54).
+TEST_F(OptionTest, ParsesWarningOptionsInOrder) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("-Wno-PP35"), const_cast<char*>("-Werror=pp49"),
+                    const_cast<char*>("-Wno-error=undef"), const_cast<char*>("-WPP54"),
+                    const_cast<char*>("-Wno-pp92"), const_cast<char*>("-Wno-error=PP28")};
+    auto opts = parse_args(7, argv);
+    ASSERT_EQ(6u, opts.warnings.size());
+    EXPECT_EQ(WarningAction::DISABLE, opts.warnings[0].action);
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, opts.warnings[0].code);
+    EXPECT_EQ(WarningAction::PROMOTE, opts.warnings[1].action);
+    EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, opts.warnings[1].code);
+    EXPECT_EQ(WarningAction::DEMOTE, opts.warnings[2].action);
+    EXPECT_EQ(Issue::Code::UNDEFINED_IDENTIFIER, opts.warnings[2].code);
+    EXPECT_EQ(WarningAction::ENABLE, opts.warnings[3].action);
+    EXPECT_EQ(Issue::Code::UNDEFINED_IDENTIFIER, opts.warnings[3].code);
+    EXPECT_EQ(WarningAction::DISABLE, opts.warnings[4].action);
+    EXPECT_EQ(Issue::Code::WARNING_MESSAGE, opts.warnings[4].code);
+    EXPECT_EQ(WarningAction::DEMOTE, opts.warnings[5].action);
+    EXPECT_EQ(Issue::Code::WHITESPACE_BEFORE_DIRECTIVE, opts.warnings[5].code);
+    EXPECT_FALSE(opts.werror);
+    EXPECT_TRUE(empty());
+}
+
+// -Wno-error (no name) cancels -Werror; the last of the two wins.
+TEST_F(OptionTest, ParsesWnoErrorLastWins) {
+    char* argv1[] = {const_cast<char*>("jiepp"),
+                     const_cast<char*>("-Werror"), const_cast<char*>("-Wno-error")};
+    auto opts1 = parse_args(3, argv1);
+    EXPECT_FALSE(opts1.werror);
+    EXPECT_TRUE(opts1.warnings.empty());
+
+    char* argv2[] = {const_cast<char*>("jiepp"),
+                     const_cast<char*>("-Wno-error"), const_cast<char*>("-Werror")};
+    EXPECT_TRUE(parse_args(3, argv2).werror);
+}
+
+// A name that is not a WARNING code or undef is PP71 with the option as
+// typed: an ERROR code, an unassigned code, a bare number, other text.
+TEST_F(OptionTest, WarningOptionInvalidNameIsPP71) {
+    for (const char* bad : {"-Wno-PP11", "-Wno-PP99", "-Wno-35", "-Wno-foo", "-Wno-",
+                            "-Werror=PP70", "-Werror=", "-Wno-error=PP01",
+                            "-Wno-error=foo", "-WPP11", "-Wpp99"}) {
+        Issue::initialize(output());
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(bad)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception) << bad;
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size()) << bad;
+        EXPECT_EQ(Issue::Code::INVALID_OPTION_VALUE, PlainTextMessage::parse_code(msgs[0])) << bad;
+        EXPECT_EQ(0u, msgs[0].find("jiepp: error: PP71: ")) << msgs[0];
+        EXPECT_NE(std::string::npos, msgs[0].find(std::string("'") + bad + ":")) << msgs[0];
+    }
+}
+
+// -W spellings other than -W<code> / -Wundef stay unknown options (PP70):
+// no -Wall / -Wextra and no clang-only names.
+TEST_F(OptionTest, OtherWOptionsStayUnknown) {
+    for (const char* bad : {"-Wall", "-Wextra", "-Wmacro-redefined", "-W", "-WPP", "-Wundefx"}) {
+        Issue::initialize(output());
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(bad)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception) << bad;
         EXPECT_EQ(Issue::Code::UNKNOWN_OPTION, code()) << bad;
     }
 }
