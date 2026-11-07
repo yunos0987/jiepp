@@ -376,17 +376,29 @@ TEST_F(OperandFormTest, HasIncludeForms) {
     };
     for (const char* cond : yes) {
         check({{std::string("{#if ") + cond + "}Y{#else}N{#endif}", "Y", {}},
-               {std::string("__assert(") + cond + ", m)A", "A", {}}});
+               {std::string("__assert(") + cond + ", m)A", "A", {}},
+               {std::string("__counter_set(c, ") + cond + ")__counter_peek(c)", "1", {}}});
     }
-    for (const char* cond : {"__has_include('nope.iec')", "__has_include(<f.iec>)"})
-        check({{std::string("{#if ") + cond + "}Y{#else}N{#endif}", "N", {}}});
+    for (const char* cond : {"__has_include('nope.iec')", "__has_include(<f.iec>)"}) {
+        check({{std::string("{#if ") + cond + "}Y{#else}N{#endif}", "N", {}},
+               {std::string("__counter_set(c, ") + cond + ")__counter_peek(c)", "0", {}}});
+    }
 }
 
-TEST_F(OperandFormTest, HasIncludeOperandIsNotMacroExpanded) {
-    const std::string pp52 = kAt + "error: PP52: Invalid expression; '__has_include('f.iec')'";
+TEST_F(OperandFormTest, HasIncludeOperandIsMacroExpanded) {
+    // An operand that is not written as a path is macro-expanded, like
+    // gcc/clang (study row a11); <...> written directly is not (row a12).
+    // A __has_include made by a macro is the operator too.
     check({
-        {"{#define P 'f.iec'}{#if __has_include(P)}Y{#else}N{#endif}", "N", {pp52}},
-        {"{#define P 'f.iec'}__assert(__has_include(P), m)A", "A", {pp52}},
+        {"{#define P 'f.iec'}{#if __has_include(P)}Y{#else}N{#endif}", "Y", {}},
+        {"{#define P 'f.iec'}__assert(__has_include(P), m)A", "A", {}},
+        {"{#define P 'f.iec'}__counter_set(c, __has_include(P))__counter_peek(c)", "1", {}},
+        {"{#define P <s.iec>}{#if __has_include(P)}Y{#else}N{#endif}", "Y", {}},
+        {"{#define P s}{#if __has_include(<P.iec>)}Y{#else}N{#endif}", "N", {}},
+        {"{#define H __has_include('f.iec')}{#if H}Y{#else}N{#endif}", "Y", {}},
+        {"{#define P 'f.iec' x}{#if __has_include(P)}Y{#else}N{#endif}",
+         "N",
+         {kAt + "error: PP52: Invalid expression; '__has_include('f.iec' x)'"}},
     });
 }
 
@@ -399,32 +411,53 @@ TEST_F(OperandFormTest, HasIncludeWithoutParentheses) {
     });
 }
 
-TEST_F(OperandFormTest, HasIncludeTextAndTokenPathsDiffer) {
-    // The {#if} condition is read as text before it is lexed; __assert reads
-    // the tokens of its operand. Pinned where the two give different results.
+TEST_F(OperandFormTest, HasIncludeIsTheSameInEveryContext) {
+    // {#if} and __assert read the operator on the same tokens (study rows
+    // a7-a10): comments are whitespace, adjacent literals are joined by the
+    // lexer (decision: unlike gcc/clang), and nothing inside a comment or a
+    // literal is read as __has_include.
+    const std::string pp52 =
+        kAt + "error: PP52: Invalid expression; '__has_include(1 '__has_include(\"a$q\")')'";
     check({
-        {"{#if __has_include(/* c */ 'f.iec' /* d */)}Y{#else}N{#endif}",
-         "N",
-         {kAt + "error: PP52: Invalid expression; '__has_include(  'f.iec'  )'"}},
+        {"{#if __has_include(/* c */ 'f.iec' /* d */)}Y{#else}N{#endif}", "Y", {}},
         {"__assert(__has_include(/* c */ 'f.iec' /* d */), m)A", "A", {}},
-        {"{#if __has_include('f' '.iec')}Y{#else}N{#endif}",
-         "N",
-         {kAt + "error: PP52: Invalid expression; '__has_include('f.iec' )'"}},
+        {"{#if __has_include('f' '.iec')}Y{#else}N{#endif}", "Y", {}},
         {"__assert(__has_include('f' '.iec'), m)A", "A", {}},
+        // In a directive the quote in a comment starts no literal, so "$q"
+        // there is an invalid escape of the operand itself (SPEC §2), one
+        // PP21 for the directive; the path PP21 that the call in the
+        // comment used to add is gone. "$$q" decodes to "$q" silently.
         {"{#if (* __has_include('a$q') *) 1}Y{#else}N{#endif}",
          "Y",
-         {kAt + "error: PP21: Invalid escape sequence; '(* __has_include('a$q') *) 1'",
-          kAt + "error: PP21: Invalid escape sequence; ''a$q''"}},
+         {kAt + "error: PP21: Invalid escape sequence; '(* __has_include('a$q') *) 1'"}},
+        {"{#if (* __has_include('a$$q') *) 1}Y{#else}N{#endif}", "Y", {}},
         {"__assert((* __has_include('a$q') *) 1, m)A", "A", {}},
-        {"{#if __has_include(1 '__has_include(\"a$q\")')}Y{#else}N{#endif}",
-         "N",
-         {kAt + "error: PP21: Invalid escape sequence; '\"a$q\"'",
-          kAt + "error: PP52: Invalid expression; '__has_include(1 '0')'"}},
-        {"__assert(__has_include(1 '__has_include(\"a$q\")'), m)A",
-         "A",
-         {kAt + "error: PP21: Invalid escape sequence; '\"a$q\"'",
-          kAt + "error: PP52: Invalid expression; '__has_include(1 '__has_include(\"a$q\")')'"}},
+        {"{#if __has_include(1 '__has_include(\"a$q\")')}Y{#else}N{#endif}", "N", {pp52}},
+        {"__assert(__has_include(1 '__has_include(\"a$q\")'), m)A", "A", {pp52}},
+        // A header name written directly keeps a comment opener (row a13 and
+        // SPEC §7): the '>' inside the comment ends it.
+        {"{#if __has_include(<s.iec>) && __has_include ( 'f.iec' )}Y{#else}N{#endif}", "Y", {}},
+        {"{#if __has_include(<.//s.iec>) && 1}Y{#else}N{#endif}", "Y", {}},
     });
+}
+
+TEST_F(OperandFormTest, HeaderNameKeepsCommentOpenersUnderNC) {
+    // -nC removes comments, but a header name written directly keeps its
+    // comment openers as path text, in {#include} and in {#if}, as gcc/clang
+    // (which read it from the characters) do. A comment elsewhere in the
+    // condition is still removed.
+    Issue::initialize(output());
+    DiagBox::initialize();
+    CwdGuard cwd(dir_);
+    Issue::ContinueMode cont({});
+    Env env = setup({}, /*remove_comments=*/true);
+    env.add_syspath((dir_ / "sys").generic_string());
+    EXPECT_EQ("(*{#:0 './/s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A",
+              pp("{#include <.//s.iec>}A", env));
+    EXPECT_EQ("Y", pp("{#if __has_include(<.//s.iec>) && 1}Y{#else}N{#endif}", env));
+    EXPECT_EQ("Y", pp("{#if __has_include( (* c *) <.(*x*)/s.iec>) || (* d *) 1}Y{#else}N{#endif}",
+                      env));
+    EXPECT_EQ(Msgs{}, messages());
 }
 
 #else // JIEPP_SANDBOX
@@ -433,11 +466,14 @@ TEST_F(OperandFormTest, HasIncludeTextAndTokenPathsDiffer) {
 class SandboxOperandFormTest : public OperandFormTest {};
 
 TEST_F(SandboxOperandFormTest, HasIncludeUseIsPP62) {
+    // A call made by a macro is a use too (the operator is read during the
+    // expansion, like gcc/clang).
     for (const char* cond : {"__has_include('f.iec')", "__has_include (<s.iec>)",
-                             "(* __has_include(x) *) 1"}) {
+                             "H"}) {
         std::string out;
         Msgs msgs;
-        run(std::string("{#if ") + cond + "}Y{#else}N{#endif}", out, msgs);
+        run(std::string("{#define H __has_include(x)}{#if ") + cond + "}Y{#else}N{#endif}", out,
+            msgs);
         ASSERT_FALSE(msgs.empty()) << cond;
         EXPECT_EQ(kAt + "error: PP62: Directive is restricted in sandbox mode; '__has_include'",
                   msgs[0])
@@ -450,6 +486,8 @@ TEST_F(SandboxOperandFormTest, DefinedHasIncludeIsNotPP62) {
         {"{#if defined(__has_include)}Y{#else}N{#endif}", "N", {}},
         {"{#if defined __has_include}Y{#else}N{#endif}", "N", {}},
         {"{#ifdef __has_include}Y{#else}N{#endif}", "N", {}},
+        // Nothing inside a comment is read as __has_include (decision 4).
+        {"{#if (* __has_include(x) *) 1}Y{#else}N{#endif}", "Y", {}},
     });
 }
 

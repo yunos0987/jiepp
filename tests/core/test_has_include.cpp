@@ -257,10 +257,11 @@ TEST_F(HasIncludeTest, QuotedPathEscapes) {
 
 // ---- __has_include in __assert, __counter_set and {#if} ----
 //
-// Behaviour pins for the token path (eval_cond_value_tokens(): __assert and
-// __counter_set) and the text path ({#if}). The expected values are the
-// output and diagnostics of 7e231f7, the commit before the pre-scan and the
-// '>' search were made linear; they pass on both.
+// Behaviour pins for __assert and __counter_set (eval_cond_value_tokens())
+// and {#if}. The expected values were taken from 7e231f7, the commit before
+// the __has_include scans were made linear. Since __has_include became an
+// operator of the expansion (gcc/clang's operand rules), the pins whose
+// result changed say so.
 
 namespace {
 
@@ -389,9 +390,11 @@ TEST_F(HasIncludeTest, TokenPathResolutionEdgeCases) {
         {"__has_include(<z> __has_include('e$q') __has_include('existing.iec'))",
          ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n",
          "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n"},
+        // Nothing inside a comment is read as __has_include, a document
+        // comment included: no PP21 for its literal.
         {"__has_include(<z> (*! __has_include('f$q') *))",
-         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''f$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n",
-         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''f$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n"},
+         ";|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n",
+         "0|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n"},
         {"__has_include(__has_include(<a)) b>)",
          ", m);|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(<a)) b>'\n",
          ")0|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(<a)) b>'\n"},
@@ -465,7 +468,7 @@ std::string hi_nested_invalid(int depth, char first = 'a') {
 TEST_F(HasIncludeTest, NestedInvalidEscapeReportedOnce) {
     Issue::ContinueMode guard({});
     const std::string nest5 = hi_nested_invalid(5);
-    // Expression context (token pre-scan) and {#if} context (text scan).
+    // Expression context (__assert, __counter_set) and {#if} context.
     pp_hi("__assert(" + nest5 + ", m);");
     EXPECT_EQ("a$qb$qc$qd$qe$q", hi_pp21_literals(messages())) << "__assert";
     pp_hi("__counter_set(c, " + nest5 + ")__counter_peek(c)");
@@ -515,10 +518,11 @@ TEST_F(HasIncludeTest, DeepNestedInvalidEscapeCountScalesLinearly) {
 
 // ---- Built-in calls nested in an __assert expression or a __counter_set value ----
 //
-// The token-path pre-scan does not look inside the arguments of a nested call
-// of __assert, __error, __counter, __counter_peek or __counter_set that is
-// still the built-in: the inner call handles its own arguments. Tests marked
-// "guard" pass with and without that rule.
+// The arguments of a nested call of __assert, __error, __counter,
+// __counter_peek or __counter_set that is still the built-in are handled by
+// the inner call: its expression is evaluated there, and a message is not an
+// expression (the __has_include operator is suspended while it is expanded).
+// Tests marked "guard" pinned the rule of the former pre-scan.
 
 namespace {
 
@@ -609,7 +613,7 @@ TEST_F(HasIncludeTest, NestedNonBuiltinCallsStillResolve) {
 }
 
 // A call whose ')' is missing extends to the end of the operand; nothing in
-// it is looked at by the outer pre-scan, and the call reports PP34 itself.
+// it is resolved by the outer expression, and the call reports PP34 itself.
 TEST_F(HasIncludeTest, UnclosedNestedBuiltinCall) {
     Issue::ContinueMode guard({});
     auto run = [this](const std::string& src) {
@@ -651,33 +655,36 @@ TEST_F(HasIncludeTest, BuiltinInsideHasIncludeCall) {
                   "__counter_peek(c)"));
 }
 
-// Only names written in the expression count: a call made by a macro is
-// ordinary text (guard), and a `defined` made by a macro does not protect the
-// name after it, which is skipped as a call.
-TEST_F(HasIncludeTest, MacroProducedBuiltinCallIsNotSkipped) {
+// __has_include is an operator of the expansion (gcc/clang), so a built-in
+// call made by a macro behaves like one written in the expression: the
+// message of __error is not an expression and keeps its text. A `defined`
+// made by a macro takes the name after it, and the operator in the
+// parenthesized expression that follows is resolved.
+TEST_F(HasIncludeTest, MacroProducedBuiltinCallFollowsTheExpansion) {
     Issue::ContinueMode guard({});
     auto run = [this](const std::string& src) {
         std::string out = pp_hi(src);
         return hi_result(out, messages());
     };
-    EXPECT_EQ(";|<unknown location>:1.0: error: PP91: '[1]'\n",
+    EXPECT_EQ(";|<unknown location>:1.0: error: PP91: '[__has_include('existing.iec')]'\n",
               run("{#define E __error}__assert(E([__has_include('existing.iec')]) 1, m);"));
-    EXPECT_EQ(";|<unknown location>:1.0: error: PP52: Invalid expression; '1([__has_include('existing.iec')])'\n",
+    EXPECT_EQ(";|<unknown location>:1.0: error: PP52: Invalid expression; '1([1])'\n",
               run("{#define D defined}__assert(D __error([__has_include('existing.iec')]), m);"));
 }
 
-// guard: the text path of {#if} resolves __has_include before lexing, so it
-// still reaches into the arguments of a nested built-in call.
-TEST_F(HasIncludeTest, IfConditionStillResolvesNestedBuiltinArguments) {
+// The {#if} condition follows the same rule as __assert: the message of a
+// nested built-in call is not an expression, so a __has_include in it keeps
+// its text.
+TEST_F(HasIncludeTest, IfConditionNestedBuiltinMessageKeepsItsText) {
     Issue::ContinueMode guard({});
     auto run = [this](const std::string& src) {
         std::string out = pp_hi(src);
         return hi_result(out, messages());
     };
-    EXPECT_EQ("A|<unknown location>:1.0: error: PP91: '[1]'\n",
+    EXPECT_EQ("A|<unknown location>:1.0: error: PP91: '[__has_include('existing.iec')]'\n",
               run("{#if __assert(0, [__has_include('existing.iec')]) 1}A{#endif}"));
     EXPECT_EQ("A|", run("{#if __assert(1, __has_include('existing.iec')) 1}A{#endif}"));
-    EXPECT_EQ("A|<unknown location>:1.0: error: PP91: '[0]'\n",
+    EXPECT_EQ("A|<unknown location>:1.0: error: PP91: '[__has_include('missing_hi.iec')]'\n",
               run("{#if __assert(0, [__has_include('missing_hi.iec')]) 1}A{#endif}"));
 }
 

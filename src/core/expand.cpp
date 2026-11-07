@@ -550,6 +550,182 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
     return replaced;
 }
 
+// The __has_include(...) operator (SPEC 7.5): the branch of expand() for the
+// keyword `kw`, already taken from `work`, while the transient 'defined'
+// operator is active and not suspended -- in an {#if}/{#elif} condition and
+// in the expression of __assert and __counter_set, written there or made by
+// a macro, like gcc/clang. Returns false, leaving `work` as it was, when the
+// keyword is not followed by '(' (it is then an ordinary identifier) and for
+// a call that the main loop can pass through itself; otherwise the call has
+// been consumed and its result, or the text of a malformed call, written to
+// `ots`. A malformed call is left as text so the evaluator reports it (PP52),
+// as before.
+//
+// The operand follows the path rules of {#include} (SPEC §7) and gcc/clang:
+// - a terminated string literal right after the '(' is the path, decoded
+//   (PP21) whether or not a ')' follows it;
+// - a '<' right after the '(' starts a header name up to the first '>'
+//   character (read_header_name()), not macro-expanded;
+// - an identifier that names a macro starts an operand that is
+//   macro-expanded up to the matching ')' and must give a string literal or
+//   '<' ... '>' tokens (expanded_path());
+// - anything else is malformed.
+// Only blanks may follow the path before the ')'. Comments are whitespace,
+// so a __has_include written in a comment or a literal is never read.
+//
+// Linear time: a call whose operand is a string literal or a non-macro
+// token reads a bounded number of tokens before deciding, and a malformed
+// one is passed through, so the next token is read by the main loop. A
+// header name consumes every token it reads, the call resolved or not, so
+// no token is read by two header names; the same holds for the operand of a
+// macro-expanded call once its ')' is found. A search for a ')' that is not
+// there reads to the end of `work` and is charged to the work budget (PP64).
+// In a sandbox build the operator is a filesystem probe: its first use in a
+// condition is PP62 (sandbox_has_include_reported()), and the call is left
+// as text.
+[[gnu::noinline]] bool expand_has_include(Token& kw, std::vector<Token>& work,
+                                          std::vector<Token>& ots, Env& env) {
+    namespace pd = jiepp::preprocessor_detail;
+    // work[n - 1] is the next unread token.
+    auto skip_ws = [&work](std::size_t n) {
+        while (n > 0 && (work[n - 1].type & Token::MASK_WS))
+            --n;
+        return n;
+    };
+    std::size_t n = skip_ws(work.size());
+    if (n == 0 || work[n - 1].type != Token::LP)
+        return false;
+#ifdef JIEPP_SANDBOX
+    (void)kw;
+    (void)ots;
+    (void)env;
+    bool& reported = sandbox_has_include_reported();
+    if (!reported) {
+        reported = true;
+        ISSUE(SANDBOX_RESTRICTED_DIRECTIVE, "__has_include");
+    }
+    return false;
+#else
+    n = skip_ws(n - 1);
+    if (n == 0)
+        return false;
+    // Takes the next token from `work` the way the main loop does.
+    auto take = [&]() {
+        Token u = std::move(work.back());
+        work.pop_back();
+        env.charge_expansion_steps(1 + u.text.size() / 64);
+        if (u.unterminated)
+            pd::report_unterminated_literal(u);
+        if (u.num_of_lines > 0 && !u.lineno_counted) {
+            advance_lineno(u.num_of_lines, env);
+            u.lineno_counted = true;
+        }
+        return u;
+    };
+    // Takes work[to] and the tokens above it (work.size() becomes `to`), in
+    // order.
+    auto take_head = [&](std::size_t to) {
+        std::vector<Token> head;
+        while (work.size() > to)
+            head.push_back(take());
+        return head;
+    };
+    auto resolve = [&](const std::string& path, bool angle) {
+        const auto load = angle ? Loader::LoadType::SINCLUDE : Loader::LoadType::INCLUDE;
+        const bool exists = !Loader::fullpath(path, load, env).empty();
+        ots.push_back(Token::create(Token::ANY, exists ? "1" : "0"));
+    };
+    // The text of a malformed call that was consumed.
+    auto pass = [&](std::vector<Token>& head, std::vector<Token>& rest) {
+        ots.push_back(std::move(kw));
+        for (auto& u : head)
+            ots.push_back(std::move(u));
+        for (auto& u : rest)
+            ots.push_back(std::move(u));
+    };
+    // Whether blanks and ')' follow; if so, takes them.
+    auto take_close = [&]() {
+        const std::size_t m = skip_ws(work.size());
+        if (m == 0 || work[m - 1].type != Token::RP)
+            return false;
+        take_head(m - 1);
+        return true;
+    };
+
+    const Token& first = work[n - 1];
+    if (first.type == Token::STRING || first.type == Token::WSTRING) {
+        if (!pd::is_terminated_literal(first))
+            return false;
+        const std::string path = decode_path_literal(first.text);
+        const std::size_t m = skip_ws(n - 1);
+        if (m == 0 || work[m - 1].type != Token::RP)
+            return false;
+        take_head(m - 1);
+        resolve(path, /*angle=*/false);
+        return true;
+    }
+    if (first.type == Token::ANY && first.text == "<") {
+        std::vector<Token> head = take_head(n - 1);
+        std::string name;
+        std::vector<Token> read;
+        const bool closed = pd::read_header_name(work, name, read);
+        for (auto& u : read) {
+            env.charge_expansion_steps(1 + u.text.size() / 64);
+            if (u.unterminated)
+                pd::report_unterminated_literal(u);
+            if (u.num_of_lines > 0 && !u.lineno_counted) {
+                advance_lineno(u.num_of_lines, env);
+                u.lineno_counted = true;
+            }
+        }
+        if (closed && take_close()) {
+            resolve(name, /*angle=*/true);
+            return true;
+        }
+        pass(head, read);
+        return true;
+    }
+    if (first.type != Token::ANY || first.hs.contains(first.text))
+        return false;
+    Macro* m = env.lookup(first.text);
+    if (!m || dynamic_cast<DefinedOperator*>(m))
+        return false;
+    // The ')' that closes the call.
+    std::size_t close = n - 1;
+    for (int depth = 0;; --close) {
+        if (close == 0) {
+            env.charge_expansion_steps(n);
+            return false;
+        }
+        const int ty = work[close - 1].type;
+        if (ty == Token::RP && depth == 0)
+            break;
+        if (ty == Token::LP)
+            ++depth;
+        else if (ty == Token::RP)
+            --depth;
+    }
+    // work[close - 1] is the ')'.
+    std::vector<Token> head = take_head(n);
+    std::vector<Token> operand;
+    while (work.size() > close)
+        operand.push_back(take());
+    std::vector<Token> rp = take_head(close - 1);
+    std::vector<Token> expanded;
+    expand(operand, expanded, env);
+    const pd::ExpandedPath p = pd::expanded_path(expanded);
+    if (p.kind != pd::ExpandedPath::Kind::none && pd::skip_blanks(expanded, p.end) == expanded.size()) {
+        const bool angle = p.kind == pd::ExpandedPath::Kind::angle;
+        resolve(angle ? p.text : decode_path_literal(p.text), angle);
+        return true;
+    }
+    for (auto& u : rp)
+        expanded.push_back(std::move(u));
+    pass(head, expanded);
+    return true;
+#endif
+}
+
 } // namespace
 
 std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ots, Env& env) {
@@ -613,6 +789,16 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 expand_has_builtin(work, ots, env, *hb_defop);
                 continue;
             }
+        }
+
+        // ── __has_include(...) operator (SPEC 7.5) ──
+        // In the same places as __has_builtin, also before the macro lookup;
+        // without a '(' after it the keyword falls through as an identifier.
+        if (t.type == Token::ANY && t.text.size() == 13 && t.text[0] == '_' &&
+            t.text == "__has_include") {
+            auto* hi_defop = dynamic_cast<DefinedOperator*>(env.lookup("defined"));
+            if (hi_defop && !hi_defop->suspended && expand_has_include(t, work, ots, env))
+                continue;
         }
 
         // ── Prosser's algorithm (cpp.algo.md §expand) ──

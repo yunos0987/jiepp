@@ -561,7 +561,7 @@ TEST_F(DirectiveTest, OperandDiagnosticsStayOnOneLine) {
     }
     {
         // handle_include() shares the same INVALID_PATH ISSUE() site as
-        // handle_syspath() above (strip_path() failure), but is a distinct
+        // handle_syspath() above (read_include_operand() failure), but is a distinct
         // handler -- verify it separately.
         SCOPED_TRACE("{#include abc$n}");
         pp("{#include abc$n}");

@@ -18,6 +18,14 @@
   - マクロが作った `/` と `*` はコメントにならない。`{#define S /}{#include S* c */ 'f.iec'}`: 読み込む → `PP47`。`{#define S /}{#line S* x */ 5}`・`{#define S /}{#line 5 S/x}`: 行 5 にする → `PP41` で行番号は変わらない
   - マクロ展開で作った `<…>` の中のコメントは空白 1 個（gcc/clang と同じ）。`{#define A <a(* c *).iec>}{#include A}`: パス `a(* c *).iec` → パス `a .iec`
   - `-nC` を付けても、直接書いた `<…>` の中のコメントの開始記号はパスの文字のまま。`-nC` での `{#include <dir//a.iec>}`: `PP47` → パス `dir//a.iec`
+- `__has_include` を gcc/clang と同じく条件式の展開の中で働く演算子にし、被演算子を `{#include}` と同じ規則でトークン単位で読むようにした。以前は `{#if}`/`{#elif}` では展開前の生のテキストを、`__assert`・`__counter_set` ではトークンをつないだテキストを文字単位で読んでいて、同じ書き方でも場所によって結果が違った。今はどの場所でも同じ。ふつうの書き方（`__has_include('a.iec')`・`__has_include(<a.iec>)`・`defined(__has_include)`・`{#ifdef __has_include}`）は変わらない。変わる入力（SPECIFICATION.md §7.5・§12.9・§14・§17）:
+  - 被演算子がマクロの名前なら展開する。`{#define H 'f.iec'}{#if __has_include(H)}`・`{#define P <a.iec>}{#if __has_include(P)}`: `PP52` で偽 → 真（ファイルがあれば）。`__assert`・`__counter_set` でも同じ
+  - マクロが作った `__has_include` も評価する。`{#define H __has_include('f.iec')}{#if H}`: `PP52` で偽 → 真（ファイルがあれば）。サンドボックスビルドでは `PP62` を出す
+  - `{#if}` でも被演算子の中のコメントは空白。`{#if __has_include(/* c */ 'f.iec' /* d */)}`: `PP52` で偽 → 真
+  - `{#if}` でも隣り合う文字列リテラルは結合してからパスにする。`{#if __has_include('f' '.iec')}`: `PP52` で偽 → `f.iec` を調べる（`__assert` と同じ。gcc/clang はエラー）
+  - コメントや文字列の中の `__has_include` は読まない。`{#if (* __has_include('a$$q') *) 1}`: `PP21` → 診断なし。`{#if __has_include(1 '__has_include("a$q")')}`: `PP21` と `PP52 '__has_include(1 '0')'` → `PP52 '__has_include(1 '__has_include("a$q")')'` だけ。`__assert` の `__has_include(<z> (*! __has_include('f$q') *))`（ドキュメントコメントの中）: `PP21` と `PP52` → `PP52` だけ。サンドボックスの `{#if (* __has_include(x) *) 1}`: `PP62` → 診断なし
+  - `__error`・`__assert` のメッセージは式ではないので、`{#if}` の中でもマクロが作った呼び出しでも `__has_include` を評価しない。`{#if __assert(0, [__has_include('f.iec')]) 1}`: メッセージ `[1]` → `[__has_include('f.iec')]`（`__assert` の中に直接書いた場合と同じ）。`{#define E __error}__assert(E([__has_include('f.iec')]) 1, m)`: メッセージ `[1]` → `[__has_include('f.iec')]`。サンドボックスの `{#if __assert(1, __has_include('x')) 1}`: `PP62` → 診断なし
+  - マクロが作った `defined` の後の名前は `defined` の被演算子になり、その後ろの括弧の中は式として評価する。`{#define D defined}__assert(D __error([__has_include('f.iec')]), m)`: `PP52 '1([__has_include('f.iec')])'` → `PP52 '1([1])'`（サンドボックスでは `PP52` の前に `PP62`）
 
 ### 新機能 / New features
 

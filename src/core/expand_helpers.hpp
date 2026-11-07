@@ -54,6 +54,16 @@ bool macro_name_is_defined(std::string_view name, Env& env);
 // that is still a built-in kind (is_builtin_macro()); 0 otherwise.
 bool has_builtin(std::string_view name, Env& env);
 
+#ifdef JIEPP_SANDBOX
+// Sandbox build: whether the condition being evaluated has reported PP62
+// for a __has_include(...) call, so it is reported once per condition
+// (expand()'s __has_include branch). The scope that installs or reuses the
+// transient 'defined' operator for one evaluation (DefinedScope,
+// expand_ctrl.cpp) saves it, starts it at false and restores it, like the
+// operator's operand-error state.
+bool& sandbox_has_include_reported();
+#endif
+
 // The __has_builtin operator branch of expand(), called with the operator
 // token already popped from `work` while the transient 'defined' operator is
 // active and not suspended. Pushes "1"/"0" to `ots`; an operand error is
