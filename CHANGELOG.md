@@ -14,6 +14,7 @@
 
 ### 新機能 / New features
 
+- C23 / C++23 の `#elifdef` / `#elifndef` に当たる `{#elifdef NAME}` / `{#elifndef NAME}` を追加した。`{#elif}` と同じ位置に置き、条件は `{#ifdef}` / `{#ifndef}` と同じく判定する（`NAME` はマクロ展開しない。`NAME` がない・識別子でないと `PP40` でその分岐は偽、余分なトークンは `PP49`）。`{#if}` がない・`{#else}` の後は `PP25`、関数マクロの引数の中は `PP02`。以前はどちらも `PP45`（未知のディレクティブ）だった（SPECIFICATION.md §5.1・§15・§17、README.md）
 - 条件式（`{#if}`・`{#elif}`・`__assert` の条件式・`__counter_set` の値）で、C の論理演算子 `&&`・`||`・`!` を書けるようにした。`&&` と `||` は `\and\` と `\or\` と同じ優先順位と短絡評価になる（SPECIFICATION.md §6.2・§6.4）。`!` は C と同じく単項演算子の優先順位の論理否定で、比較より弱く結びつく `\not\` とは優先順位が違う（`!A = B` は `(!A) = B`）。以前はどれも `PP51` か `PP52` だった。単独の `|` と `!=` は引き続き `PP52`。`\and\` と `\or\` は互換のために残すが、文書・サンプル・Boost のコーパスは `&&` と `||` に書き換えた。今後は `&&` と `||` を使う
 - 名前に `-` を含む長いオプション 11 個すべてが、`-` をすべて `_` にした綴りでも書けるようになった（`--remove_comments`、`--max_include_depth` など）。以前は `--max-include-depth`・`--max-expansion-depth`・`--max-expansion-steps`・`--max-include-count`・`--max-input-bytes`・`--error-limit`・`--max-if-nesting`・`--max-blank-lines`・`--pp-output-pragma-style`・`--recursion-limit` の 10 個だけが両方の綴りを受け付け、`--remove_comments` は `PP70` だった。パーサーが 1 か所で変換するので、今後増やす長いオプションも同じ規則になる。`-` と `_` が混ざった綴り（`--max_include-depth`）、`-include`・`-Werror=undef` のような `-` 1 つで始まるオプション、名前に `-` を含まない `--silent`・`--disppath`、オプションの値は変換せず、診断も変わらない。診断には入力した綴りがそのまま出る。`--help` に 1 行追加した（SPECIFICATION.md §2・§13、README.md）
 

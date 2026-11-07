@@ -40,8 +40,10 @@ bool eval_cond(const std::string& raw_cond, Env& env);
 // is not macro-expanded; comments in raw_arg are whitespace. A missing or
 // non-identifier NAME is INVALID_DEFINED_OPERAND and the group is false
 // (even for {#ifndef}), so a later {#elif}/{#else} may still be taken.
-// Tokens after NAME are PP49 (warning) and ignored.
-bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env);
+// Tokens after NAME are PP49 (warning) and ignored; `directive` ("ifdef",
+// "ifndef", "elifdef" or "elifndef") names the directive in that diagnostic.
+// {#elifdef}/{#elifndef} use the same evaluation.
+bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, const char* directive, Env& env);
 
 // Whether NAME counts as defined for {#ifdef}/{#ifndef}/`defined`. See the
 // definition in expand_ctrl.cpp for the __has_include special case.

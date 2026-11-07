@@ -700,7 +700,7 @@ CondValue eval_cond_value_tokens(std::vector<Token> ts, Env& env) {
 }
 
 // C2: {#ifdef NAME}/{#ifndef NAME}. See expand_helpers.hpp for the contract.
-bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env) {
+bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, const char* directive, Env& env) {
     auto ts = ts_trim(jiepp::preprocessor_detail::lex_operand(raw_arg, /*remove_comments=*/true));
     if (ts.empty()) {
         ISSUE(INVALID_DEFINED_OPERAND, "macro name missing");
@@ -718,7 +718,7 @@ bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env) {
         // defined(...) string and evaluated). Not reached in an inactive
         // group (the caller only evaluates active {#ifdef}s).
         ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
-              std::string(is_ifndef ? "{#ifndef " : "{#ifdef ") +
+              std::string("{#") + directive + " " +
                   Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
     }
     bool is_def = macro_name_is_defined(ts[0].text, env);

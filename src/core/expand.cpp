@@ -113,11 +113,16 @@ void dispatch_directive(const Token& t,
     // clang's HandleIfdefDirective -- NAME is not macro-expanded and a
     // missing/non-identifier NAME is diagnosed without ever building a
     // "defined(...)" string and round-tripping it through eval_cond.
+    // {#elifdef}/{#elifndef} (C23/C++23) are {#elif} with that condition.
     bool ifdef_form = false, ifndef_form = false;
+    const char* ifdef_name = nullptr;
     if (kind & DirectiveToken::MASK_CTRLEX) {
         ifdef_form = true;
-        ifndef_form = (kind == DirectiveToken::IFNDEF);
-        kind = DirectiveToken::IF;
+        const bool is_elif = (kind == DirectiveToken::ELIFDEF || kind == DirectiveToken::ELIFNDEF);
+        ifndef_form = (kind == DirectiveToken::IFNDEF || kind == DirectiveToken::ELIFNDEF);
+        ifdef_name = is_elif ? (ifndef_form ? "elifndef" : "elifdef")
+                             : (ifndef_form ? "ifndef" : "ifdef");
+        kind = is_elif ? DirectiveToken::ELIF : DirectiveToken::IF;
     }
 
     if (kind & DirectiveToken::MASK_CTRL) {
@@ -129,7 +134,8 @@ void dispatch_directive(const Token& t,
             if (active) {
                 if (invalid_escape)
                     ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
-                bool cond = ifdef_form ? eval_ifdef(raw_arg, ifndef_form, env) : eval_cond(raw_arg, env);
+                bool cond = ifdef_form ? eval_ifdef(raw_arg, ifndef_form, ifdef_name, env)
+                                       : eval_cond(raw_arg, env);
                 ctrl.push_back({false, cond ? std::optional<bool>(true) : std::nullopt});
             } else {
                 ctrl.push_back({false, false});
@@ -175,7 +181,9 @@ void dispatch_directive(const Token& t,
                 } else if (!last.condition.has_value()) {
                     last.has_entered = true;
                     if (ctrl_parent_active(ctrl)) {
-                        bool cond = eval_cond(raw_arg, env);
+                        bool cond = ifdef_form
+                                        ? eval_ifdef(raw_arg, ifndef_form, ifdef_name, env)
+                                        : eval_cond(raw_arg, env);
                         last.condition = cond ? std::optional<bool>(true) : std::nullopt;
                     } else {
                         last.condition = false;

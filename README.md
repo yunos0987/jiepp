@@ -55,6 +55,7 @@ echo '{#define X 42} VAR x : INT := X; END_VAR' | .\build\windows-clang-ninja-de
 | `{#sinclude 'file'}` | システムパス限定インクルード / System-path-only include (like C `#include <...>`) |
 | `{#if EXPR}` / `{#elif}` / `{#else}` / `{#endif}` | 条件コンパイル / Conditional compilation |
 | `{#ifdef NAME}` / `{#ifndef NAME}` | マクロ存在チェック / Macro existence check |
+| `{#elifdef NAME}` / `{#elifndef NAME}` | マクロ存在チェックの `{#elif}` / `{#elif}` with a macro existence check |
 | `{#error 'msg'}` / `{#warning 'msg'}` | エラー・警告出力 / Error/warning output |
 | `@@` | トークン連結 / Token paste operator |
 | `@arg` | 文字列化演算子 / Stringize operator |

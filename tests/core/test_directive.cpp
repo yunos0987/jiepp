@@ -283,12 +283,19 @@ TEST_F(DirectiveTest, DirectiveInsideMacroArgumentExecutedOnce) {
 }
 
 TEST_F(DirectiveTest, ControlDirectiveInsideMacroArgumentRejected) {
-    // Control directives ({#if}/{#elif}/{#else}/{#endif}/{#ifdef}/{#ifndef})
-    // found while collecting a macro call's argument list cannot be executed
-    // safely (they would run once per parameter occurrence, or not at all if
-    // the parameter is never referenced), so they are rejected diagnostically
-    // instead of silently misbehaving.
+    // Control directives ({#if}/{#elif}/{#else}/{#endif}/{#ifdef}/{#ifndef}/
+    // {#elifdef}/{#elifndef}) found while collecting a macro call's argument
+    // list cannot be executed safely (they would run once per parameter
+    // occurrence, or not at all if the parameter is never referenced), so
+    // they are rejected diagnostically instead of silently misbehaving.
     EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#if TRUE}\nY\n{#endif}\n)"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+}
+
+TEST_F(DirectiveTest, ElifdefInsideMacroArgumentRejected) {
+    EXPECT_THROW(pp("{#define F(x) [x]};F({#elifdef A})"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_THROW(pp("{#define F(x) [x]};F({#elifndef A})"), Issue::Exception);
     EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
 }
 

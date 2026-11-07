@@ -227,7 +227,7 @@ cd';           (* 警告なし: $ + 改行は行の継続 *)
 
 - 行番号はリテラルが始まる行（`$` + 改行で続く場合も最初の行。`{#line}` を反映）。コンテキストは開始引用符から最初の行の終わりまで（例: `warning: PP29: Missing terminating quote character; ''abc'`）。前のリテラルと結合された場合は結合後のリテラルを示す
 - 警告はトークンを処理するときに出す。`{#if 0}` などの無効なグループでは出さない（clang と同じ。gcc は出す）。マクロ本体（`{#define}`・`-D`）は定義したときに 1 回だけ出し、展開のたびには出さない。関数マクロの引数は、引数を読んだときに 1 回だけ出す（仮引数を何回使っても、使わなくても）。同じファイルを 2 回インクルードすれば 2 回出す
-- ディレクティブの引数も調べる（行番号はディレクティブの `{` の行）。`{#define}`・`{#undef}`・`{#ifdef}`・`{#if}`・`{#elif}`・`{#include}`・`{#line}`・`{#string}`・`{#token}`・`{#pragma}`・`{#ignore}` など、引数を字句解析するディレクティブが対象。`{#elif}`・`{#endif}` は外側のグループが有効なら条件を評価しない場合でも調べる。`{#else}` は §5.1 の `PP49` と同じ条件で調べる。対応する `{#if}` がない `{#else}`・`{#endif}` も `PP26`・`PP27` の前に調べる。有効な範囲の未知のディレクティブも `PP45` の後に調べる（gcc/clang と同じ）。数値だけを取る `{#max_*}` と `{#nop}` の引数は調べない
+- ディレクティブの引数も調べる（行番号はディレクティブの `{` の行）。`{#define}`・`{#undef}`・`{#ifdef}`・`{#if}`・`{#elif}`・`{#elifdef}`・`{#include}`・`{#line}`・`{#string}`・`{#token}`・`{#pragma}`・`{#ignore}` など、引数を字句解析するディレクティブが対象。`{#elif}`・`{#endif}` は外側のグループが有効なら条件を評価しない場合でも調べる。`{#else}` は §5.1 の `PP49` と同じ条件で調べる。対応する `{#if}` がない `{#else}`・`{#endif}` も `PP26`・`PP27` の前に調べる。有効な範囲の未知のディレクティブも `PP45` の後に調べる（gcc/clang と同じ）。数値だけを取る `{#max_*}` と `{#nop}` の引数は調べない
 - `{#error}`・`{#warning}`・`{#info}`・`{#severe}` のメッセージは調べない（clang の `#error` と同じ。gcc は出す）。`{#error don't stop}` は警告にならない。メッセージに展開されるマクロは、定義したときに調べる
 - 引数の中の閉じない引用符（§2「文字列リテラルの中」の `{#define X don't$nstop}`）は、デコード後の字句解析で閉じていないリテラルになるので `PP29` になる
 - 通常のプラグマ（`{attribute 'x}`）の本体は展開するときに調べる。マクロ本体の中のプラグマは展開のたびに出す（gcc/clang の `_Pragma` と同じ）
@@ -327,7 +327,7 @@ Y)
 
 出力は `;[Y] [Y]`（先頭の `;` は `{#define}` 直後の `;` がそのまま出たもの）。警告は 1 回だけ発行される（2 回ではない）。
 
-- 制御ディレクティブ（`{#if}` / `{#elif}` / `{#else}` / `{#endif}` / `{#ifdef}` / `{#ifndef}`）はパラメータの出現回数によって実行回数が変わる（0 回・複数回）ため、引数リスト内では `OPERATION_NOT_ALLOWED` (`PP02`) エラーで拒否される
+- 制御ディレクティブ（`{#if}` / `{#elif}` / `{#else}` / `{#endif}` / `{#ifdef}` / `{#ifndef}` / `{#elifdef}` / `{#elifndef}`）はパラメータの出現回数によって実行回数が変わる（0 回・複数回）ため、引数リスト内では `OPERATION_NOT_ALLOWED` (`PP02`) エラーで拒否される
 - 出力を直接生成するディレクティブ（`{#include}` / `{#sinclude}` / `{#string}` / `{#wstring}` / `{#token}` / `{#line}` / `{#syspath}`）も同様に拒否される。その出力がマクロ呼び出し自身の展開結果より先に出力ストリームへ押し出され、出力順序を破壊するため
 
 ```
@@ -621,6 +621,13 @@ VAR_NAME(sensor, 1)   (* → sensor_1 *)
 `NAME` はマクロ展開しない。`NAME` がない、または識別子でない場合は `INVALID_DEFINED_OPERAND` (`PP40`) エラーになり、`{#ifndef}` の場合もその分岐は偽として扱う。後続の `{#elif}` / `{#else}` は通常どおり評価する（clang と同じ）。
 
 `NAME` の後に余分なトークンがある場合（`{#ifdef A B}`・`{#ifdef X) || (1}` など）は `PP49` 警告を出し、`NAME` だけで判定する（gcc/clang と同じ）。余分なトークンは式として評価しない。無効な分岐（`{#if 0}` の中など）では検査しない。
+
+```
+{#elifdef NAME}   (* {#elif defined(NAME)} と同じ位置で、NAME が定義されていれば真 *)
+{#elifndef NAME}  (* NAME が未定義なら真 *)
+```
+
+C23 / C++23 の `#elifdef` / `#elifndef` に当たる（clang は言語モードを問わず受け付け、C23 より前のモードでは拡張の使用を警告する。jiepp はこの警告を出さない）。置ける位置と分岐の選び方は `{#elif}` と同じで、`{#if}` がない・`{#else}` の後にある場合は `PP25` になる。先に真の分岐があれば評価しない。条件の判定は `{#ifdef}` / `{#ifndef}` と同じで、`NAME` をマクロ展開せず、`NAME` がない・識別子でない場合は `PP40` でその分岐は偽、余分なトークンは `PP49`（補足情報は `{#elifdef A B}` のようにそのディレクティブ名で示す）。評価しない場合も、外側のグループが有効なら `{#elif}` と同じく引数を字句解析し、閉じない引用符を `PP29` で知らせる（§2）。
 
 `{#else}` / `{#endif}` の後に余分なトークンがある場合（`{#else X}`・`{#endif FOO}` など）も `PP49` 警告を出す（gcc/clang の "extra tokens at end of #else/#endif directive" と同じ）。処理は変わらない。コメントは空白として扱うので `{#endif (* FOO *)}`・`{#endif // FOO}` は警告しない（ドキュメントコメント `(*! … *)` はトークンとして数える）。`{#endif}` は外側のグループが有効なときに検査する。`{#else}` は外側が有効で、直前の分岐が有効だったか、その `{#else}` の分岐が選ばれるときに検査する（clang と同じ。`{#if 1}{#elif 1}{#else X}` は警告しない。gcc はこの場合も警告する）。対応する `{#if}` がない `{#else X}` / `{#endif X}` は `PP49` の後に `PP26` / `PP27` を出す。
 
@@ -1757,6 +1764,8 @@ jiepp -- -unusual-name.iec
 | `{#endif}` | §5.1 | 条件コンパイル終了 |
 | `{#ifdef NAME}` | §5.1 | マクロ定義チェック |
 | `{#ifndef NAME}` | §5.1 | マクロ未定義チェック |
+| `{#elifdef NAME}` | §5.1 | 条件分岐（マクロ定義チェック） |
+| `{#elifndef NAME}` | §5.1 | 条件分岐（マクロ未定義チェック） |
 | `{#error 'msg'}` | §8 | エラーメッセージ発行 |
 | `{#warning 'msg'}` | §8 | 警告メッセージ発行 |
 | `{#info 'msg'}` | §8 | 情報メッセージ発行 |
@@ -1885,7 +1894,7 @@ jiepp: error: PP10: An error occurred with the file; '<stdout>'
 | PP22 | `INVALID_PRAGMA_SYNTAX` | ERROR | Invalid syntax for pragma | プラグマの構文エラー（§2「通常のプラグマの正規化」。プラグマ本体の中の入れ子のプラグマ（`{`）による構文エラーは、外側の字句解析と、そのプラグマ本体の最初の再字句解析でだけ報告し、さらに内側の再字句解析では同じ文字について重複して報告しない。閉じていないプラグマと閉じ記号の不一致はどの段でも報告し、マクロ引数の再走査では展開のたびに報告する。終了コードは変わらない。） |
 | PP23 | `INVALID_PP_SYNTAX` | ERROR | Invalid preprocessor syntax | プリプロセッサの構文エラー（汎用）。閉じていないディレクティブのほか、再字句解析したテキスト（`$` をデコードしたオペランド・マクロの置換リスト・プラグマ本体・`-D` の値）の中のディレクティブを捨てるときも出す。補足情報はそのディレクティブのテキスト（§2「デコードしたディレクティブ」） |
 | PP24 | `UNTERMINATED_CONDITIONAL` | ERROR | Unterminated conditional directive | `{#if}` が閉じられていない |
-| PP25 | `ELIF_ERROR` | ERROR | Unexpected elif directive | `{#elif}` の位置エラー |
+| PP25 | `ELIF_ERROR` | ERROR | Unexpected elif directive | `{#elif}` / `{#elifdef}` / `{#elifndef}` の位置エラー（補足情報はどれも `elif without matching if` / `elif after else`） |
 | PP26 | `ELSE_ERROR` | ERROR | Unexpected else directive | `{#else}` の位置エラー |
 | PP27 | `ENDIF_ERROR` | ERROR | Unexpected endif directive | `{#endif}` の位置エラー |
 | PP28 | `WHITESPACE_BEFORE_DIRECTIVE` | WARNING | Whitespace between '{' and '#'; treated as an ordinary pragma | `{` と `#` の間に空白があり、通常のプラグマとして扱われた（§2。コメントを挟んだ場合はこの警告は出ない） |
@@ -1900,7 +1909,7 @@ jiepp: error: PP10: An error occurred with the file; '<stdout>'
 | PP37 | `INVALID_VA_OPT` | ERROR | Invalid __VA_OPT__ | `__VA_OPT__` の不正な使用。関数形式マクロの入れ子・`(` がない・閉じ括弧がないもので、定義時に報告して定義しない（§3.4）。オブジェクト形式マクロの `__VA_OPT__` は調べない（警告 `PP80` だけ） |
 | PP38 | `MISSING_WHITESPACE_AFTER_MACRO_NAME` | WARNING | Missing whitespace after the macro name | オブジェクトマクロの名前の直後に空白がない（`{#define A.B 1}` など。定義は行う。§3.1） |
 | PP39 | `INVALID_BUILTIN_OPERAND` | ERROR | Invalid operand for built-in macro | 名前付きカウンタの名前がない・識別子でない、`__has_builtin` の被演算子がない・識別子でない（§5.2）、または `__counter_set` の値が 0〜2147483647 の外。値の評価に失敗した診断を `{#ignore}` で抑制した場合にも出す（§12.10） |
-| PP40 | `INVALID_DEFINED_OPERAND` | ERROR | Invalid operand for 'defined' | `defined` / `{#ifdef}` / `{#ifndef}` の不正なオペランド（マクロ名がない、または識別子でない。§5） |
+| PP40 | `INVALID_DEFINED_OPERAND` | ERROR | Invalid operand for 'defined' | `defined` / `{#ifdef}` / `{#ifndef}` / `{#elifdef}` / `{#elifndef}` の不正なオペランド（マクロ名がない、または識別子でない。§5） |
 | PP41 | `INVALID_SETLINE_OPERAND` | ERROR | Invalid operand for 'set_line' | `{#set_line}` の不正なオペランド |
 | PP42 | `INVALID_IGNORE_OPERAND` | ERROR | Invalid operand for 'ignore' | `{#ignore}` の不正なオペランド |
 | PP43 | `INVALID_LIMIT_OPERAND` | ERROR | Invalid operand for limit directive | 制限ディレクティブの不正なオペランド |
@@ -1909,7 +1918,7 @@ jiepp: error: PP10: An error occurred with the file; '<stdout>'
 | PP46 | `INVALID_DIRECTIVE_NAME` | ERROR | Invalid directive name | 英字または `_` で始まるが、識別子として使えない文字を含む名前（例: `{#foo.bar}`）。先頭が数字など識別子として始まれない名前は `PP45` になる |
 | PP47 | `INVALID_PATH` | ERROR | Invalid path | 不正なパス |
 | PP48 | `INVALID_PRAGMA_STYLE_OPERAND` | WARNING | Invalid operand for pragma style directive | `{#pp_output_pragma_style}` の不正なオペランド |
-| PP49 | `EXTRA_TOKENS_AT_END_OF_DIRECTIVE` | WARNING | Extra tokens at end of directive | `{#undef}` / `{#ifdef}` / `{#ifndef}` / `-U` でマクロ名の後、`{#pragma once}` の `once` の後、`{#else}` / `{#endif}` の後に余分なトークンがある（§3.5、§5.1、§7.6） |
+| PP49 | `EXTRA_TOKENS_AT_END_OF_DIRECTIVE` | WARNING | Extra tokens at end of directive | `{#undef}` / `{#ifdef}` / `{#ifndef}` / `{#elifdef}` / `{#elifndef}` / `-U` でマクロ名の後、`{#pragma once}` の `once` の後、`{#else}` / `{#endif}` の後に余分なトークンがある（§3.5、§5.1、§7.6） |
 | PP50 | `EXPR_TYPE_ERROR` | ERROR | Type error in expression | 式中の型エラー（Bool・Float・Bitstring・Int の許されない組み合わせ、Bitstring の幅の不一致、Float への演算、シフト量の型など。§6.3。ゼロ除算は `PP52`） |
 | PP51 | `MISSING_EXPRESSION` | ERROR | Missing expression | `{#if}` に式がない |
 | PP52 | `INVALID_EXPRESSION` | ERROR | Invalid expression | 不正な式 |
@@ -1956,6 +1965,7 @@ Jiepp は C プリプロセッサ (cpp) の概念を IEC 61131-3 に適応させ
 | `-include FILE` | `-include FILE` | 同等。指定ファイルを主入力ファイルより前に処理する。相対パスは CWD 優先、見つからなければ `-I` / `{#syspath}` を検索（§7.9） |
 | `#if` / `#elif` / `#else` / `#endif` | `{#if}` / `{#elif}` / `{#else}` / `{#endif}` | 同等 |
 | `#ifdef` / `#ifndef` | `{#ifdef}` / `{#ifndef}` | 同等 |
+| `#elifdef` / `#elifndef`（C23 / C++23） | `{#elifdef}` / `{#elifndef}` | 同等。C23 より前の言語モードでの gcc/clang の拡張の警告は出さない（§5.1） |
 | `#error` / `#warning` | `{#error}` / `{#warning}` | 同等。jiepp コマンドラインは `#error`/`{#error}` の後も gcc と同じく処理を続ける（§16「重大度」） |
 | `#foo`（無効なディレクティブ） | `{#foo}`（無効なディレクティブ） | 同等。gcc/clang の "invalid preprocessing directive" と同じくエラー（`PP45`、§16「重大度」） |
 | `#line N "file"` | `{#line N 'file'}` / `{#line N "file"}` | 同等（次の行の行番号を N にする）。両方のクォートを同じ意味で受理（エイリアス `set_line`/`set-line` も同等）、出力される行マーカーと `__FILE__` は常に `'...'`（IEC エスケープ適用済み。行マーカーは `$`・`{`・`}` も `$24`・`$7B`・`$7D` にする）で再エンコード（§9）。オペランドの範囲は `0`〜`4294967295`（gcc/clang と同じ）で、行カウンタも同じ範囲に mod 2^32 で折り返す（§9） |
@@ -2090,6 +2100,7 @@ log_message('WARN', 'Low memory', ' threshold=', '1024');
 directive     := '{#' directive-name arg '}'
 directive-name := 'define' | 'D' | 'undef' | 'include' | 'sinclude'
                | 'if' | 'elif' | 'else' | 'endif' | 'ifdef' | 'ifndef'
+               | 'elifdef' | 'elifndef'
                | 'error' | 'warning' | 'info' | 'severe'
                | 'line' | 'set_line' | 'set-line'
                | 'ignore' | 'nop' | '' | 'syspath' | 'I' | 'pragma'
