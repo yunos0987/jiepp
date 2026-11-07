@@ -531,6 +531,11 @@ std::vector<Token> subst(
             // True when item is __VA_OPT__ content, which the inner subst()
             // has charged already.
             bool item_charged = false;
+            // GNU comma swallowing: the index of the variable arguments when
+            // this is `, @@ __VA_ARGS__` (or `, @@ args` for a named
+            // variadic parameter), -1 otherwise. normalize_glue() leaves no
+            // whitespace next to a GLUE, so the left operand is body[i - 1].
+            int gnu_comma_va_idx = -1;
             const Token& nb = body[j];
             if (nb.type == Token::ANY && nb.text == FunctionMacro::VA_OPT &&
                 !formal_params.empty()) {
@@ -564,6 +569,14 @@ std::vector<Token> subst(
                         } else {
                             item = ts_flatten(select_arg(pidx, actual_params, is_va, actual_ws,
                                                          va_sep_ws ? VaJoin::stringize : VaJoin::plain));
+                            // Not when the arguments are themselves the left
+                            // operand of another @@: gcc/clang then keep the
+                            // comma and report `, ## 1`.
+                            if (is_va && !left_is_placemarker && i > 0 &&
+                                body[i - 1].type == Token::SEP && !result.empty() &&
+                                result.back().type == Token::SEP &&
+                                !(j + 1 < body.size() && body[j + 1].type == Token::GLUE))
+                                gnu_comma_va_idx = pidx;
                         }
                     }
                 }
@@ -574,6 +587,34 @@ std::vector<Token> subst(
                 if (item.empty() && !nb_is_param)
                     item = {nb.clone()};
                 i = j;
+            }
+
+            if (gnu_comma_va_idx >= 0) {
+                // `, @@ __VA_ARGS__` (gcc/clang's GNU extension, measured
+                // with gcc 11 and clang 22 in their default gnu modes): the
+                // comma is never pasted with the variable arguments.
+                if (static_cast<int>(actual_params.size()) <= gnu_comma_va_idx) {
+                    // Variable arguments omitted (`LOG(x)`, or `F()` for a
+                    // macro with only `...`): drop the comma together with
+                    // the blanks before it, as gcc/clang do.
+                    result.pop_back();
+                    while (!result.empty() && (result.back().type & Token::MASK_WS))
+                        result.pop_back();
+                } else {
+                    // Present (possibly empty: `LOG(x,)` keeps `g(x,)`): the
+                    // comma stays and the arguments follow it unpasted, with
+                    // one space iff the call had one before them.
+                    const bool lead_ws = actual_ws &&
+                        gnu_comma_va_idx < static_cast<int>(actual_ws->size()) &&
+                        (va_sep_ws ? (*actual_ws)[gnu_comma_va_idx].lead
+                                   : (*actual_ws)[gnu_comma_va_idx].lead_sp);
+                    if (lead_ws && !item.empty())
+                        result.push_back(Token::create(Token::WS, " "));
+                    for (auto& tk : item)
+                        result.push_back(std::move(tk));
+                }
+                pending_placemarker = false;
+                continue;
             }
 
             if (left_is_placemarker) {

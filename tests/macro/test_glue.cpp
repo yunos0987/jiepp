@@ -135,14 +135,48 @@ TEST_F(GlueTest, PlacemarkerCStandardExample3) {
     EXPECT_EQ(";;",  pp("{#define r(x,y) x @@ y};r(,);"));
 }
 
-TEST_F(GlueTest, CommaPasteEmptyVaArgs) {
-    // The classic pre-__VA_OPT__ GNU idiom `, @@ __VA_ARGS__` with an empty
-    // __VA_ARGS__ must degrade gracefully to the C placemarker rule (the
-    // comma is retained) instead of aborting with INVALID_TOKEN_PASTING.
-    // This diverges from the GNU extension, which deletes the comma; use
-    // __VA_OPT__ for that behaviour (see D1 in the audit plan).
-    EXPECT_NO_THROW(
-        EXPECT_EQ(";g(x,);", pp("{#define LOG(fmt, ...) g(fmt, @@ __VA_ARGS__)};LOG(x);")));
+TEST_F(GlueTest, CommaPasteOmittedVaArgsDeletesComma) {
+    // GNU `, @@ __VA_ARGS__` (gcc/clang -std=gnu17): when the variable
+    // arguments are omitted, the comma is deleted.
+    EXPECT_EQ(";g(x);", pp("{#define LOG(fmt, ...) g(fmt, @@ __VA_ARGS__)};LOG(x);"));
+    // A macro with only `...` called with nothing between the parentheses.
+    EXPECT_EQ(";a;", pp("{#define F(...) a, @@ __VA_ARGS__};F();"));
+    EXPECT_EQ(";[];", pp("{#define M(...) [, @@ __VA_ARGS__]};M();"));
+    // The blanks before the deleted comma go with it.
+    EXPECT_EQ(";g(x);", pp("{#define L(f, ...) g(f , @@ __VA_ARGS__)};L(x);"));
+    // Tokens after the arguments stay.
+    EXPECT_EQ(";g(x z);", pp("{#define T(f, ...) g(f, @@ __VA_ARGS__ z)};T(x);"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(GlueTest, CommaPastePresentEmptyVaArgsKeepsComma) {
+    // An empty but present variable argument (`LOG(x,)`) is not omitted:
+    // gcc/clang keep the comma.
+    EXPECT_EQ(";g(x,);", pp("{#define LOG(fmt, ...) g(fmt, @@ __VA_ARGS__)};LOG(x,);"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(GlueTest, CommaPasteNonEmptyVaArgsIsNotPasted) {
+    // Non-empty: the comma and the arguments are not pasted (no PP32); one
+    // space before the arguments iff the call had one, like gcc/clang.
+    EXPECT_EQ(";g(x, y);", pp("{#define LOG(fmt, ...) g(fmt, @@ __VA_ARGS__)};LOG(x, y);"));
+    EXPECT_EQ(";a,1;", pp("{#define F(...) a, @@ __VA_ARGS__};F(1);"));
+    EXPECT_EQ(";g(x, y , z);", pp("{#define LOG(fmt, ...) g(fmt, @@ __VA_ARGS__)};LOG(x,  y  ,  z);"));
+    EXPECT_EQ(";g(x,(a,b));", pp("{#define LOG(fmt, ...) g(fmt, @@ __VA_ARGS__)};LOG(x,(a,b));"));
+    EXPECT_EQ(";g(x, y, y);",
+              pp("{#define K(f, ...) g(f, @@ __VA_ARGS__, @@ __VA_ARGS__)};K(x, y);"));
+    EXPECT_EQ(";g(x);", pp("{#define K(f, ...) g(f, @@ __VA_ARGS__, @@ __VA_ARGS__)};K(x);"));
+    // The arguments are rescanned: an argument that expands to nothing
+    // leaves the comma and the space.
+    EXPECT_EQ(";g(x, );", pp("{#define E()}{#define LOG(fmt, ...) g(fmt, @@ __VA_ARGS__)};LOG(x, E());"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(GlueTest, CommaPasteOnlyForCommaAndVariadicParameter) {
+    // An ordinary parameter on the right keeps the placemarker rule.
+    EXPECT_EQ(";x,;", pp("{#define P(a, b) a, @@ b};P(x,);"));
+    // A left operand other than ',' keeps the ordinary paste rule.
+    EXPECT_EQ(";g(x);", pp("{#define Q(f, ...) g(f) @@ __VA_ARGS__};Q(x);"));
     EXPECT_TRUE(empty());
 }
 
@@ -270,12 +304,23 @@ TEST_F(GlueTest, FailedPasteOpenParenThenMacroCall) {
     EXPECT_EQ(std::vector<std::string>{paste_diag("( @@ ID")}, messages());
 }
 
-TEST_F(GlueTest, FailedPasteCommaVaArgsKeepsArgument) {
-    // Row 5: `, @@ __VA_ARGS__` with a non-empty __VA_ARGS__ is PP32 (unlike
-    // the GNU extension in gcc/clang, which gives no diagnostic; intended
-    // difference, SPEC 4.3) and now keeps the argument.
+TEST_F(GlueTest, CommaVaArgsIsNotAFailedPaste) {
+    // Row 5: `, @@ __VA_ARGS__` with a non-empty __VA_ARGS__ is not pasted
+    // (GNU extension, as in gcc/clang): no PP32, and G is called with both
+    // arguments.
     EXPECT_EQ("<x|y>", pp_continue(kPasteDefs + "{#define LOG(fmt, ...) G(fmt, @@ __VA_ARGS__)}LOG(x, y)"));
-    EXPECT_EQ(std::vector<std::string>{paste_diag(", @@ y")}, messages());
+    EXPECT_TRUE(messages().empty());
+    // With a left operand other than ',', the same right operand is PP32.
+    EXPECT_EQ("g(x)y", pp_continue("{#define Q(f, ...) g(f) @@ __VA_ARGS__}Q(x, y)"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag(") @@ y")}, messages());
+}
+
+TEST_F(GlueTest, CommaVaArgsFollowedByPasteKeepsOrdinaryRule) {
+    // `, @@ __VA_ARGS__ @@ 1`: the variable arguments are the left operand of
+    // another @@, so the comma is not deleted and `, @@ 1` is PP32, like
+    // gcc/clang ("pasting formed ',1'"); it is not silently `g(x1)`.
+    EXPECT_EQ("g(x,1)", pp_continue("{#define Q(f, ...) g(f, @@ __VA_ARGS__ @@ 1)}Q(x)"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag(", @@ 1")}, messages());
 }
 
 TEST_F(GlueTest, FailedPasteClosingParenThenClosingParenIsNowPP32) {

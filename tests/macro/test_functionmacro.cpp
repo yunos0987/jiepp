@@ -895,11 +895,13 @@ TEST_F(FuncMacroTest, GnuNamedVariadicMustBeLast) {
     expect_param_list_error("F(args. ..) x", "expected ',' or ')'");
 }
 
-// jiepp does not delete the comma before an omitted named variadic's
-// arguments (the GNU `, ## args` idiom) -- same deviation as for '...',
-// documented in SPECIFICATION.md.
-TEST_F(FuncMacroTest, GnuNamedVariadicCommaPasteKeepsComma) {
-    EXPECT_EQ(";g(x,);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x);"));
+// The GNU `, ## args` idiom works for a named variadic as for '...': the
+// comma is deleted when the arguments are omitted, kept when they are
+// present (even empty), and never pasted with them (gcc/clang).
+TEST_F(FuncMacroTest, GnuNamedVariadicCommaPaste) {
+    EXPECT_EQ(";g(x);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x);"));
+    EXPECT_EQ(";g(x, y);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x, y);"));
+    EXPECT_EQ(";g(x,);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x,);"));
     EXPECT_TRUE(empty());
 }
 
