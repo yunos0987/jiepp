@@ -79,11 +79,14 @@ void report_unterminated_literal(Token& t);
 // unterminated literal or an unclosed comment (whether or not it was
 // reported); never set to false. report_unclosed_comment == false lexes an
 // unclosed comment without PP20 (the rescan of an already reported pragma).
+// found_directive, if not null, is set to true when a DIRECTIVE token was
+// dropped (and PP23 raised for it); never set to false.
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
                                bool report_unterminated = true,
                                bool report_nested_brace = true,
                                bool* found_unterminated = nullptr,
-                               bool report_unclosed_comment = true);
+                               bool report_unclosed_comment = true,
+                               bool* found_directive = nullptr);
 
 // What expand_operand_tokens() lexes (A2 / S-02):
 // - operand: a directive operand or message text.

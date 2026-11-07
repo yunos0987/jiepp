@@ -59,7 +59,8 @@ void report_unterminated_literal(Token& t) {
 
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
                                bool report_unterminated, bool report_nested_brace,
-                               bool* found_unterminated, bool report_unclosed_comment) {
+                               bool* found_unterminated, bool report_unclosed_comment,
+                               bool* found_directive) {
     // U1: re-lexed text is not source text, so its diagnostics go to the
     // current Issue location (the directive/pragma being processed).
     auto ts = iec3_relex(text, remove_comments, report_nested_brace,
@@ -71,9 +72,11 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
     // source lexer, so the directive is not run and not output. Drop it and
     // report PP23 with its text (the lexer's appended '}' of an unclosed
     // directive stays in the text; the source text cannot be rebuilt).
-    std::erase_if(ts, [](const Token& t) {
+    std::erase_if(ts, [found_directive](const Token& t) {
         if (t.type != Token::DIRECTIVE)
             return false;
+        if (found_directive)
+            *found_directive = true;
         ISSUE(INVALID_PP_SYNTAX, t.text);
         return true;
     });

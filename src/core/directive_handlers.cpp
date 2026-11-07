@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -743,28 +744,66 @@ void handle_ignore(const std::string& raw_arg, Env& env) {
 
 namespace {
 
+// The value of a {#max_*} operand (SPEC §11): one decimal integer, judged on
+// the operand's tokens. Comments are whitespace. The integer is one token of
+// decimal digits, optionally preceded, with nothing in between, by a '+' or
+// '-' token (try_push_number() starts a number only at a digit); its value
+// must fit an int. Anything else is nullopt: a trailing token ("2x" is one
+// token, "2 3" two), a literal, "2.9", "16#10", "1_0", a sign apart from
+// the digits ("- 3"), a document comment, a pragma, and a directive that the
+// lexer read from the decoded text ("${#x$}"), which lex_operand() drops.
+//
+// This replaced a text scan (comments blanked out, then std::stoi()) that
+// accepted and rejected the same operands without lexing them, so the lex
+// here adds no diagnostic: the lexer's PP20/PP22 and lex_operand()'s PP23
+// are ignored while it runs, and PP29 is not reported.
+std::optional<int> limit_operand_value(const std::string& raw_arg) {
+    std::vector<Token> ts;
+    bool directive = false;
+    {
+        Issue::Ignoring quiet({Issue::Code::UNCLOSED_COMMENT, Issue::Code::INVALID_PRAGMA_SYNTAX,
+                               Issue::Code::INVALID_PP_SYNTAX});
+        ts = ts_trim(lex_operand(raw_arg, /*remove_comments=*/true,
+                                 /*report_unterminated=*/false, /*report_nested_brace=*/true,
+                                 /*found_unterminated=*/nullptr,
+                                 /*report_unclosed_comment=*/true, &directive));
+    }
+    if (directive || ts.empty())
+        return std::nullopt;
+    bool negative = false;
+    std::size_t i = 0;
+    if (ts.size() == 2 && ts[0].type == Token::ANY && (ts[0].text == "+" || ts[0].text == "-")) {
+        negative = ts[0].text == "-";
+        i = 1;
+    }
+    if (ts.size() != i + 1 || ts[i].type != Token::ANY || ts[i].text.empty())
+        return std::nullopt;
+    // The digits of the one number token; its value, like std::stoi(), in
+    // the range of int.
+    const std::int64_t bound = negative ? -static_cast<std::int64_t>(INT_MIN) : INT_MAX;
+    std::int64_t v = 0;
+    for (char ch : ts[i].text) {
+        if (ch < '0' || ch > '9')
+            return std::nullopt;
+        v = v * 10 + (ch - '0');
+        if (v > bound)
+            return std::nullopt;
+    }
+    return static_cast<int>(negative ? -v : v);
+}
+
 // Parse raw_arg as an integer and call setter.
 // Validation (n <= 0, n > 2^24) is handled by the Env setter via ISSUE.
 // Parse failure is reported here as INVALID_LIMIT_OPERAND.
 void handle_limit_directive(const std::string& raw_arg, Env& env,
                             bool (Env::*setter)(int)) {
-    // One decimal integer; comments around it are whitespace (SPEC §11).
-    // std::stoi() alone accepted any trailing text ("2x", "2 3", "2.9" all
-    // silently meant 2) and rejected a leading comment.
-    const std::string arg = iec3_blank_out_comments(raw_arg);
-    std::size_t used = 0;
-    int n = 0;
-    try {
-        n = std::stoi(arg, &used);
-    } catch (const std::exception&) {
-        used = 0;
-    }
-    if (used == 0 || !Util::trim_view(std::string_view(arg).substr(used)).empty()) {
+    const std::optional<int> n = limit_operand_value(raw_arg);
+    if (!n) {
         // raw_arg is decoded, so re-escape it (see {#define} above).
         ISSUE(INVALID_LIMIT_OPERAND, Util::escape_line_breaks(raw_arg));
         return;
     }
-    (env.*setter)(n);
+    (env.*setter)(*n);
 }
 
 } // namespace
