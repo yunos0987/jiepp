@@ -62,6 +62,8 @@ python tools/convert_boost_pp.py <dir>/include/boost/preprocessor tests/jiepp/in
 python tools/convert_boost_pp.py --check <dir>/include/boost/preprocessor tests/jiepp/input/boost/preprocessor
 ```
 
+演算子は 1 個ずつ置き換えるので、C と jiepp で結合の仕方が異なる式（括弧のない `&`・`|`・`^` と比較や `+`・`<<` などの混在、比較の左辺の `!x`。SPECIFICATION.md §6.2）は意味が黙って変わります。スクリプトはそうした `#if`・`#elif`・`#define` を `precedence:` の行で標準エラーに出し、終了コード 1 を返します（ファイルは書き出します）。出た場合は変換結果を確かめ、必要なら変換規則を足してください。
+
 更新後は Release の ctest で `BoostPreprocessorIntegration` を実行し、出力が変わった場合は「テスト期待値（ゴールデン）の更新」の手順で `tests/jiepp/output/boost.*` を更新します。
 
 ## サンプルの更新 / Updating Samples
