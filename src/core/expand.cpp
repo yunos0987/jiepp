@@ -444,7 +444,7 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
     Token out = t;
     // The text is rewritten below, so it is no longer the lexer's own text:
     // a rescan (macro argument) re-lexes it with every diagnostic reported
-    // (except the PP29 already reported above).
+    // (except the PP29 and PP20 already reported above).
     out.relexed_pragma = false;
     if (found_unterminated)
         out.pragma_unterminated_reported = true;

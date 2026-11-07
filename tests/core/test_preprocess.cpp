@@ -662,8 +662,17 @@ TEST_F(PreprocessTest, EscapedDirectiveInPragmaInMacroBodyDoesNotRun) {
 // A nested pragma body: the directive does not run at any depth.
 TEST_F(PreprocessTest, EscapedDirectiveInNestedPragmaBodyDoesNotRun) {
     Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
-    const std::string out = pp("{ ${ ${#define Q 1$} }\nQ\n");
-    EXPECT_NE(std::string::npos, out.find("\nQ\n")) << out;
+    // The outer body " ${ ${#define Q 1$} " re-lexes to '$' and the unclosed
+    // nested pragma "{ ${#define Q 1$} " (PP22); its body re-lexes to '$' and
+    // the unclosed directive "{#define Q 1$} " (PP23 from the lexer), which
+    // lex_operand() drops (PP23 again, with the '}' the lexer appended).
+    EXPECT_EQ("(*{$(*{$}*)}*)\nQ\n", pp("{ ${ ${#define Q 1$} }\nQ\n"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{ ${#define Q 1$} '",
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1$} '",
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1$} }'",
+              }),
+              diag_tails(messages()));
 }
 
 // The {#pragma ...} form never ran such a directive; it now reports the drop
