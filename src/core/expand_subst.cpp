@@ -569,13 +569,9 @@ std::vector<Token> subst(
                         } else {
                             item = ts_flatten(select_arg(pidx, actual_params, is_va, actual_ws,
                                                          va_sep_ws ? VaJoin::stringize : VaJoin::plain));
-                            // Not when the arguments are themselves the left
-                            // operand of another @@: gcc/clang then keep the
-                            // comma and report `, ## 1`.
                             if (is_va && !left_is_placemarker && i > 0 &&
                                 body[i - 1].type == Token::SEP && !result.empty() &&
-                                result.back().type == Token::SEP &&
-                                !(j + 1 < body.size() && body[j + 1].type == Token::GLUE))
+                                result.back().type == Token::SEP)
                                 gnu_comma_va_idx = pidx;
                         }
                     }
@@ -595,11 +591,32 @@ std::vector<Token> subst(
                 // comma is never pasted with the variable arguments.
                 if (static_cast<int>(actual_params.size()) <= gnu_comma_va_idx) {
                     // Variable arguments omitted (`LOG(x)`, or `F()` for a
-                    // macro with only `...`): drop the comma together with
-                    // the blanks before it, as gcc/clang do.
+                    // macro with only `...`). When they are the left operand
+                    // of further @@, gcc/clang still drop the comma if every
+                    // operand of that chain is the variable arguments again
+                    // (`, @@ __VA_ARGS__ @@ __VA_ARGS__`); any other operand
+                    // (`@@ 1`, `@@ f`, `@@ __VA_OPT__(a)`) keeps the comma,
+                    // which the chain then pastes with as usual (`, @@ 1` is
+                    // PP32). normalize_glue() leaves no blank next to a GLUE.
+                    std::size_t k = j + 1;
+                    while (k + 1 < body.size() && body[k].type == Token::GLUE &&
+                           body[k + 1].type == Token::ANY &&
+                           body[k + 1].text != FunctionMacro::VA_ARGC) {
+                        auto cit = formal_params.find(body[k + 1].text);
+                        if (cit == formal_params.end() || cit->second.first != gnu_comma_va_idx)
+                            break;
+                        k += 2;
+                    }
+                    if (k < body.size() && body[k].type == Token::GLUE) {
+                        pending_placemarker = false;
+                        continue;
+                    }
+                    // Drop the comma together with the blanks before it, as
+                    // gcc/clang do, and the (empty) rest of the chain.
                     result.pop_back();
                     while (!result.empty() && (result.back().type & Token::MASK_WS))
                         result.pop_back();
+                    i = k - 1;
                 } else {
                     // Present (possibly empty: `LOG(x,)` keeps `g(x,)`): the
                     // comma stays and the arguments follow it unpasted, with

@@ -323,6 +323,56 @@ TEST_F(GlueTest, CommaVaArgsFollowedByPasteKeepsOrdinaryRule) {
     EXPECT_EQ(std::vector<std::string>{paste_diag(", @@ 1")}, messages());
 }
 
+TEST_F(GlueTest, CommaVaArgsChainOfVaArgsOnly) {
+    // Measured with gcc 11.4 -E and clang 22 -E (gnu mode). Omitted variable
+    // arguments: a chain whose every operand is the variable arguments again
+    // still deletes the comma (it used to stay: g(x,)).
+    EXPECT_EQ("g(x)", pp_continue("{#define R(f, ...) g(f, @@ __VA_ARGS__ @@ __VA_ARGS__)}R(x)"));
+    EXPECT_TRUE(messages().empty());
+    EXPECT_EQ("g(x z)", pp_continue("{#define U(f, ...) g(f, @@ __VA_ARGS__ @@ __VA_ARGS__ z)}U(x)"));
+    EXPECT_TRUE(messages().empty());
+    EXPECT_EQ("g(x)",
+              pp_continue("{#define T(f, ...) g(f, @@ __VA_ARGS__ @@ __VA_ARGS__ @@ __VA_ARGS__)}T(x)"));
+    EXPECT_TRUE(messages().empty());
+    EXPECT_EQ("g()", pp_continue("{#define S(...) g(, @@ __VA_ARGS__ @@ __VA_ARGS__)}S()"));
+    EXPECT_TRUE(messages().empty());
+    EXPECT_EQ("g(x)", pp_continue("{#define L(f, args...) g(f, @@ args @@ args)}L(x)"));
+    EXPECT_TRUE(messages().empty());
+    // Present but empty: the comma stays.
+    EXPECT_EQ("g(x,)", pp_continue("{#define R(f, ...) g(f, @@ __VA_ARGS__ @@ __VA_ARGS__)}R(x,)"));
+    EXPECT_TRUE(messages().empty());
+    EXPECT_EQ("g(x, z)", pp_continue("{#define U(f, ...) g(f, @@ __VA_ARGS__ @@ __VA_ARGS__ z)}U(x,)"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(GlueTest, CommaVaArgsChainWithOtherOperandKeepsComma) {
+    // Omitted variable arguments, but the chain has another operand: the
+    // comma stays and is pasted with the rest of the chain (gcc/clang).
+    EXPECT_EQ("g(x,x)", pp_continue("{#define W(f, ...) g(f, @@ __VA_ARGS__ @@ __VA_ARGS__ @@ f)}W(x)"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag(", @@ x")}, messages());
+    // An empty operand is a placemarker, but the comma still stays.
+    EXPECT_EQ("g(,)", pp_continue("{#define Q(f, ...) g(f, @@ __VA_ARGS__ @@ f)}Q()"));
+    EXPECT_TRUE(messages().empty());
+    EXPECT_EQ("g(x,)", pp_continue("{#define V(f, ...) g(f, @@ __VA_ARGS__ @@ __VA_OPT__(a))}V(x)"));
+    EXPECT_TRUE(messages().empty());
+    // Present but empty: `, @@ 1` is pasted (PP32), as before.
+    EXPECT_EQ("g(x,1)", pp_continue("{#define O(f, ...) g(f, @@ __VA_ARGS__ @@ 1)}O(x,)"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag(", @@ 1")}, messages());
+}
+
+TEST_F(GlueTest, CommaVaArgsNonEmptyLeftOperandOfChainIsNotPasted) {
+    // Non-empty variable arguments that are the left operand of another @@:
+    // the comma is not pasted with them (clang: no diagnostic; gcc reports
+    // `,` `y` but gives the same text). It used to be PP32 `, @@ y`.
+    EXPECT_EQ("g(x, yy)", pp_continue("{#define R(f, ...) g(f, @@ __VA_ARGS__ @@ __VA_ARGS__)}R(x, y)"));
+    EXPECT_TRUE(messages().empty());
+    EXPECT_EQ("g(x,y1)", pp_continue("{#define O(f, ...) g(f, @@ __VA_ARGS__ @@ 1)}O(x,y)"));
+    EXPECT_TRUE(messages().empty());
+    EXPECT_EQ("g(x,yyy)",
+              pp_continue("{#define T(f, ...) g(f, @@ __VA_ARGS__ @@ __VA_ARGS__ @@ __VA_ARGS__)}T(x,y)"));
+    EXPECT_TRUE(messages().empty());
+}
+
 TEST_F(GlueTest, FailedPasteClosingParenThenClosingParenIsNowPP32) {
     // Row 6: ')' @@ ')' used to be one RP without a diagnostic (a ')' vanished).
     EXPECT_EQ("a b) tail", pp_continue(kPasteDefs + "{#define Q ID(a, b) @@ ) tail}Q"));
