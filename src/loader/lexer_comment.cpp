@@ -5,6 +5,9 @@ namespace jiepp::detail {
 Token read_block_comment(const std::string& text, std::size_t& pos,
                          LineNo& lineno, char opener1, int type,
                          LexOptions opts) {
+    // An unclosed comment (PP20) is reported at the line its opener is on,
+    // like gcc/clang, not at the line where the input ends.
+    const LineNo start_lineno = lineno;
     char closer_end = (opener1 == '(') ? ')' : '/';
     std::string body;
     body.reserve(128);
@@ -47,7 +50,7 @@ Token read_block_comment(const std::string& text, std::size_t& pos,
     if (opts.found_unclosed_comment)
         *opts.found_unclosed_comment = true;
     if (opts.report_unclosed_comment) {
-        report_lex_issue(lineno, opts, [&] {
+        report_lex_issue(start_lineno, opts, [&] {
             ISSUE(UNCLOSED_COMMENT, body);
         });
     }

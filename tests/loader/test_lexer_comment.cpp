@@ -36,6 +36,19 @@ TEST_F(LexerCommentTest, BlockCommentError) {
     EXPECT_EQ("<unknown location>:1.0: error: PP20: Unclosed comment; '/* comment *)'", message());
 }
 
+// PP20 is reported at the line of the comment's opener, like gcc/clang, not
+// at the line where the input ends (CR-LF, CR and LF all count one line).
+TEST_F(LexerCommentTest, BlockCommentErrorAtOpenerLine) {
+    EXPECT_THROW(ts("a\n(* comment\n x\n y\n"), Issue::Exception);
+    EXPECT_EQ("<unknown location>:2.0: error: PP20: Unclosed comment; '(* comment$n x$n y$n'", message());
+
+    EXPECT_THROW(ts("a\r\nb\r/* c\r\n d\n"), Issue::Exception);
+    EXPECT_EQ("<unknown location>:3.0: error: PP20: Unclosed comment; '/* c$n d$n'", message());
+
+    EXPECT_THROW(ts("a\n(*! doc\n x\n"), Issue::Exception);
+    EXPECT_EQ("<unknown location>:2.0: error: PP20: Unclosed comment; '(* doc$n x$n'", message());
+}
+
 // ---- line comment ----
 
 TEST_F(LexerCommentTest, LineComment) {
