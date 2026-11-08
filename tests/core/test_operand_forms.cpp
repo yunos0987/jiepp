@@ -452,8 +452,13 @@ TEST_F(OperandFormTest, HeaderNameKeepsCommentOpenersUnderNC) {
     Issue::ContinueMode cont({});
     Env env = setup({}, /*remove_comments=*/true);
     env.add_syspath((dir_ / "sys").generic_string());
-    EXPECT_EQ("(*{#:0 './/s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A",
-              pp("{#include <.//s.iec>}A", env));
+    // The include itself is the check; the marker spells the path the way
+    // the platform resolves ".//" (Windows keeps ".//s.iec", Linux gives
+    // "./s.iec").
+    const std::string out = pp("{#include <.//s.iec>}A", env);
+    EXPECT_TRUE(out == "(*{#:0 './/s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A" ||
+                out == "(*{#:0 './s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A")
+        << out;
     EXPECT_EQ("Y", pp("{#if __has_include(<.//s.iec>) && 1}Y{#else}N{#endif}", env));
     EXPECT_EQ("Y", pp("{#if __has_include( (* c *) <.(*x*)/s.iec>) || (* d *) 1}Y{#else}N{#endif}",
                       env));
