@@ -135,6 +135,8 @@ void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
     // is a PRAGMA) is re-lexed with every diagnostic reported (A2 / S-02).
     prev.relexed_pragma = false;
     prev.pragma_unterminated_reported = false;
+    // Nor are its lines those of either operand.
+    prev.line_map.reset();
 
     for (std::size_t k = 1; k < item.size(); ++k)
         src.push_back(std::move(item[k]));

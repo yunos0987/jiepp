@@ -117,6 +117,30 @@ Token read_pragma_body(const std::string& text,
     int pending_hex = -1;
     std::size_t pending_hex_off = 0;
 
+    // The body's source lines (Token::line_map, task d1), as offsets into
+    // body. Source lexing records each raw newline and "$"+newline where it
+    // is folded or dropped. A re-lex never does (a newline in re-lexed text
+    // is a decoded escape, not a source line); with a line map of the text
+    // (opts.line_map) it carries over the breaks that fall inside this
+    // body instead, one cursor step per break.
+    const LineMap* outer = opts.at_current_location ? opts.line_map : nullptr;
+    std::vector<std::size_t> breaks;
+    std::size_t lines_before = 0;
+    std::size_t next_break = 0;
+    if (outer) {
+        lines_before = outer->line_of(start_pos);
+        next_break = static_cast<std::size_t>(
+            std::upper_bound(outer->breaks.begin(), outer->breaks.end(), start_pos) -
+            outer->breaks.begin());
+    }
+    // Breaks of the text at or before `upto` start a line at the next body
+    // character.
+    auto carry_breaks = [&](std::size_t upto) {
+        for (; outer && next_break < outer->breaks.size() && outer->breaks[next_break] <= upto;
+             ++next_break)
+            breaks.push_back(body.size());
+    };
+
     // A "$X" that turns out not to be a two-digit hex escape is kept
     // literally by decode_directive_text(), so lc must see '$' and X too.
     auto flush_pending_hex = [&] {
@@ -128,6 +152,7 @@ Token read_pragma_body(const std::string& text,
     };
 
     while (pos < len) {
+        carry_breaks(pos);
         // Copy a run of characters that the rules below only append, in one
         // step; lc still sees each of them.
         if (pending_hex < 0) {
@@ -135,6 +160,10 @@ Token read_pragma_body(const std::string& text,
             while (run < len && is_plain_pragma_char(text[run]))
                 ++run;
             if (run > pos) {
+                for (; outer && next_break < outer->breaks.size() &&
+                       outer->breaks[next_break] < run;
+                     ++next_break)
+                    breaks.push_back(body.size() + (outer->breaks[next_break] - pos));
                 body.append(text, pos, run - pos);
                 if (is_directive)
                     for (std::size_t i = pos; i < run; ++i)
@@ -153,6 +182,8 @@ Token read_pragma_body(const std::string& text,
             case '\n':
                 pos += 2;
                 ++lineno;
+                if (!opts.at_current_location)
+                    breaks.push_back(body.size());
                 extra_nl.push_back(Token::newline(1));
                 // '$'+newline (line continuation) still joins with nothing;
                 // inside a '//' comment it extends the comment to the next
@@ -168,6 +199,8 @@ Token read_pragma_body(const std::string& text,
                 if ((pos < len) && (text[pos] == '\n'))
                     ++pos;
                 ++lineno;
+                if (!opts.at_current_location)
+                    breaks.push_back(body.size());
                 extra_nl.push_back(Token::newline(1));
                 // Same as the '\n' case above: a pending "$X" survives.
                 continue;
@@ -229,10 +262,16 @@ Token read_pragma_body(const std::string& text,
                         body += "/*" + doc + "*/";
                     } else {
                         body.resize(cs);
+                        // Breaks inside the dropped comment (its "$"+newline
+                        // continuations) now start a line where it was.
+                        for (auto b = breaks.rbegin(); b != breaks.rend() && *b > cs; ++b)
+                            *b = cs;
                     }
                     lc.end_line_comment();
                 }
             }
+            if (!opts.at_current_location)
+                breaks.push_back(body.size());
             if (body.empty() || !is_ws_char(body.back())) {
                 body += ' ';
                 if (is_directive)
@@ -263,7 +302,7 @@ Token read_pragma_body(const std::string& text,
         // one would have, so the error count stays >= 1 and the exit status
         // cannot change.
         if (c == '{' && opts.report_nested_brace) {
-            report_lex_issue(lineno, opts, [&] {
+            report_lex_issue(lineno, opts, pos, [&] {
                 ISSUE(INVALID_PRAGMA_SYNTAX, std::string(1, c));
             });
         }
@@ -279,14 +318,14 @@ Token read_pragma_body(const std::string& text,
                 if (has_star && text[cl + 1] == expected_end) {
                     pos = cl + 2;
                 } else {
-                    report_lex_issue(lineno, opts, [&] {
+                    report_lex_issue(lineno, opts, pos, [&] {
                         ISSUE(INVALID_PRAGMA_SYNTAX, std::string(1, c));
                     });
                     pos = has_star ? cl + 2 : pos + 1;
                 }
             } else {
                 if (has_star) {
-                    report_lex_issue(lineno, opts, [&] {
+                    report_lex_issue(lineno, opts, pos, [&] {
                         ISSUE(INVALID_PRAGMA_SYNTAX, std::string(1, c));
                     });
                     pos = cl + 2;
@@ -315,12 +354,12 @@ Token read_pragma_body(const std::string& text,
 
     if (!closed) {
         if (is_directive) {
-            report_lex_issue(lineno, opts, [&] {
+            report_lex_issue(lineno, opts, pos, [&] {
                 std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
                 ISSUE(INVALID_PP_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
             });
         } else {
-            report_lex_issue(lineno, opts, [&] {
+            report_lex_issue(lineno, opts, pos, [&] {
                 std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
                 ISSUE(INVALID_PRAGMA_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
             });
@@ -328,6 +367,9 @@ Token read_pragma_body(const std::string& text,
     }
 
     std::string full_text = "{" + body + "}";
+    LineMapRef line_map;
+    if (lines_before != 0 || !breaks.empty())
+        line_map = LineMapRef(LineMap{lines_before, std::move(breaks)});
 
     if (is_directive) {
         // B1: classifying/diagnosing this directive's key (PP45/PP46 for an
@@ -339,10 +381,13 @@ Token read_pragma_body(const std::string& text,
         t.type = Token::DIRECTIVE;
         t.text = std::move(full_text);
         t.num_of_lines = 0;
+        t.line_map = std::move(line_map);
         return t;
     }
 
-    return Token::create(Token::PRAGMA, std::move(full_text));
+    Token t = Token::create(Token::PRAGMA, std::move(full_text));
+    t.line_map = std::move(line_map);
+    return t;
 }
 
 } // namespace jiepp::detail

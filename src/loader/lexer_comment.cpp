@@ -8,6 +8,7 @@ Token read_block_comment(const std::string& text, std::size_t& pos,
     // An unclosed comment (PP20) is reported at the line its opener is on,
     // like gcc/clang, not at the line where the input ends.
     const LineNo start_lineno = lineno;
+    const std::size_t start_pos = pos;
     char closer_end = (opener1 == '(') ? ')' : '/';
     std::string body;
     body.reserve(128);
@@ -50,7 +51,7 @@ Token read_block_comment(const std::string& text, std::size_t& pos,
     if (opts.found_unclosed_comment)
         *opts.found_unclosed_comment = true;
     if (opts.report_unclosed_comment) {
-        report_lex_issue(start_lineno, opts, [&] {
+        report_lex_issue(start_lineno, opts, start_pos, [&] {
             ISSUE(UNCLOSED_COMMENT, body);
         });
     }

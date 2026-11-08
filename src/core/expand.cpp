@@ -80,8 +80,19 @@ void dispatch_directive(const Token& t,
     // key/value decoding, and any earlier re-parse by the macro-argument
     // collector in this file, could each raise its own PP21).
     std::optional<std::string> invalid_escape;
-    auto [key, raw_arg] = parse_directive(t.text, invalid_escape);
+    DirectiveLines lines;
+    lines.body = t.line_map.get();
+    auto [key, raw_arg] = parse_directive(t.text, invalid_escape, &lines);
     int kind = DirectiveToken::name_to_kind(key);
+    // Task d1: the lexer diagnostics of the operand's re-lex (by the
+    // handlers below) and PP21 go to the lines the characters are written
+    // on, counted from this directive's line.
+    jiepp::preprocessor_detail::RelexScope relex_scope(raw_arg, lines.arg.get());
+    auto report_invalid_escape = [&] {
+        Issue::LineGuard guard(
+            wrap_lineno(Issue::lineno() + static_cast<LineNo>(lines.invalid_escape_line)));
+        ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+    };
 
     bool active = ctrl_is_active(ctrl);
 
@@ -94,7 +105,7 @@ void dispatch_directive(const Token& t,
         // {#if 0} block, matching gcc (see classify_unknown_directive()).
         if (active) {
             if (invalid_escape)
-                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                report_invalid_escape();
             // `key` is decoded, so a $n/$r escape in the source is a real
             // line break here; re-escape it so the UNKNOWN_DIRECTIVE/
             // INVALID_DIRECTIVE_NAME diagnostic stays on one line, like the
@@ -133,7 +144,7 @@ void dispatch_directive(const Token& t,
             }
             if (active) {
                 if (invalid_escape)
-                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                    report_invalid_escape();
                 bool cond = ifdef_form ? eval_ifdef(raw_arg, ifndef_form, ifdef_name, env)
                                        : eval_cond(raw_arg, env);
                 ctrl.push_back({false, cond ? std::optional<bool>(true) : std::nullopt});
@@ -151,7 +162,7 @@ void dispatch_directive(const Token& t,
                 return;
             }
             if (ctrl_parent_active(ctrl) && invalid_escape)
-                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                report_invalid_escape();
             {
                 auto& last = ctrl.back();
                 if (last.seen_else) {
@@ -198,7 +209,7 @@ void dispatch_directive(const Token& t,
                 // "active" for this purpose, so PP21/PP29/PP49 are reported
                 // here before the "else without matching if" error.
                 if (invalid_escape)
-                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                    report_invalid_escape();
                 check_end_of_directive("else", raw_arg);
                 ISSUE(ELSE_ERROR, "else without matching if");
                 return;
@@ -215,7 +226,7 @@ void dispatch_directive(const Token& t,
                 const bool reached = ctrl_parent_active(ctrl) &&
                                      (!last.condition.has_value() || *last.condition);
                 if (reached && invalid_escape)
-                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                    report_invalid_escape();
                 if (reached)
                     check_end_of_directive("else", raw_arg);
                 if (last.seen_else) {
@@ -235,13 +246,13 @@ void dispatch_directive(const Token& t,
                 // Unlike {#elif} above: clang scans an unmatched {#endif}'s
                 // operand too (R3), matching the {#else} case above.
                 if (invalid_escape)
-                    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                    report_invalid_escape();
                 check_end_of_directive("endif", raw_arg);
                 ISSUE(ENDIF_ERROR, "endif without matching if");
                 return;
             }
             if (ctrl_parent_active(ctrl) && invalid_escape)
-                ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+                report_invalid_escape();
             // Like gcc/clang (R2), a reached {#endif}'s operand is still
             // scanned for PP29/PP49, before the group it closes is popped.
             if (ctrl_parent_active(ctrl))
@@ -258,7 +269,7 @@ void dispatch_directive(const Token& t,
         return;
 
     if (invalid_escape)
-        ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+        report_invalid_escape();
 
     switch (kind) {
     case DirectiveToken::DEFINE: {
@@ -434,6 +445,10 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
     // `out`; a later pass over that text (pragma_unterminated_reported) only
     // lexes it silently.
     bool found_unterminated = false;
+    // The body's lexer diagnostics go to the lines its characters are
+    // written on (task d1); a rewritten "(*{...}*)" text has no line map.
+    jiepp::preprocessor_detail::RelexScope relex_scope(
+        body, is_annotated ? nullptr : t.line_map.get());
     for (const auto& et : jiepp::preprocessor_detail::expand_operand_tokens(
              body, env, !t.pragma_unterminated_reported,
              t.relexed_pragma ? OperandKind::nested_pragma_body : OperandKind::pragma_body,
@@ -446,8 +461,12 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
     // a rescan (macro argument) re-lexes it with every diagnostic reported
     // (except the PP29 and PP20 already reported above).
     out.relexed_pragma = false;
-    if (found_unterminated)
-        out.pragma_unterminated_reported = true;
+    out.line_map.reset();
+    // Marked by what the rewritten text still holds, not inherited from t:
+    // t's mark may only say that its own body was reported where it is
+    // written (report_pragma_body_issues()), which says nothing about a
+    // literal the expansion brought in.
+    out.pragma_unterminated_reported = found_unterminated;
     // A newline printed inside the pragma text comes from a macro
     // replacement (the lexer already folded the raw newlines of the body),
     // so it is not a source line (see Token::output_only_lines).
@@ -461,6 +480,33 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
         out.text = "(*{" + expanded_body + "}*)";
     }
     ots.push_back(out);
+}
+
+// Task d1: the two reports below run while collecting a function macro's
+// arguments, inside expand(); kept out of line so their locals do not
+// enlarge expand()'s frame, which every level of a nested expansion pays
+// (PP63 stack guard).
+
+// PP21 for a directive token that is not run (a control or output
+// directive in a macro argument), at the line of its first invalid escape,
+// as dispatch_directive() reports it.
+[[gnu::noinline]] void report_invalid_escape_at_its_line(const Token& t) {
+    std::optional<std::string> invalid_escape;
+    DirectiveLines lines;
+    lines.body = t.line_map.get();
+    (void)parse_directive(t.text, invalid_escape, &lines);
+    if (!invalid_escape)
+        return;
+    Issue::LineGuard guard(
+        wrap_lineno(Issue::lineno() + static_cast<LineNo>(lines.invalid_escape_line)));
+    ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
+}
+
+// PP20/PP29 of a pragma body in a macro argument, once, at `line` (that
+// of the pragma's '{') -- see report_pragma_body_issues().
+[[gnu::noinline]] void report_argument_pragma_body(Token& pragma, Env& env, LineNo line) {
+    Issue::LineGuard guard(wrap_lineno(line));
+    jiepp::preprocessor_detail::report_pragma_body_issues(pragma, env);
 }
 
 } // namespace
@@ -973,6 +1019,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                                 jiepp::preprocessor_detail::report_unterminated_literal(pt);
                             });
                         }
+                        // Task d1: likewise PP20/PP29 in a pragma's body, once,
+                        // at the line of its '{' (plus the body's own lines),
+                        // whether or not the parameter is used; the body's
+                        // expansion then lexes it without reporting them.
+                        if (pt.type == Token::PRAGMA && !pt.pragma_unterminated_reported)
+                            report_argument_pragma_body(pt, env, env.get_lineno() + sum_uncounted);
 
                         const bool was_counted_comment =
                             pt.lineno_counted && pt.type == Token::C && pt.text.starts_with("//");
@@ -1035,7 +1087,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                             if (dkind != -1 &&
                                 (dkind & (DirectiveToken::MASK_CTRL | DirectiveToken::MASK_CTRLEX))) {
                                 if (dinvalid_escape)
-                                    ISSUE(INVALID_ESCAPE_SEQUENCE, *dinvalid_escape);
+                                    report_invalid_escape_at_its_line(pt);
                                 ISSUE(OPERATION_NOT_ALLOWED,
                                       "control directive inside macro argument");
                             } else if (dkind != -1 &&
@@ -1051,7 +1103,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                                 // reports UNKNOWN_DIRECTIVE/INVALID_DIRECTIVE_NAME (B1) —
                                 // so it is still diagnosed exactly once, correctly.
                                 if (dinvalid_escape)
-                                    ISSUE(INVALID_ESCAPE_SEQUENCE, *dinvalid_escape);
+                                    report_invalid_escape_at_its_line(pt);
                                 ISSUE(OPERATION_NOT_ALLOWED,
                                       "'" + dkey + "' inside macro argument: its output "
                                       "would be emitted before the enclosing macro call's "

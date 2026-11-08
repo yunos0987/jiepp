@@ -153,9 +153,15 @@ std::vector<Token> tokenize(const std::string& text, LineNo lineno, LexOptions o
             }
             lineno += dollar_nl;
             // No closing quote (ended by a newline or the end of the input):
-            // never merged with the next literal; core/ reports PP29.
+            // never merged with the next literal; core/ reports PP29, at the
+            // line of the quote when the re-lexed text has a line map.
+            LineMapRef line_map;
+            if (!closed && opts.at_current_location && opts.line_map) {
+                if (const std::size_t below = opts.line_map->line_of(start))
+                    line_map = LineMapRef(LineMap{below, {}});
+            }
             push_string_token(r, merge_state, tok_type, text.substr(start, p - start),
-                              dollar_nl, !closed);
+                              dollar_nl, !closed, std::move(line_map));
             continue;
         }
 
@@ -266,14 +272,15 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
 
 std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
                               bool report_nested_brace, bool report_unclosed_comment,
-                              bool* found_unclosed_comment) {
+                              bool* found_unclosed_comment, const LineMap* line_map) {
     // The line counter only feeds diagnostics, which at_current_location
     // reports at the current Issue location instead; 1 is never shown.
     return lex_text(text, remove_comments, 1,
                     LexOptions{.report_nested_brace = report_nested_brace,
                                .at_current_location = true,
                                .report_unclosed_comment = report_unclosed_comment,
-                               .found_unclosed_comment = found_unclosed_comment},
+                               .found_unclosed_comment = found_unclosed_comment,
+                               .line_map = line_map},
                     /*strip_bom=*/false);
 }
 

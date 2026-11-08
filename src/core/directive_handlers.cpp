@@ -253,6 +253,17 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     // with -nC (gcc/clang without -C). Either way a comment is whitespace to
     // the checks below (Token::C has MASK_WS), so the definition is the same.
     auto ts = lex_operand(raw_arg, env.get_remove_comments());
+    // Task d1: like clang, which lexes a macro body once at its definition,
+    // the PP20/PP29 of a pragma body in the replacement list are reported
+    // here, at the lines the body is written on, and not again at each
+    // expansion. A -D value (handle_define() outside dispatch_directive(),
+    // so no RelexScope) keeps reporting them at the expansion.
+    const LineMap* operand_lines = nullptr;
+    if (RelexScope::find(raw_arg, &operand_lines)) {
+        for (auto& t : ts)
+            if (t.type == Token::PRAGMA)
+                report_pragma_body_issues(t, env);
+    }
     ts = ts_ltrim(std::move(ts));
 
     // PP80 (__VA_OPT__ outside a variadic macro), one per __VA_OPT__ token,

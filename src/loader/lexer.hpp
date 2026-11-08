@@ -23,7 +23,8 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
 // directive operand, a pragma body, or macro-produced text. Its newlines are
 // not source lines, so every lexer diagnostic is reported at the current
 // Issue location (Issue::lineno()/filepath()), like the other diagnostics of
-// the directive or pragma being processed; call it only where that location
+// the directive or pragma being processed, moved down by line_map (below)
+// when the text's source lines are known; call it only where that location
 // is set. Otherwise identical to iec3_tokens_from_string(), except that a
 // leading UTF-8 BOM in the text is kept (source text strips it).
 // report_nested_brace: false only when re-lexing the body of a pragma that
@@ -34,10 +35,15 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
 // false skips PP20 (unclosed comment), for the rescan of a pragma body that
 // already reported it. found_unclosed_comment, if not null, is set to true
 // when the text has an unclosed comment (reported or not); never set to false.
+// line_map, if not null, gives the source lines of the text (offsets into
+// it): a diagnostic is then reported that many lines below the current Issue
+// location, and the pragmas, directives and unterminated literals lexed from
+// the text carry the part of the map that covers them (Token::line_map).
 std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
                               bool report_nested_brace = true,
                               bool report_unclosed_comment = true,
-                              bool* found_unclosed_comment = nullptr);
+                              bool* found_unclosed_comment = nullptr,
+                              const LineMap* line_map = nullptr);
 
 // True iff `s` is exactly one identifier as tokenize() lexes it:
 // [A-Za-z_][A-Za-z0-9_]* (ASCII only, like IEC 61131-3 identifiers).

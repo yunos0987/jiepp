@@ -208,7 +208,8 @@ bool try_push_number(std::vector<Token>& result,
 
 void push_string_token(std::vector<Token>& result, StringMergeState& state,
                        int type, std::string str,
-                       int num_of_lines, bool unterminated) {
+                       int num_of_lines, bool unterminated,
+                       LineMapRef line_map) {
     // The merge candidate is the last token before the trailing run of
     // Token::WS tokens (spaces and newlines). Only the tokens appended since
     // the previous call are examined, so each token is looked at once per
@@ -238,11 +239,13 @@ void push_string_token(std::vector<Token>& result, StringMergeState& state,
         merged.text += str.substr(1);
         merged.num_of_lines += num_of_lines;
         merged.unterminated = unterminated;
+        merged.line_map = std::move(line_map);
         return;
     }
 
     Token t = Token::create(type, std::move(str), num_of_lines);
     t.unterminated = unterminated;
+    t.line_map = std::move(line_map);
     result.push_back(std::move(t));
 }
 

@@ -67,15 +67,58 @@ void handle_pragma_style(const std::string& raw_arg, Env& env);
 bool handle_pragma(const std::string& raw_arg, Env& env, std::string* restored_name);
 
 // PP29 (UNTERMINATED_STRING_LITERAL) at the current Issue location if the
-// lexer marked t (Token::unterminated); clears the mark first, so neither
-// t nor a later copy (macro body, argument) is reported again.
+// lexer marked t (Token::unterminated) -- moved down to the line of its quote
+// when t has a line map (a literal lexed from a multi-line re-lexed text);
+// clears the mark first, so neither t nor a later copy (macro body,
+// argument) is reported again.
 void report_unterminated_literal(Token& t);
+
+// The text that a directive handler or a pragma expansion re-lexes, with its
+// source lines (task d1). While a scope is the innermost one, lex_operand()
+// of a text equal to `text` lexes it with `map` (iec3_relex()'s line_map), so
+// its diagnostics go to the lines the characters are written on, counted
+// from the current Issue location. Set by dispatch_directive() for the
+// decoded operand (raw_arg), by expand_pragma_token() and
+// report_pragma_body_issues() for a pragma body; scopes nest (a pragma
+// expanded inside a handler) and end with the enclosing call. A re-lex
+// outside any scope (-D values, macro-produced text, read_header_name())
+// has no map. Matching by content keeps the map off any other text lexed
+// while the scope is open (a macro's text, an included file's operands).
+class RelexScope {
+public:
+    RelexScope(const std::string& text, const LineMap* map) noexcept;
+    ~RelexScope();
+    RelexScope(const RelexScope&) = delete;
+    RelexScope& operator=(const RelexScope&) = delete;
+    // Whether the innermost scope is for `text`; *map is set to its map
+    // (null when the text is on one line).
+    static bool find(const std::string& text, const LineMap** map) noexcept;
+
+private:
+    const std::string* text_;
+    const LineMap* map_;
+    RelexScope* prev_;
+};
+
+// Reports the PP20 (unclosed comment) and PP29 (unterminated literal) of a
+// PRAGMA token's body once, where the body is written: lexes the body under
+// a RelexScope with the token's line map (the result is discarded), at the
+// current Issue location, then sets Token::pragma_unterminated_reported, so
+// its expansion -- once or many times, at another location -- re-lexes
+// the body without reporting them again, and drops the line map. For a
+// pragma in a {#define} body (handle_define(), the definition's line) and in
+// a function-macro argument (expand(), the line of its '{'). The body's
+// other lexer diagnostics (PP22, PP23) stay with its expansion. Does nothing
+// for a token already marked or not in the lexer's "{...}" form.
+void report_pragma_body_issues(Token& pragma, Env& env);
 
 // Lexes a decoded directive operand and reports PP29 for each unterminated
 // literal in it; with report_unterminated == false (message text, like
 // clang's #error/#warning) only clears the marks. Lexes with iec3_relex(),
 // so its own diagnostics (PP20/PP22/PP23) are also reported at the current
-// Issue location; report_nested_brace is passed to it.
+// Issue location -- each moved down to the line its character is written
+// on when a RelexScope for `text` gives a line map; report_nested_brace is
+// passed to it. Only PRAGMA tokens of the result keep a line map.
 // found_unterminated, if not null, is set to true when the text has an
 // unterminated literal or an unclosed comment (whether or not it was
 // reported); never set to false. report_unclosed_comment == false lexes an

@@ -8,6 +8,7 @@
 #include "../loader/loader.hpp"
 
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -48,13 +49,51 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
 
 namespace jiepp::preprocessor_detail {
 
+namespace {
+
+// Runs fn at the current Issue location, moved down by `below` lines.
+template <typename F>
+void at_lines_below(std::size_t below, F&& fn) {
+    if (below == 0) {
+        fn();
+        return;
+    }
+    Issue::LineGuard guard(wrap_lineno(Issue::lineno() + static_cast<LineNo>(below)));
+    fn();
+}
+
+thread_local RelexScope* relex_scope_top = nullptr;
+
+} // namespace
+
+RelexScope::RelexScope(const std::string& text, const LineMap* map) noexcept
+    : text_(&text), map_(map), prev_(relex_scope_top) {
+    relex_scope_top = this;
+}
+
+RelexScope::~RelexScope() {
+    relex_scope_top = prev_;
+}
+
+bool RelexScope::find(const std::string& text, const LineMap** map) noexcept {
+    const RelexScope* s = relex_scope_top;
+    if (!s || (s->text_ != &text && *s->text_ != text))
+        return false;
+    *map = s->map_;
+    return true;
+}
+
 void report_unterminated_literal(Token& t) {
     if (!t.unterminated)
         return;
     t.unterminated = false;
+    const std::size_t below = t.line_map ? t.line_map->line_of(0) : 0;
+    t.line_map.reset();
     // Opening quote to the end of the literal's first line: a "$"+newline
     // continuation would otherwise put a line break in the diagnostic.
-    ISSUE(UNTERMINATED_STRING_LITERAL, t.text.substr(0, t.text.find_first_of("\r\n")));
+    at_lines_below(below, [&] {
+        ISSUE(UNTERMINATED_STRING_LITERAL, t.text.substr(0, t.text.find_first_of("\r\n")));
+    });
 }
 
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
@@ -62,9 +101,12 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
                                bool* found_unterminated, bool report_unclosed_comment,
                                bool* found_directive) {
     // U1: re-lexed text is not source text, so its diagnostics go to the
-    // current Issue location (the directive/pragma being processed).
+    // current Issue location (the directive/pragma being processed), moved
+    // down to the line of the character when the text's lines are known.
+    const LineMap* line_map = nullptr;
+    (void)RelexScope::find(text, &line_map);
     auto ts = iec3_relex(text, remove_comments, report_nested_brace,
-                         report_unclosed_comment, found_unterminated);
+                         report_unclosed_comment, found_unterminated, line_map);
     // A directive is only what the source-file lexer reads as a raw "{#".
     // Re-lexed text (a $-decoded operand, a macro replacement list, a pragma
     // body, a -D value) never forms one: a "{#" found here came from "${#" /
@@ -77,7 +119,9 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
             return false;
         if (found_directive)
             *found_directive = true;
-        ISSUE(INVALID_PP_SYNTAX, t.text);
+        at_lines_below(t.line_map ? t.line_map->line_of(0) : 0, [&] {
+            ISSUE(INVALID_PP_SYNTAX, t.text);
+        });
         return true;
     });
     for (auto& t : ts) {
@@ -87,8 +131,33 @@ std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
             report_unterminated_literal(t);
         else
             t.unterminated = false;
+        // Only a pragma's body is re-lexed again (its expansion).
+        if (t.type != Token::PRAGMA)
+            t.line_map.reset();
     }
     return ts;
+}
+
+void report_pragma_body_issues(Token& pragma, Env& env) {
+    if (pragma.pragma_unterminated_reported || pragma.text.size() < 2 ||
+        pragma.text.front() != '{' || pragma.text.back() != '}')
+        return;
+    const std::string body = pragma.text.substr(1, pragma.text.size() - 2);
+    // Work budget (PP64) for the extra lex, like expand_operand_tokens().
+    env.charge_expansion_steps(body.size());
+    {
+        RelexScope scope(body, pragma.line_map.get());
+        // PP22/PP23 stay with the expansion (it reports them as before);
+        // added to whatever {#ignore} already suppresses.
+        std::set<Issue::Code> quiet = Issue::ignorings_;
+        quiet.insert(Issue::Code::INVALID_PRAGMA_SYNTAX);
+        quiet.insert(Issue::Code::INVALID_PP_SYNTAX);
+        Issue::Ignoring guard(std::move(quiet));
+        (void)lex_operand(body, env.get_remove_comments(), /*report_unterminated=*/true,
+                          /*report_nested_brace=*/false);
+    }
+    pragma.pragma_unterminated_reported = true;
+    pragma.line_map.reset();
 }
 
 bool is_terminated_literal(const Token& t) {

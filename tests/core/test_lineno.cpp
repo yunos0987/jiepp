@@ -1,6 +1,9 @@
 #include "lineno_test_helper.hpp"
 #include "loader/lexer.hpp"
 
+#include <algorithm>
+#include <chrono>
+
 // ---- Basic directive, defined operator, object macro, all-token-kinds: line number tracking ----
 
 TEST_F(LinenoTest, Directive) {
@@ -352,9 +355,15 @@ $
 // starting at 1, so PP20/PP22/PP23 found while re-lexing pointed at line 1
 // (plus any decoded $n newlines) instead of the directive or pragma being
 // processed. They now use the same line as the other diagnostics of that
-// directive/pragma (PP29, PP51, PP52, ...): the opening '{' line, the macro
-// name's line for an object macro, the closing ')' line of a function-macro
-// call. The fixture name matches the sandbox test presets' filter
+// directive/pragma (PP29, PP51, PP52, ...): the opening '{' line, moved
+// down to the line the character is written on in a multi-line directive
+// or pragma (task d1, like gcc/clang). A pragma body in a macro replacement
+// list is reported once, at the {#define}'s lines, and one in a
+// function-macro argument once, at its own lines, as the argument is
+// collected (clang lexes the text once, where it is written). Text that an
+// expansion rewrote is reported where it is re-lexed: the macro name's line
+// for an object macro, the closing ')' line of a function-macro call. The
+// fixture name matches the sandbox test presets' filter
 // ^(Sandbox|RobustnessTest), so these also run in sandbox builds (none of
 // the inputs uses a sandbox-restricted directive).
 
@@ -381,8 +390,9 @@ TEST_F(RobustnessTestRelexLineno, T1_NestedPragmaInSourcePragma) {
               relex_diags(*this, "\n\n\n{ { (* x }"));
 }
 
-TEST_F(RobustnessTestRelexLineno, T2_MultiLinePragmaReportsOpeningLine) {
-    EXPECT_EQ((std::vector<std::string>{kLoc + "4.0: error: PP20: Unclosed comment; '(* x '"}),
+// Task d1: at the line of the comment's opener, not the pragma's '{'.
+TEST_F(RobustnessTestRelexLineno, T2_MultiLinePragmaReportsCommentLine) {
+    EXPECT_EQ((std::vector<std::string>{kLoc + "5.0: error: PP20: Unclosed comment; '(* x '"}),
               relex_diags(*this, "x\n\n\n{ a\n (* x }\n"));
 }
 
@@ -391,21 +401,24 @@ TEST_F(RobustnessTestRelexLineno, T3_DecodedNewlinesAreNotSourceLines) {
               relex_diags(*this, "\n\n\n\n{#if 1 $n$n (* x}\n{#endif}\n"));
 }
 
-TEST_F(RobustnessTestRelexLineno, T4_ObjectMacroPragmaAtMacroNameLine) {
-    EXPECT_EQ((std::vector<std::string>{kLoc + "4.0: error: PP20: Unclosed comment; '(* x '"}),
-              relex_diags(*this, "{#define P ${ (* x $}}\n\n\nP\n"));
+// Task d1 (D-b): a pragma body in a replacement list is reported once, at
+// the {#define}'s line, not at each use.
+TEST_F(RobustnessTestRelexLineno, T4_ObjectMacroPragmaAtDefinitionLine) {
+    EXPECT_EQ((std::vector<std::string>{kLoc + "1.0: error: PP20: Unclosed comment; '(* x '"}),
+              relex_diags(*this, "{#define P ${ (* x $}}\n\n\nP\nP\n"));
 }
 
-TEST_F(RobustnessTestRelexLineno, T5_FunctionMacroPragmaAtClosingParenLine) {
-    EXPECT_EQ((std::vector<std::string>{kLoc + "4.0: error: PP20: Unclosed comment; '(* y '"}),
-              relex_diags(*this, "{#define F() ${ (* y $}}\nF(\n\n)\n"));
+TEST_F(RobustnessTestRelexLineno, T5_FunctionMacroPragmaAtDefinitionLine) {
+    EXPECT_EQ((std::vector<std::string>{kLoc + "1.0: error: PP20: Unclosed comment; '(* y '"}),
+              relex_diags(*this, "{#define F() ${ (* y $}}\nF(\n\n)\nF()\n"));
 }
 
-TEST_F(RobustnessTestRelexLineno, T6_PragmaInMacroArgumentAtClosingParenLine) {
-    // Once, at the closing ')' line: the rescan of the substituted argument
-    // does not report the comment again.
+// Task d1 (D-c): once, at the pragma's own line, as the argument is
+// collected; neither its expansion nor the rescan of the substituted
+// argument reports the comment again.
+TEST_F(RobustnessTestRelexLineno, T6_PragmaInMacroArgumentAtItsLine) {
     EXPECT_EQ((std::vector<std::string>{
-                  kLoc + "5.0: error: PP20: Unclosed comment; '(* arg '",
+                  kLoc + "4.0: error: PP20: Unclosed comment; '(* arg '",
               }),
               relex_diags(*this, "{#define F(x) x}\n\nF(\n{ (* arg }\n)\n"));
 }
@@ -465,18 +478,48 @@ TEST_F(RobustnessTestRelexLineno, T14_RelexUsesCurrentLocation) {
               messages());
 }
 
-// PP20 inside a multi-line pragma now agrees with PP29 from the same kind of
-// re-lex, which was already reported at the opening '{' line (SPEC: PP29).
+// PP20 inside a multi-line pragma agrees with PP29 from the same kind of
+// re-lex (SPEC: PP29): both at the line the comment or quote is on.
 TEST_F(RobustnessTestRelexLineno, T15_AgreesWithPP29) {
     EXPECT_EQ((std::vector<std::string>{
-                  kLoc + "3.0: error: PP20: Unclosed comment; '(* x '",
-                  kLoc + "6.0: warning: PP29: Missing terminating quote character; ''x'",
+                  kLoc + "5.0: error: PP20: Unclosed comment; '(* x '",
+                  kLoc + "8.0: warning: PP29: Missing terminating quote character; ''x'",
               }),
               relex_diags(*this, "\n\n{ a\n\n (* x }\n{attribute\n\n 'x}\n"));
-    // Same shape as T6, with PP29: once, at the closing ')' line (the rescan
+    // Same shape as T6, with PP29: once, at the pragma's line (the rescan
     // of the substituted argument does not report the literal again).
     EXPECT_EQ((std::vector<std::string>{
-                  kLoc + "5.0: warning: PP29: Missing terminating quote character; ''arg '",
+                  kLoc + "4.0: warning: PP29: Missing terminating quote character; ''arg '",
               }),
               relex_diags(*this, "{#define F(x) x}\n\nF(\n{ 'arg }\n)\n"));
 }
+
+// Task d1: the re-lex of a directive operand that spans many lines reports
+// each diagnostic at its line by a binary search of the operand's line map
+// (LineMap::line_of()), not a scan: one raw '{' per line, each a PP22 of the
+// source lex and again of the re-lex (inside the unclosed pragma the first
+// '{' opens), so kN diagnostics over kN line breaks. A per-diagnostic scan
+// would be about kN * kN / 2 = 5e9 steps. Release-only, like
+// SubstCostTest.*_TimingGuard: a Debug build is not representative of real
+// performance.
+#ifdef NDEBUG
+TEST_F(RobustnessTestRelexLineno, T16_ManyLinesAreBinarySearched_TimingGuard) {
+    constexpr int kN = 100000;
+    std::string src = "{#define X {";
+    for (int i = 0; i < kN; ++i)
+        src += "\n{";
+    src += "}\n";
+    Issue::ContinueMode guard({});
+    const auto t0 = std::chrono::steady_clock::now();
+    (void)pp(src);
+    const double secs =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    const auto ms = messages();
+    const std::string last_brace =
+        kLoc + std::to_string(kN + 1) + ".0: error: PP22: Invalid syntax for pragma; '{'";
+    // The '{' on the last line: once by the source lex, once by the re-lex.
+    EXPECT_EQ(2, std::count(ms.begin(), ms.end(), last_brace));
+    EXPECT_GE(ms.size(), static_cast<std::size_t>(2 * kN));
+    EXPECT_LT(secs, 3.0) << "n=" << kN << " took " << secs << "s";
+}
+#endif

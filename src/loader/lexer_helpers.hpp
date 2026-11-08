@@ -38,19 +38,34 @@ int consume_one_nl(const std::string& s, std::size_t& pos);
 //   reported it (Token::pragma_unterminated_reported).
 // found_unclosed_comment: if not null, set to true when an unclosed comment
 //   is met (whether or not it is reported); never set to false.
+// line_map: re-lex only; the source lines of the text (LineMap, offsets
+//   into the text being lexed), or null when it is on one line or its lines
+//   are not known. A diagnostic is then reported line_of(pos) lines below
+//   the current Issue location, and the PRAGMA/DIRECTIVE tokens and
+//   unterminated literals lexed from the text get the part of the map that
+//   covers them (Token::line_map).
 struct LexOptions {
     bool report_nested_brace = true;
     bool at_current_location = false;
     bool report_unclosed_comment = true;
     bool* found_unclosed_comment = nullptr;
+    const LineMap* line_map = nullptr;
 };
 
-// Runs fn, which raises a lexer diagnostic: at the lexer's line `lineno` of
-// the current file (source lexing), or at the current Issue location
-// unchanged (re-lexing, LexOptions::at_current_location).
+// Runs fn, which raises a lexer diagnostic about the character at offset
+// `pos` of the text: at the lexer's line `lineno` of the current file
+// (source lexing), or at the current Issue location (re-lexing,
+// LexOptions::at_current_location), moved down by the line map's lines
+// before `pos` when the text has one.
 template <typename F>
-void report_lex_issue(LineNo lineno, LexOptions o, F&& fn) {
+void report_lex_issue(LineNo lineno, LexOptions o, std::size_t pos, F&& fn) {
     if (o.at_current_location) {
+        const std::size_t below = o.line_map ? o.line_map->line_of(pos) : 0;
+        if (below == 0) {
+            fn();
+            return;
+        }
+        Issue::LineGuard guard(wrap_lineno(Issue::lineno() + static_cast<LineNo>(below)));
         fn();
         return;
     }
@@ -88,8 +103,12 @@ struct StringMergeState {
     std::size_t ws_run_begin = 0;
     std::size_t scanned = 0;
 };
+// line_map: for an unterminated literal lexed from a multi-line re-lexed
+// text, the line its quote is on (Token::line_map); also given to the
+// literal it is merged into, which is then reported at this quote's line.
 void push_string_token(std::vector<Token>& result, StringMergeState& state,
                        int type, std::string str,
-                       int num_of_lines = 0, bool unterminated = false);
+                       int num_of_lines = 0, bool unterminated = false,
+                       LineMapRef line_map = {});
 
 } // namespace jiepp::detail
