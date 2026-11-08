@@ -2,7 +2,7 @@
 
 1.0.0 以降の変更を記録します。0.8.0 以前は GitHub Releases（https://github.com/yunos0987/jiepp/releases）を参照してください。
 
-## Unreleased
+## 1.4.0 (2026-11-08)
 
 ### 互換性に影響する変更 / Breaking changes
 
