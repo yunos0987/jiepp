@@ -1,5 +1,9 @@
 #include "test_helper.hpp"
 
+#include "loader/loader.hpp"
+
+#include <sstream>
+
 static const std::filesystem::path DIR = "tests/core/test_include";
 
 class IncludeTest : public JieppTest {};
@@ -32,6 +36,67 @@ b;
 3;
 )", o);
     EXPECT_TRUE(empty());
+}
+
+TEST_F(IncludeTest, RepeatedIncludeOfResolvedFileGivesSameOutput) {
+    const fs::path dir = fs::temp_directory_path() / "jiepp_include_repeat";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    {
+        std::ofstream(dir / "h.iec", std::ios::binary) << "h\n";
+        std::ofstream(dir / "m.iec", std::ios::binary)
+            << "{#include 'h.iec'}\n{#include 'h.iec'}\n{#include 'h.iec'}\n";
+    }
+    std::string o;
+    EXPECT_NO_THROW({ o = pp_file(dir / "m.iec"); });
+    std::size_t count = 0;
+    for (std::size_t p = o.find("h\n"); p != std::string::npos; p = o.find("h\n", p + 1))
+        ++count;
+    EXPECT_EQ(3u, count) << o;
+    EXPECT_TRUE(empty());
+    fs::remove_all(dir, ec);
+}
+
+TEST_F(IncludeTest, FileAppearingAfterAFailedLookupIsFound) {
+    // Only a found file is remembered: a miss looks again the next time.
+    const fs::path dir = fs::temp_directory_path() / "jiepp_include_miss";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    Env env = setup();
+    const std::string header = (dir / "late.iec").generic_string();
+    EXPECT_TRUE(Loader::fullpath(header, Loader::LoadType::INCLUDE, env).empty());
+    { std::ofstream(dir / "late.iec", std::ios::binary) << "x\n"; }
+    EXPECT_FALSE(Loader::fullpath(header, Loader::LoadType::INCLUDE, env).empty());
+    fs::remove_all(dir, ec);
+}
+
+TEST_F(IncludeTest, ResolvedPathIsKeptForTheLifetimeOfTheEnv) {
+    // Like the token cache: a header found by one preprocess() call is still
+    // found by the next call on the same Env after the file is removed.
+    const fs::path dir = fs::temp_directory_path() / "jiepp_include_kept";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const fs::path header = dir / "h.iec";
+    { std::ofstream(header, std::ios::binary) << "x\n"; }
+    Env env = setup();
+    const std::string text = "{#include '" + header.generic_string() + "'}\n";
+    {
+        std::istringstream in(text);
+        std::ostringstream out;
+        EXPECT_NO_THROW(preprocess(in, out, env));
+    }
+    fs::remove(header, ec);
+    {
+        std::istringstream in(text);
+        std::ostringstream out;
+        EXPECT_NO_THROW(preprocess(in, out, env));
+        EXPECT_NE(std::string::npos, out.str().find("x\n")) << out.str();
+    }
+    EXPECT_TRUE(empty());
+    fs::remove_all(dir, ec);
 }
 
 TEST_F(IncludeTest, IncludeSingle) {
@@ -110,6 +175,63 @@ TEST_F(IncludeTest, IncludeDirectory) {
     EXPECT_THROW(pp("{#include 'tests/core/test_include'}"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INCLUDE_TARGET_IS_DIRECTORY, code());
     EXPECT_TRUE(empty());
+}
+
+// An empty filename resolves to the directory it is joined onto, so it ends in
+// PP14; the context says so instead of being empty.
+static void expect_include_error(JieppTest& t, const std::string& src,
+                                 const std::string& expected_tail) {
+    Issue::initialize(t.output());
+    t.DiagBox::initialize();
+    EXPECT_THROW(pp(src), Issue::Exception) << src;
+    const std::string m = t.message();
+    EXPECT_NE(std::string::npos, m.find(expected_tail)) << src << " -> " << m;
+}
+
+TEST_F(IncludeTest, EmptyFilenameQuotedIsPP14WithContext) {
+    fs::current_path(jiepp_root_dir());
+    for (const char* src : {"{#include ''}", "{#include \"\"}"})
+        expect_include_error(*this, src,
+                             "error: PP14: Include target is a directory; 'empty filename'");
+}
+
+TEST_F(IncludeTest, EmptyFilenameViaSyspathIsPP14WithContext) {
+    fs::current_path(jiepp_root_dir());
+    for (const char* directive : {"{#include <>}", "{#sinclude ''}", "{#sinclude <>}",
+                                  "{#include ''}"})
+        expect_include_error(
+            *this, std::string("{#syspath 'tests/core/test_include'}") + directive,
+            "error: PP14: Include target is a directory; 'empty filename'");
+}
+
+// Cases that never reached PP14 with an empty context keep their code.
+TEST_F(IncludeTest, EmptyFilenameWithoutSyspathStaysPP11) {
+    fs::current_path(jiepp_root_dir());
+    for (const char* directive : {"{#include <>}", "{#sinclude ''}"})
+        expect_include_error(*this, directive, "error: PP11: No such file or directory");
+}
+
+// __has_include answers 0 for an empty filename (a directory is not a file), with
+// or without a syspath, and reports nothing.
+TEST_F(IncludeTest, HasIncludeEmptyFilenameIsZeroWithoutDiagnostic) {
+    fs::current_path(jiepp_root_dir());
+    for (const char* operand : {"''", "\"\"", "<>"}) {
+        for (const char* prefix : {"", "{#syspath 'tests/core/test_include'}"}) {
+            const std::string src = std::string(prefix) + "{#if __has_include(" + operand +
+                                    ")}\nYES\n{#else}\nNO\n{#endif}\n";
+            std::string o;
+            EXPECT_NO_THROW({ o = pp(src); }) << src;
+            EXPECT_NE(std::string::npos, o.find("NO")) << src << " -> " << o;
+            EXPECT_EQ(std::string::npos, o.find("YES")) << src << " -> " << o;
+            EXPECT_TRUE(empty()) << src;
+        }
+    }
+}
+
+TEST_F(IncludeTest, DirectoryContextKeepsTheWrittenPath) {
+    fs::current_path(jiepp_root_dir());
+    expect_include_error(*this, "{#include '.'}",
+                         "error: PP14: Include target is a directory; '.'");
 }
 
 TEST_F(IncludeTest, DirectoryShadowedByLaterSyspath) {
@@ -319,9 +441,10 @@ TEST_F(IncludeTest, CommentsAroundIncludeOperand) {
     EXPECT_EQ(sinc, pp("{#syspath 'tests/core/test_include' // c}{#sinclude 'a.iec' (* c *)}"));
     EXPECT_TRUE(empty());
 
-    // A document comment is a token, not whitespace: still an error.
-    EXPECT_THROW(pp("{#include 'tests/core/test_include/a.iec' (*! d *)}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::INVALID_PATH, code());
+    // A document comment is a token, not whitespace: an extra token after
+    // the path, a warning (PP49), and the file is still included.
+    EXPECT_EQ(plain, pp("{#include 'tests/core/test_include/a.iec' (*! d *)}"));
+    EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, code());
 }
 
 TEST_F(IncludeTest, PragmaOnceWithCommentOrExtraTokens) {
@@ -366,6 +489,23 @@ TEST_F(IncludeTest, SyspathPragmaReemittedAsWritten) {
         << "expected the operand re-emitted as written; got:\n" << o;
     EXPECT_EQ(std::string::npos, o.find(fs::current_path().generic_string()))
         << "pragma must not be rewritten to an absolute path; got:\n" << o;
+    EXPECT_TRUE(empty());
+}
+
+// The re-emitted pragma writes "{" and "}" of the path as $7B and $7D (and
+// "$" as $$), so jiepp can read its own output: with a raw "}" the pragma
+// would end early (PP22/PP29).
+TEST_F(IncludeTest, SyspathPragmaEscapesBracesAndRoundTrips) {
+    fs::current_path(jiepp_root_dir());
+    std::string o;
+    EXPECT_NO_THROW({ o = pp("{#syspath 'd$7Bx$7D$$y'}"); });
+    EXPECT_EQ("(*{syspath:'d$7Bx$7D$$y'}*)", o);
+    EXPECT_TRUE(empty());
+
+    // Re-reading the output must neither fail nor change it.
+    std::string o2;
+    EXPECT_NO_THROW({ o2 = pp(o); });
+    EXPECT_EQ(o, o2);
     EXPECT_TRUE(empty());
 }
 

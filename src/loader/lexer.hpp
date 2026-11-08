@@ -12,27 +12,38 @@
 // preprocess()) do not use it: they read through Loader::read_file() /
 // Loader::read_stream(), which count bytes for --max-input-bytes (PP67) and
 // report read errors (PP10).
-std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, int lineno = 1);
+std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, LineNo lineno = 1);
 
 // Tokenize text string (source text: diagnostics at the text's own lines,
 // counted from lineno). report_nested_brace: as for iec3_relex() below.
-std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno = 1,
+std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, LineNo lineno = 1,
                                            bool report_nested_brace = true);
 
 // Re-lexes text that is not read verbatim from a source file: a decoded
 // directive operand, a pragma body, or macro-produced text. Its newlines are
 // not source lines, so every lexer diagnostic is reported at the current
 // Issue location (Issue::lineno()/filepath()), like the other diagnostics of
-// the directive or pragma being processed; call it only where that location
-// is set. Otherwise identical to iec3_tokens_from_string(), including the
-// existing behavior of stripping a leading UTF-8 BOM from the text.
+// the directive or pragma being processed, moved down by line_map (below)
+// when the text's source lines are known; call it only where that location
+// is set. Otherwise identical to iec3_tokens_from_string(), except that a
+// leading UTF-8 BOM in the text is kept (source text strips it).
 // report_nested_brace: false only when re-lexing the body of a pragma that
 // was itself produced by re-lexing a pragma body (Token::relexed_pragma):
 // a raw '{' inside a nested pragma/directive body is then not reported
 // (PP22), since the enclosing pass already reported it. Every other
-// diagnostic is reported as usual.
+// diagnostic is reported as usual, except that report_unclosed_comment ==
+// false skips PP20 (unclosed comment), for the rescan of a pragma body that
+// already reported it. found_unclosed_comment, if not null, is set to true
+// when the text has an unclosed comment (reported or not); never set to false.
+// line_map, if not null, gives the source lines of the text (offsets into
+// it): a diagnostic is then reported that many lines below the current Issue
+// location, and the pragmas, directives and unterminated literals lexed from
+// the text carry the part of the map that covers them (Token::line_map).
 std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
-                              bool report_nested_brace = true);
+                              bool report_nested_brace = true,
+                              bool report_unclosed_comment = true,
+                              bool* found_unclosed_comment = nullptr,
+                              const LineMap* line_map = nullptr);
 
 // True iff `s` is exactly one identifier as tokenize() lexes it:
 // [A-Za-z_][A-Za-z0-9_]* (ASCII only, like IEC 61131-3 identifiers).
@@ -47,8 +58,4 @@ bool iec3_is_identifier(std::string_view s);
 // verbatim; an opener followed by optional whitespace and '{' is a pragma
 // opener and is kept; an unclosed block comment runs to the end of s (the
 // lexer has already reported PP20).
-//
-// When header_name is true, a '<' that is the first character other than
-// whitespace and comments starts a <...> path that is copied verbatim up to
-// the first '>', so {#include <dir//a.iec>} keeps its path.
-std::string iec3_blank_out_comments(std::string_view s, bool header_name = false);
+std::string iec3_blank_out_comments(std::string_view s);

@@ -17,7 +17,7 @@ namespace {
 // Unified handler for (* ... *) and /* ... */ families.
 // opener is '(' or '/'; pos points to the opener char.
 void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
-                      std::size_t n, int& lineno, std::vector<Token>& result,
+                      std::size_t n, LineNo& lineno, std::vector<Token>& result,
                       LexOptions opts) {
     if (pos + 2 < n && text[pos + 2] == '!') {
         // Doc comment: (*! or /*!
@@ -44,12 +44,13 @@ void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
     }
 }
 
-std::vector<Token> tokenize(const std::string& text, int lineno, LexOptions opts) {
+std::vector<Token> tokenize(const std::string& text, LineNo lineno, LexOptions opts) {
     std::vector<Token> r;
     r.reserve(text.size() / 8);
 
     const std::size_t n = text.size();
     std::size_t p = 0;
+    StringMergeState merge_state;
 
     while (p < n) {
         char c = text[p];
@@ -152,8 +153,15 @@ std::vector<Token> tokenize(const std::string& text, int lineno, LexOptions opts
             }
             lineno += dollar_nl;
             // No closing quote (ended by a newline or the end of the input):
-            // never merged with the next literal; core/ reports PP29.
-            push_string_token(r, tok_type, text.substr(start, p - start), dollar_nl, !closed);
+            // never merged with the next literal; core/ reports PP29, at the
+            // line of the quote when the re-lexed text has a line map.
+            LineMapRef line_map;
+            if (!closed && opts.at_current_location && opts.line_map) {
+                if (const std::size_t below = opts.line_map->line_of(start))
+                    line_map = LineMapRef(LineMap{below, {}});
+            }
+            push_string_token(r, merge_state, tok_type, text.substr(start, p - start),
+                              dollar_nl, !closed, std::move(line_map));
             continue;
         }
 
@@ -217,7 +225,7 @@ std::vector<Token> tokenize(const std::string& text, int lineno, LexOptions opts
 // Public API
 // ---------------------------------------------------------------------------
 
-std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, int lineno) {
+std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, LineNo lineno) {
     // kludge
     std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     return iec3_tokens_from_string(text, remove_comments, lineno);
@@ -226,12 +234,14 @@ std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, int li
 namespace {
 
 // Shared by iec3_tokens_from_string() and iec3_relex(), so the two cannot
-// drift apart (BOM stripping, comment removal).
-std::vector<Token> lex_text(const std::string& input, bool remove_comments, int lineno,
-                            LexOptions opts) {
+// drift apart (BOM stripping, comment removal). strip_bom: source text strips
+// a leading UTF-8 BOM; re-lexed text (iec3_relex()) keeps it, since its bytes
+// are data of the directive/pragma/macro text, not a file's encoding mark.
+std::vector<Token> lex_text(const std::string& input, bool remove_comments, LineNo lineno,
+                            LexOptions opts, bool strip_bom) {
     std::string text = input;
     // Strip UTF-8 BOM if present
-    if ((text.size() >= 3) &&
+    if (strip_bom && (text.size() >= 3) &&
         (static_cast<unsigned char>(text[0]) == 0xEF) &&
         (static_cast<unsigned char>(text[1]) == 0xBB) &&
         (static_cast<unsigned char>(text[2]) == 0xBF))
@@ -253,27 +263,32 @@ std::vector<Token> lex_text(const std::string& input, bool remove_comments, int 
 
 } // anonymous namespace
 
-std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, int lineno,
+std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, LineNo lineno,
                                            bool report_nested_brace) {
     return lex_text(input, remove_comments, lineno,
-                    LexOptions{.report_nested_brace = report_nested_brace});
+                    LexOptions{.report_nested_brace = report_nested_brace},
+                    /*strip_bom=*/true);
 }
 
 std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
-                              bool report_nested_brace) {
+                              bool report_nested_brace, bool report_unclosed_comment,
+                              bool* found_unclosed_comment, const LineMap* line_map) {
     // The line counter only feeds diagnostics, which at_current_location
     // reports at the current Issue location instead; 1 is never shown.
     return lex_text(text, remove_comments, 1,
                     LexOptions{.report_nested_brace = report_nested_brace,
-                               .at_current_location = true});
+                               .at_current_location = true,
+                               .report_unclosed_comment = report_unclosed_comment,
+                               .found_unclosed_comment = found_unclosed_comment,
+                               .line_map = line_map},
+                    /*strip_bom=*/false);
 }
 
-std::string iec3_blank_out_comments(std::string_view s, bool header_name) {
+std::string iec3_blank_out_comments(std::string_view s) {
     std::string r;
     r.reserve(s.size());
     const std::size_t n = s.size();
     std::size_t p = 0;
-    bool seen_token = false;
     while (p < n) {
         const char c = s[p];
         const char d = (p + 1 < n) ? s[p + 1] : '\0';
@@ -291,15 +306,6 @@ std::string iec3_blank_out_comments(std::string_view s, bool header_name) {
             if (q < n && s[q] == c) ++q;
             r.append(s.substr(p, q - p));
             p = q;
-            seen_token = true;
-            continue;
-        }
-        if (header_name && !seen_token && c == '<') {
-            std::size_t q = s.find('>', p + 1);
-            q = (q == std::string_view::npos) ? n : q + 1;
-            r.append(s.substr(p, q - p));
-            p = q;
-            seen_token = true;
             continue;
         }
         const bool block = (c == '(' || c == '/') && d == '*';
@@ -317,7 +323,6 @@ std::string iec3_blank_out_comments(std::string_view s, bool header_name) {
                 while (end + 1 < n && !(s[end] == '*' && s[end + 1] == closer)) ++end;
                 end = (end + 1 < n) ? end + 2 : n;
             }
-            seen_token = seen_token || pragma || doc;
             if (pragma) { r.append(s.substr(p, 2)); p += 2; continue; }
             if (doc) { r.append(s.substr(p, end - p)); p = end; continue; }
             r += ' ';
@@ -325,7 +330,6 @@ std::string iec3_blank_out_comments(std::string_view s, bool header_name) {
             continue;
         }
         r += c;
-        if (!is_ws_char(c) && !is_nl_char(c)) seen_token = true;
         ++p;
     }
     return r;

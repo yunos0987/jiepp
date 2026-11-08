@@ -8,6 +8,7 @@
 #include "../loader/loader.hpp"
 
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -30,11 +31,14 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     // path; the location is the caller's current Issue location).
     env.reset_input_bytes();
     const std::optional<std::string> text = Loader::read_stream(input, env, "<input>");
-    auto its = iec3_tokens_from_string(text ? *text : std::string(), env.get_remove_comments(), 1);
+    // The stream starts on this call's own Env line, so lexer diagnostics
+    // (PP20/22/23) use the same line base as set_top_lineno() above.
+    const LineNo first_lineno = env.get_lineno();
+    auto its = iec3_tokens_from_string(text ? *text : std::string(), env.get_remove_comments(),
+                                       first_lineno);
     std::vector<Token> ots;
     // No leading line marker here (unlike the jiepp command line), so tell
     // the compaction which line the stream starts on.
-    const LineNo first_lineno = env.get_lineno();
     expand(its, ots, env);
     jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
                                jiepp::BlankLineMode::Markers, env.is_standard_pragma_style(),
@@ -45,37 +49,199 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
 
 namespace jiepp::preprocessor_detail {
 
+namespace {
+
+// Runs fn at the current Issue location, moved down by `below` lines.
+template <typename F>
+void at_lines_below(std::size_t below, F&& fn) {
+    if (below == 0) {
+        fn();
+        return;
+    }
+    Issue::LineGuard guard(wrap_lineno(Issue::lineno() + static_cast<LineNo>(below)));
+    fn();
+}
+
+thread_local RelexScope* relex_scope_top = nullptr;
+
+} // namespace
+
+RelexScope::RelexScope(const std::string& text, const LineMap* map) noexcept
+    : text_(&text), map_(map), prev_(relex_scope_top) {
+    relex_scope_top = this;
+}
+
+RelexScope::~RelexScope() {
+    relex_scope_top = prev_;
+}
+
+bool RelexScope::find(const std::string& text, const LineMap** map) noexcept {
+    const RelexScope* s = relex_scope_top;
+    if (!s || (s->text_ != &text && *s->text_ != text))
+        return false;
+    *map = s->map_;
+    return true;
+}
+
 void report_unterminated_literal(Token& t) {
     if (!t.unterminated)
         return;
     t.unterminated = false;
+    const std::size_t below = t.line_map ? t.line_map->line_of(0) : 0;
+    t.line_map.reset();
     // Opening quote to the end of the literal's first line: a "$"+newline
     // continuation would otherwise put a line break in the diagnostic.
-    ISSUE(UNTERMINATED_STRING_LITERAL, t.text.substr(0, t.text.find_first_of("\r\n")));
+    at_lines_below(below, [&] {
+        ISSUE(UNTERMINATED_STRING_LITERAL, t.text.substr(0, t.text.find_first_of("\r\n")));
+    });
 }
 
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
-                               bool report_unterminated, bool report_nested_brace) {
+                               bool report_unterminated, bool report_nested_brace,
+                               bool* found_unterminated, bool report_unclosed_comment,
+                               bool* found_directive) {
     // U1: re-lexed text is not source text, so its diagnostics go to the
-    // current Issue location (the directive/pragma being processed).
-    auto ts = iec3_relex(text, remove_comments, report_nested_brace);
+    // current Issue location (the directive/pragma being processed), moved
+    // down to the line of the character when the text's lines are known.
+    const LineMap* line_map = nullptr;
+    (void)RelexScope::find(text, &line_map);
+    auto ts = iec3_relex(text, remove_comments, report_nested_brace,
+                         report_unclosed_comment, found_unterminated, line_map);
+    // A directive is only what the source-file lexer reads as a raw "{#".
+    // Re-lexed text (a $-decoded operand, a macro replacement list, a pragma
+    // body, a -D value) never forms one: a "{#" found here came from "${#" /
+    // "$7B#" decoding or, in a pragma body, was already reported by the
+    // source lexer, so the directive is not run and not output. Drop it and
+    // report PP23 with its text (the lexer's appended '}' of an unclosed
+    // directive stays in the text; the source text cannot be rebuilt).
+    std::erase_if(ts, [found_directive](const Token& t) {
+        if (t.type != Token::DIRECTIVE)
+            return false;
+        if (found_directive)
+            *found_directive = true;
+        at_lines_below(t.line_map ? t.line_map->line_of(0) : 0, [&] {
+            ISSUE(INVALID_PP_SYNTAX, t.text);
+        });
+        return true;
+    });
     for (auto& t : ts) {
+        if (t.unterminated && found_unterminated)
+            *found_unterminated = true;
         if (report_unterminated)
             report_unterminated_literal(t);
         else
             t.unterminated = false;
+        // Only a pragma's body is re-lexed again (its expansion).
+        if (t.type != Token::PRAGMA)
+            t.line_map.reset();
     }
     return ts;
 }
 
+void report_pragma_body_issues(Token& pragma, Env& env) {
+    if (pragma.pragma_unterminated_reported || pragma.text.size() < 2 ||
+        pragma.text.front() != '{' || pragma.text.back() != '}')
+        return;
+    const std::string body = pragma.text.substr(1, pragma.text.size() - 2);
+    // Work budget (PP64) for the extra lex, like expand_operand_tokens().
+    env.charge_expansion_steps(body.size());
+    {
+        RelexScope scope(body, pragma.line_map.get());
+        // PP22/PP23 stay with the expansion (it reports them as before);
+        // added to whatever {#ignore} already suppresses.
+        std::set<Issue::Code> quiet = Issue::ignorings_;
+        quiet.insert(Issue::Code::INVALID_PRAGMA_SYNTAX);
+        quiet.insert(Issue::Code::INVALID_PP_SYNTAX);
+        Issue::Ignoring guard(std::move(quiet));
+        (void)lex_operand(body, env.get_remove_comments(), /*report_unterminated=*/true,
+                          /*report_nested_brace=*/false);
+    }
+    pragma.pragma_unterminated_reported = true;
+    pragma.line_map.reset();
+}
+
+bool is_terminated_literal(const Token& t) {
+    return (t.type == Token::STRING || t.type == Token::WSTRING) && !t.text.empty() &&
+           string_literal_end(t.text, 0) == t.text.size();
+}
+
+std::size_t skip_blanks(const std::vector<Token>& ts, std::size_t i) {
+    while (i < ts.size() && (ts[i].type & Token::MASK_WS))
+        ++i;
+    return i;
+}
+
+bool read_header_name(std::vector<Token>& work, std::string& name, std::vector<Token>& read) {
+    while (!work.empty()) {
+        Token u = std::move(work.back());
+        work.pop_back();
+        const std::size_t gt = u.text.find('>');
+        if (gt == std::string::npos) {
+            name += u.text;
+            read.push_back(std::move(u));
+            continue;
+        }
+        name.append(u.text, 0, gt);
+        if (gt + 1 < u.text.size()) {
+            // The rest of a comment or literal that the '>' ends early. Its
+            // newlines stay counted on the cut token, which keeps
+            // num_of_lines.
+            std::vector<Token> rest;
+            {
+                Issue::Ignoring quiet({Issue::Code::UNCLOSED_COMMENT,
+                                       Issue::Code::INVALID_PRAGMA_SYNTAX,
+                                       Issue::Code::INVALID_PP_SYNTAX});
+                rest = lex_operand(u.text.substr(gt + 1), /*remove_comments=*/false,
+                                   /*report_unterminated=*/false);
+            }
+            ts_mark_output_only(rest);
+            for (auto it = rest.rbegin(); it != rest.rend(); ++it)
+                work.push_back(std::move(*it));
+            u.text.resize(gt + 1);
+        }
+        read.push_back(std::move(u));
+        return true;
+    }
+    return false;
+}
+
+ExpandedPath expanded_path(const std::vector<Token>& ts) {
+    ExpandedPath p;
+    std::size_t i = skip_blanks(ts, 0);
+    if (i >= ts.size())
+        return p;
+    if (is_terminated_literal(ts[i])) {
+        p.kind = ExpandedPath::Kind::quoted;
+        p.text = ts[i].text;
+        p.end = i + 1;
+        return p;
+    }
+    if (ts[i].type != Token::ANY || ts[i].text != "<")
+        return p;
+    std::string name;
+    for (std::size_t j = i + 1; j < ts.size(); ++j) {
+        if (ts[j].type == Token::ANY && ts[j].text == ">") {
+            p.kind = ExpandedPath::Kind::angle;
+            p.text = std::move(name);
+            p.end = j + 1;
+            return p;
+        }
+        name += ts[j].type == Token::C ? std::string(" ") : ts[j].text;
+    }
+    return p;
+}
+
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
-                                         bool report_unterminated, OperandKind kind) {
+                                         bool report_unterminated, OperandKind kind,
+                                         bool* found_unterminated,
+                                         bool report_unclosed_comment) {
     // Work budget (PP64): one step per byte, charged BEFORE lexing, so an
     // operand (pragma body, {#if} condition, {#include} path, message, ...)
     // costs work in proportion to its size even if it expands to nothing.
     env.charge_expansion_steps(text.size());
     auto its = lex_operand(text, env.get_remove_comments(), report_unterminated,
-                           kind != OperandKind::nested_pragma_body);
+                           kind != OperandKind::nested_pragma_body, found_unterminated,
+                           report_unclosed_comment);
     // A2 / S-02: a pragma lexed from a pragma body is still the lexer's own
     // text here; every raw '{' in its body was met by this lex and reported
     // by it or by an enclosing pass (see read_pragma_body()), so its own

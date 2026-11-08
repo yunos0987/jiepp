@@ -28,7 +28,7 @@
 
 {#endif}
 
-{#if BOOST_PP_VARIADICS_MSVC \and\ _MSC_VER <= 1400}
+{#if BOOST_PP_VARIADICS_MSVC && _MSC_VER <= 1400}
 
 {#define BOOST_PP_DETAIL_IS_EMPTY_PROCESS(param) /*n*/    BOOST_PP_IS_BEGIN_PARENS /*n*/        ( /*n*/        BOOST_PP_DETAIL_IS_EMPTY_NON_FUNCTION_C param () /*n*/        ) /*n*//**/}
 

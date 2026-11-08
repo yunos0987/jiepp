@@ -9,7 +9,7 @@
 // #
 // # /* See http://www.boost.org for most recent version. */
 // #
-{# if \not\defined(BOOST_PP_INDIRECT_SELF)}
+{# if !defined(BOOST_PP_INDIRECT_SELF)}
 {#    error BOOST_PP_ERROR$:  no indirect file to include}
 {# endif}
 // #

@@ -8,6 +8,75 @@
 #include <string_view>
 #include <vector>
 #include <optional>
+#include <algorithm>
+#include <cstddef>
+#include <utility>
+
+// Where the source lines of a directive or pragma body break, for the
+// diagnostics of its re-lex (task d1). The lexer folds the raw newlines of a
+// body into spaces and drops a "$"+newline, so a body's text no longer
+// shows its lines; this map keeps them. Positions are offsets into the text
+// the map belongs to (a body: the text after its opening '{'). A
+// diagnostic at offset `pos` is on line_of(pos) lines below the line the
+// text is reported from (the current Issue location while the text is
+// re-lexed). Diagnostic-only: never changes the output.
+struct LineMap {
+    // Lines before the text's first character: a token cut from a longer
+    // re-lexed text starts that many lines below the longer text's start.
+    std::size_t lines_before = 0;
+    // Ascending: a new line starts at the character at each offset (a
+    // folded newline's space, if any, is on the new line).
+    std::vector<std::size_t> breaks;
+
+    // Binary search, so a text with many lines and many diagnostics is not
+    // quadratic.
+    std::size_t line_of(std::size_t pos) const {
+        return lines_before +
+               static_cast<std::size_t>(std::upper_bound(breaks.begin(), breaks.end(), pos) -
+                                        breaks.begin());
+    }
+};
+
+// A shared, immutable LineMap behind a pointer-sized handle with a
+// non-atomic reference count (like HideSet: tokens are not shared between
+// threads). Pointer-sized rather than std::shared_ptr so Token grows by 8
+// bytes, not 16: a Debug build keeps many Token temporaries in each frame
+// of a nested expansion, and the nesting the PP63 stack guard allows
+// depends on the frame sizes.
+class LineMapRef {
+public:
+    LineMapRef() noexcept = default;
+    explicit LineMapRef(LineMap m) : p_(new Node{std::move(m), 1}) {}
+    LineMapRef(const LineMapRef& o) noexcept : p_(o.p_) {
+        if (p_)
+            ++p_->refs;
+    }
+    LineMapRef(LineMapRef&& o) noexcept : p_(o.p_) { o.p_ = nullptr; }
+    LineMapRef& operator=(LineMapRef o) noexcept {
+        std::swap(p_, o.p_);
+        return *this;
+    }
+    ~LineMapRef() { release(); }
+
+    const LineMap* get() const noexcept { return p_ ? &p_->map : nullptr; }
+    const LineMap* operator->() const noexcept { return &p_->map; }
+    explicit operator bool() const noexcept { return p_ != nullptr; }
+    void reset() noexcept {
+        release();
+        p_ = nullptr;
+    }
+
+private:
+    struct Node {
+        LineMap map;
+        std::size_t refs;
+    };
+    void release() noexcept {
+        if (p_ && --p_->refs == 0)
+            delete p_;
+    }
+    Node* p_ = nullptr;
+};
 
 struct Token {
     static constexpr int MASK_WS    = 0b1000'0000;
@@ -42,6 +111,15 @@ struct Token {
     // reuses the padding before `text`; excluded from operator== like the
     // other bookkeeping flags.
     bool        relexed_pragma = false;
+    // True for a PRAGMA token whose rewritten text (expand_pragma_token())
+    // came from a pass that already reported PP29 for an unterminated literal
+    // or PP20 for an unclosed comment in its body: a later rescan of that
+    // text (macro argument used in the body) lexes the same literal or
+    // comment again and must not report it again.
+    // Cleared wherever the text is rewritten again (glue_tokens()). Reuses
+    // the padding before `text`; excluded from operator== like the other
+    // bookkeeping flags.
+    bool        pragma_unterminated_reported = false;
     std::string text;
     int         num_of_lines = 0; // number of newlines this token contributes
     // True once this token's num_of_lines has already been applied to Env's line
@@ -72,6 +150,16 @@ struct Token {
     // candidate. Excluded from operator== like lineno_counted.
     bool        line_filler = false;
     HideSet     hs;          // hide-set (persistent trie handle, O(1) copy)
+    // The source lines of a DIRECTIVE/PRAGMA token's body (LineMap), or of
+    // the start of an unterminated literal or a dropped directive lexed
+    // from a multi-line text; null when the text is on one line (most
+    // tokens). Set by the lexer; read when the text is re-lexed
+    // (preprocessor_detail::RelexScope) or the literal reported. Dropped
+    // wherever the text is rewritten (expand_pragma_token(), glue_tokens())
+    // and once a pragma body's PP20/PP29 are reported
+    // (report_pragma_body_issues()). Excluded from operator== like the
+    // other bookkeeping fields.
+    LineMapRef  line_map;
 
     // Factories
     static Token create(int type, std::string text, int num_of_lines = 0);

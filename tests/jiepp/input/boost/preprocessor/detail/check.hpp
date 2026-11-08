@@ -24,7 +24,7 @@
 {#    define BOOST_PP_CHECK_OO(par) BOOST_PP_CHECK_D @@ par}
 {# endif}
 // #
-{# if  not BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_MSVC() \and\  not BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_DMC()}
+{# if  not BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_MSVC() &&  not BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_DMC()}
 {#    define BOOST_PP_CHECK_D(x, type) BOOST_PP_CHECK_1(BOOST_PP_CAT(BOOST_PP_CHECK_RESULT_, type x))}
 {#    define BOOST_PP_CHECK_1(chk) BOOST_PP_CHECK_2(chk)}
 {#    define BOOST_PP_CHECK_2(res, _) res}

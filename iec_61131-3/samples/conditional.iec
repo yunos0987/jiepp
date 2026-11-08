@@ -12,7 +12,7 @@
 {#define DEBUG 0}
 {#endif}
 
-{#if defined(TARGET_OMRON) \and\ DEBUG = 1}
+{#if defined(TARGET_OMRON) && DEBUG = 1}
 {#define LOG_ENABLED 1}
 {#elif defined(TARGET_OMRON)}
 {#define LOG_ENABLED 0}

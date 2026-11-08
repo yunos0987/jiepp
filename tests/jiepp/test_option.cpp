@@ -1,6 +1,10 @@
 #include "test_helper.hpp"
 #include "jiepp/option.hpp"
 
+#include <algorithm>
+#include <optional>
+#include <string>
+
 class OptionTest : public JieppTest {};
 
 // ---- define_macro_option ----
@@ -287,6 +291,137 @@ TEST_F(OptionTest, ParseArgsSnakeCaseVariants) {
     auto opts = parse_args(3, argv);
     ASSERT_TRUE(opts.max_include_depth.has_value());
     EXPECT_EQ(*opts.max_include_depth, 5);
+}
+
+// ---- underscore spellings of every hyphenated long option ----
+
+namespace {
+
+struct LongOptionRow {
+    const char* hyphen;           // "--remove-comments"
+    const char* value;            // nullptr for a flag
+    std::string (*summary)(const JieppOptions&);
+};
+
+std::string opt_int(const std::optional<int>& v) {
+    return v ? std::to_string(*v) : std::string("unset");
+}
+
+// Every long option in parse_args() whose name contains '-' (11 of them).
+const LongOptionRow LONG_OPTION_ROWS[] = {
+    {"--max-include-depth", "7", [](const JieppOptions& o) { return opt_int(o.max_include_depth); }},
+    {"--max-expansion-depth", "8", [](const JieppOptions& o) { return opt_int(o.max_expansion_depth); }},
+    {"--max-expansion-steps", "9", [](const JieppOptions& o) { return opt_int(o.max_expansion_steps); }},
+    {"--max-include-count", "10", [](const JieppOptions& o) { return opt_int(o.max_include_count); }},
+    {"--max-input-bytes", "11", [](const JieppOptions& o) { return opt_int(o.max_input_bytes); }},
+    {"--error-limit", "12", [](const JieppOptions& o) { return opt_int(o.error_limit); }},
+    {"--max-if-nesting", "13", [](const JieppOptions& o) { return opt_int(o.max_if_nesting); }},
+    {"--max-blank-lines", "14", [](const JieppOptions& o) { return opt_int(o.max_blank_lines); }},
+    {"--pp-output-pragma-style", "standard", [](const JieppOptions& o) {
+         return o.pp_output_pragma_style ? *o.pp_output_pragma_style : std::string("unset"); }},
+    {"--recursion-limit", "15", [](const JieppOptions& o) { return opt_int(o.recursion_limit); }},
+    {"--remove-comments", nullptr, [](const JieppOptions& o) {
+         return std::string(o.remove_comments ? "on" : "off"); }},
+};
+
+std::string underscore_spelling(std::string s) {
+    std::replace(s.begin() + 2, s.end(), '-', '_');
+    return s;
+}
+
+} // namespace
+
+TEST_F(OptionTest, LongOptionsAcceptBothSpellings) {
+    EXPECT_EQ(11u, sizeof(LONG_OPTION_ROWS) / sizeof(LONG_OPTION_ROWS[0]));
+    for (const auto& row : LONG_OPTION_ROWS) {
+        std::string hyphen = row.hyphen;
+        std::string under = underscore_spelling(hyphen);
+        ASSERT_NE(hyphen, under) << hyphen;
+
+        std::string results[2];
+        int n = 0;
+        for (const std::string& spelling : {hyphen, under}) {
+            std::string a1 = spelling;
+            std::string a2 = row.value ? row.value : "";
+            char* argv[] = {const_cast<char*>("jiepp"), a1.data(), a2.data()};
+            auto opts = parse_args(row.value ? 3 : 2, argv);
+            results[n++] = row.summary(opts);
+        }
+        EXPECT_NE("unset", results[0]) << hyphen;
+        EXPECT_NE("off", results[0]) << hyphen;
+        EXPECT_EQ(results[0], results[1]) << hyphen << " vs " << under;
+    }
+}
+
+TEST_F(OptionTest, UnderscoreSpellingKeepsTypedSpellingInDiagnostics) {
+    char* missing[] = {const_cast<char*>("jiepp"), const_cast<char*>("--max_include_depth")};
+    EXPECT_THROW(parse_args(2, missing), Issue::Exception);
+    // messages() drains the buffer, so call it once.
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ("jiepp: error: PP72: Option requires a value; '--max_include_depth'", msgs[0]);
+}
+
+TEST_F(OptionTest, UnderscoreSpellingInvalidValueKeepsTypedSpelling) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--pp_output_pragma_style"), const_cast<char*>("bogus")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find("PP71")) << msgs[0];
+    EXPECT_NE(std::string::npos, msgs[0].find("--pp_output_pragma_style")) << msgs[0];
+}
+
+TEST_F(OptionTest, MixedSpellingStaysUnknownOption) {
+    for (const char* spelling : {"--max_include-depth", "--max-include_depth", "--remove_comments-",
+                                 "--remove-comments_", "--Remove_Comments", "--remove__comments"}) {
+        SCOPED_TRACE(spelling);
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(spelling),
+                        const_cast<char*>("5")};
+        EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(std::string("jiepp: error: PP70: Unknown command-line option; '") + spelling + "'",
+                  msgs[0]);
+    }
+}
+
+TEST_F(OptionTest, UnderscoreIsNotMappedForOtherArguments) {
+    // Single-dash options, a name that is not an option, and options without
+    // '-' in the name are not normalised.
+    for (const char* spelling : {"-Werror_undef", "-_include", "-n_C", "--foo_bar", "--disppath_x",
+                                 "--si_lent", "--ver_sion", "--he_lp", "--max_include_depth_"}) {
+        SCOPED_TRACE(spelling);
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(spelling)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception);
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_EQ(std::string("jiepp: error: PP70: Unknown command-line option; '") + spelling + "'",
+                  msgs[0]);
+    }
+}
+
+TEST_F(OptionTest, UnderscoreInValuesAndAfterDoubleDashIsKept) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("--max_include_depth"), const_cast<char*>("5"),
+                    const_cast<char*>("-o"), const_cast<char*>("out_dir/a_b.iec"),
+                    const_cast<char*>("--disppath"), const_cast<char*>("x_y"),
+                    const_cast<char*>("-include"), const_cast<char*>("pre_a.iec"),
+                    const_cast<char*>("-DA_B=c_d"),
+                    const_cast<char*>("--"), const_cast<char*>("--remove_comments"),
+                    const_cast<char*>("in_put.iec")};
+    auto opts = parse_args(13, argv);
+    EXPECT_EQ(5, *opts.max_include_depth);
+    EXPECT_EQ("out_dir/a_b.iec", *opts.output_filepath);
+    EXPECT_EQ("x_y", *opts.disppath);
+    ASSERT_EQ(1u, opts.include_filepaths.size());
+    EXPECT_EQ("pre_a.iec", opts.include_filepaths[0]);
+    ASSERT_EQ(1u, opts.define_macros.size());
+    EXPECT_EQ("A_B=c_d", opts.define_macros[0]);
+    EXPECT_FALSE(opts.remove_comments);
+    ASSERT_EQ(2u, opts.input_filepaths.size());
+    EXPECT_EQ("--remove_comments", opts.input_filepaths[0]);
+    EXPECT_EQ("in_put.iec", opts.input_filepaths[1]);
 }
 
 TEST_F(OptionTest, ParseArgsRecursionLimit) {
@@ -599,6 +734,24 @@ TEST_F(OptionTest, ParseArgsMDFlagDefault) {
     auto opts = parse_args(1, argv);
     EXPECT_FALSE(opts.MD);
     EXPECT_FALSE(opts.MMD);
+    EXPECT_FALSE(opts.MP);
+}
+
+TEST_F(OptionTest, ParseArgsMPFlag) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-MM"), const_cast<char*>("-MP")};
+    auto opts = parse_args(3, argv);
+    EXPECT_TRUE(opts.MP);
+    EXPECT_EQ(opts.dep_mode, DepMode::USER);
+}
+
+TEST_F(OptionTest, ParseArgsMPAloneIsAccepted) {
+    // -MP without -M/-MM/-MD/-MMD is accepted (no PP70) and selects no
+    // dependency output by itself, like -MT/-MF alone.
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-MP")};
+    auto opts = parse_args(2, argv);
+    EXPECT_TRUE(opts.MP);
+    EXPECT_EQ(opts.dep_mode, DepMode::NONE);
+    EXPECT_TRUE(empty());
 }
 
 TEST_F(OptionTest, CLICodeSeverityClassification) {
@@ -640,28 +793,96 @@ TEST_F(OptionTest, ParseArgsUnknownOptionMessageFormat) {
 
 TEST_F(OptionTest, ParsesWundef) {
     char* plain[] = {const_cast<char*>("jiepp")};
-    EXPECT_FALSE(parse_args(1, plain).warn_undef);
+    EXPECT_TRUE(parse_args(1, plain).warnings.empty());
 
     char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Wundef")};
     auto opts = parse_args(2, argv);
-    EXPECT_TRUE(opts.warn_undef);
+    ASSERT_EQ(1u, opts.warnings.size());
+    EXPECT_EQ(WarningAction::ENABLE, opts.warnings[0].action);
+    EXPECT_EQ(Issue::Code::UNDEFINED_IDENTIFIER, opts.warnings[0].code);
     EXPECT_FALSE(opts.werror);
 }
 
 TEST_F(OptionTest, ParsesWerrorUndef) {
     char* plain[] = {const_cast<char*>("jiepp")};
-    EXPECT_FALSE(parse_args(1, plain).werror_undef);
+    EXPECT_TRUE(parse_args(1, plain).warnings.empty());
 
     char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Werror=undef")};
     auto opts = parse_args(2, argv);
-    EXPECT_TRUE(opts.werror_undef);
+    ASSERT_EQ(1u, opts.warnings.size());
+    EXPECT_EQ(WarningAction::PROMOTE, opts.warnings[0].action);
+    EXPECT_EQ(Issue::Code::UNDEFINED_IDENTIFIER, opts.warnings[0].code);
     EXPECT_FALSE(opts.werror);
-    EXPECT_FALSE(opts.warn_undef);
 
-    // No other -Werror= / -Wno- form is accepted.
-    for (const char* bad : {"-Werror=foo", "-Wno-undef", "-Wno-error=undef"}) {
-        char* argv2[] = {const_cast<char*>("jiepp"), const_cast<char*>(bad)};
-        EXPECT_THROW(parse_args(2, argv2), Issue::Exception) << bad;
+    // A -Werror= name that is neither a warning code nor undef is PP71.
+    char* argv2[] = {const_cast<char*>("jiepp"), const_cast<char*>("-Werror=foo")};
+    EXPECT_THROW(parse_args(2, argv2), Issue::Exception);
+    EXPECT_EQ(Issue::Code::INVALID_OPTION_VALUE, code());
+}
+
+// -W<name> / -Wno-<name> / -Werror=<name> / -Wno-error=<name> (SPEC 13):
+// kept in command-line order; <name> is a warning code in either case or
+// undef (PP54).
+TEST_F(OptionTest, ParsesWarningOptionsInOrder) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("-Wno-PP35"), const_cast<char*>("-Werror=pp49"),
+                    const_cast<char*>("-Wno-error=undef"), const_cast<char*>("-WPP54"),
+                    const_cast<char*>("-Wno-pp92"), const_cast<char*>("-Wno-error=PP28")};
+    auto opts = parse_args(7, argv);
+    ASSERT_EQ(6u, opts.warnings.size());
+    EXPECT_EQ(WarningAction::DISABLE, opts.warnings[0].action);
+    EXPECT_EQ(Issue::Code::MACRO_REDEFINED, opts.warnings[0].code);
+    EXPECT_EQ(WarningAction::PROMOTE, opts.warnings[1].action);
+    EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, opts.warnings[1].code);
+    EXPECT_EQ(WarningAction::DEMOTE, opts.warnings[2].action);
+    EXPECT_EQ(Issue::Code::UNDEFINED_IDENTIFIER, opts.warnings[2].code);
+    EXPECT_EQ(WarningAction::ENABLE, opts.warnings[3].action);
+    EXPECT_EQ(Issue::Code::UNDEFINED_IDENTIFIER, opts.warnings[3].code);
+    EXPECT_EQ(WarningAction::DISABLE, opts.warnings[4].action);
+    EXPECT_EQ(Issue::Code::WARNING_MESSAGE, opts.warnings[4].code);
+    EXPECT_EQ(WarningAction::DEMOTE, opts.warnings[5].action);
+    EXPECT_EQ(Issue::Code::WHITESPACE_BEFORE_DIRECTIVE, opts.warnings[5].code);
+    EXPECT_FALSE(opts.werror);
+    EXPECT_TRUE(empty());
+}
+
+// -Wno-error (no name) cancels -Werror; the last of the two wins.
+TEST_F(OptionTest, ParsesWnoErrorLastWins) {
+    char* argv1[] = {const_cast<char*>("jiepp"),
+                     const_cast<char*>("-Werror"), const_cast<char*>("-Wno-error")};
+    auto opts1 = parse_args(3, argv1);
+    EXPECT_FALSE(opts1.werror);
+    EXPECT_TRUE(opts1.warnings.empty());
+
+    char* argv2[] = {const_cast<char*>("jiepp"),
+                     const_cast<char*>("-Wno-error"), const_cast<char*>("-Werror")};
+    EXPECT_TRUE(parse_args(3, argv2).werror);
+}
+
+// A name that is not a WARNING code or undef is PP71 with the option as
+// typed: an ERROR code, an unassigned code, a bare number, other text.
+TEST_F(OptionTest, WarningOptionInvalidNameIsPP71) {
+    for (const char* bad : {"-Wno-PP11", "-Wno-PP99", "-Wno-35", "-Wno-foo", "-Wno-",
+                            "-Werror=PP70", "-Werror=", "-Wno-error=PP01",
+                            "-Wno-error=foo", "-WPP11", "-Wpp99"}) {
+        Issue::initialize(output());
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(bad)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception) << bad;
+        auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size()) << bad;
+        EXPECT_EQ(Issue::Code::INVALID_OPTION_VALUE, PlainTextMessage::parse_code(msgs[0])) << bad;
+        EXPECT_EQ(0u, msgs[0].find("jiepp: error: PP71: ")) << msgs[0];
+        EXPECT_NE(std::string::npos, msgs[0].find(std::string("'") + bad + ":")) << msgs[0];
+    }
+}
+
+// -W spellings other than -W<code> / -Wundef stay unknown options (PP70):
+// no -Wall / -Wextra and no clang-only names.
+TEST_F(OptionTest, OtherWOptionsStayUnknown) {
+    for (const char* bad : {"-Wall", "-Wextra", "-Wmacro-redefined", "-W", "-WPP", "-Wundefx"}) {
+        Issue::initialize(output());
+        char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>(bad)};
+        EXPECT_THROW(parse_args(2, argv), Issue::Exception) << bad;
         EXPECT_EQ(Issue::Code::UNKNOWN_OPTION, code()) << bad;
     }
 }

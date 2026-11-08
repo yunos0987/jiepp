@@ -164,17 +164,32 @@ void DirectiveLexState::feed(char c, bool raw, std::size_t off) {
     }
 }
 
-std::string decode_directive_text(std::string_view t, bool* has_invalid) {
+std::string decode_directive_text(std::string_view t, bool* has_invalid, DecodeTrace* trace) {
+    // Every decision below is about a '$': without one the text decodes to
+    // itself, and most directives have none (trace's offsets stay as they are).
+    if (t.find('$') == std::string_view::npos)
+        return std::string(t);
     std::string r;
     r.reserve(t.size());
     DirectiveLexState lex;
     std::size_t i = 0;
+    // Next trace position to rewrite: one cursor over the ascending offsets.
+    std::size_t next_pos = 0;
+    auto trace_upto = [&](std::size_t upto) {
+        if (!trace || !trace->positions)
+            return;
+        auto& ps = *trace->positions;
+        for (; next_pos < ps.size() && ps[next_pos] <= upto; ++next_pos)
+            ps[next_pos] = r.size();
+    };
     auto put = [&](char c, bool raw) {
         r += c;
         lex.feed(c, raw);
     };
     // Keep the n raw characters of an invalid escape as they are.
     auto keep_invalid = [&](std::size_t n) {
+        if (trace && trace->first_invalid == std::string_view::npos)
+            trace->first_invalid = i;
         for (std::size_t k = 0; k < n; ++k)
             put(t[i + k], true);
         i += n;
@@ -182,6 +197,7 @@ std::string decode_directive_text(std::string_view t, bool* has_invalid) {
             *has_invalid = true;
     };
     while (i < t.size()) {
+        trace_upto(i);
         const char c = t[i];
         if (c != '$') {
             // A raw quote opens a raw string only if its literal closes
@@ -229,6 +245,7 @@ std::string decode_directive_text(std::string_view t, bool* has_invalid) {
         // whatever follows (possibly another '$') is decoded afresh.
         keep_invalid(2);
     }
+    trace_upto(std::string_view::npos);
     return r;
 }
 
@@ -287,8 +304,13 @@ std::string encode_directive_text(std::string_view t) {
 }
 
 std::pair<std::string, std::string> parse_directive(std::string_view text,
-                                                      std::optional<std::string>& invalid_escape) {
+                                                      std::optional<std::string>& invalid_escape,
+                                                      DirectiveLines* lines) {
     invalid_escape.reset();
+    if (lines) {
+        lines->arg.reset();
+        lines->invalid_escape_line = 0;
+    }
     if (text.size() < 3 || text.front() != '{' || text.back() != '}') {
         ISSUE(INVALID_PP_SYNTAX, std::string(text));
         return {"", ""};
@@ -346,13 +368,37 @@ std::pair<std::string, std::string> parse_directive(std::string_view text,
     // preferred over value, so a caller that ends up raising PP21 does so
     // exactly once no matter how many "$q"-style escapes the directive has.
     bool key_invalid = false, value_invalid = false;
-    std::string key = decode_directive_text(raw_key, &key_invalid);
-    std::string value = decode_directive_text(raw_value, &value_invalid);
+    const LineMap* body_map = lines ? lines->body : nullptr;
+    // Offsets in the body (Token::line_map's coordinates) start after the
+    // '{': inner[k] is body[k + 1].
+    const std::size_t key_at = 1 + key_start;
+    const std::size_t value_at = 1 + pos + value_pos;
+    DecodeTrace key_trace, value_trace;
+    std::vector<std::size_t> value_breaks;
+    if (body_map) {
+        // The breaks inside the raw value, as offsets into it, to be moved
+        // to the decoded value's offsets by the decoding below.
+        for (std::size_t b : body_map->breaks)
+            if (b > value_at)
+                value_breaks.push_back(b - value_at);
+        value_trace.positions = &value_breaks;
+    }
+    std::string key = decode_directive_text(raw_key, &key_invalid, &key_trace);
+    std::string value = decode_directive_text(raw_value, &value_invalid, &value_trace);
     if (key_invalid)
         invalid_escape = std::string(raw_key);
     else if (value_invalid)
         invalid_escape = std::string(raw_value);
 
+    if (body_map) {
+        const std::size_t before = body_map->line_of(value_at);
+        if (before != 0 || !value_breaks.empty())
+            lines->arg = LineMapRef(LineMap{before, std::move(value_breaks)});
+        if (key_invalid)
+            lines->invalid_escape_line = body_map->line_of(key_at + key_trace.first_invalid);
+        else if (value_invalid)
+            lines->invalid_escape_line = body_map->line_of(value_at + value_trace.first_invalid);
+    }
     return {std::move(key), std::move(value)};
 }
 

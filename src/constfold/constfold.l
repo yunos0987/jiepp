@@ -12,6 +12,24 @@ extern CfValue cflval;  // defined in constfold_parser.cpp (bison %code section)
 #include <cstring>
 #include <string>
 #include <stdexcept>
+#ifndef _WIN32
+#include <locale.h>
+#endif
+
+// Float literals are always written with '.', whatever LC_NUMERIC the host
+// program set (a library caller may have a comma-decimal global locale), so
+// they are parsed with an explicit C locale. The locale object is created once
+// and kept for the life of the process.
+static double cf_strtod_c(const char* text, char** endp)
+{
+#ifdef _WIN32
+    static const _locale_t c_locale = _create_locale(LC_NUMERIC, "C");
+    return _strtod_l(text, endp, c_locale);
+#else
+    static const locale_t c_locale = newlocale(LC_NUMERIC_MASK, "C", static_cast<locale_t>(nullptr));
+    return strtod_l(text, endp, c_locale);
+#endif
+}
 %}
 
 %option noyywrap nodefault 8bit nounistd never-interactive nounput noinput
@@ -29,6 +47,8 @@ ALPHA   [A-Za-z_]
 "\\not\\"   { return cf::CfParser::token::CF_LNOT; }
 "\\and\\"   { return cf::CfParser::token::CF_LAND; }
 "\\or\\"    { return cf::CfParser::token::CF_LOR; }
+"&&"        { return cf::CfParser::token::CF_LAND; }
+"||"        { return cf::CfParser::token::CF_LOR; }
 "\\xor\\"   { return cf::CfParser::token::CF_LXOR; }
 
 [0-9]+#[+-]?(_?[0-9A-Za-z])+ {
@@ -103,7 +123,11 @@ ALPHA   [A-Za-z_]
     double fval = 0.0;
     {
         char* endp = nullptr;
-        const double parsed = std::strtod(clean.c_str(), &endp);
+        const double parsed = cf_strtod_c(clean.c_str(), &endp);
+        // The rule's pattern admits only DIGITS "." DIGITS [eE][+-]DIGITS, all of
+        // which strtod consumes, so a short parse can only be an internal error.
+        if (endp != clean.c_str() + clean.size())
+            throw std::logic_error("unreachable: float literal not fully parsed: " + clean);
         if (std::isinf(parsed)) {
             cf_note_failure(Issue::Code::INVALID_EXPRESSION);
             ISSUE(INVALID_EXPRESSION, std::string("float literal overflow: ") + yytext);
@@ -209,6 +233,7 @@ ALPHA   [A-Za-z_]
 "*"     { return cf::CfParser::token::CF_STAR; }
 "/"     { return cf::CfParser::token::CF_SLASH; }
 "&"     { return cf::CfParser::token::CF_AMP; }
+"!"     { return cf::CfParser::token::CF_BANG; }
 "#"     { return cf::CfParser::token::CF_HASH; }
 
 .   { return cf::CfParser::token::CF_UNKNOWN; }

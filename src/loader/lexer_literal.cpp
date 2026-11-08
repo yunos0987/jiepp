@@ -1,5 +1,7 @@
 #include "lexer_helpers.hpp"
 
+#include <cassert>
+
 namespace jiepp::detail {
 
 namespace {
@@ -204,37 +206,46 @@ bool try_push_number(std::vector<Token>& result,
     return true;
 }
 
-void push_string_token(std::vector<Token>& result, int type, std::string str,
-                       int num_of_lines, bool unterminated) {
-    std::vector<Token> trailing_ws;
-    std::size_t scan = result.size();
-    while (scan > 0 && result[scan - 1].type == Token::WS) {
-        trailing_ws.push_back(std::move(result[scan - 1]));
-        --scan;
+void push_string_token(std::vector<Token>& result, StringMergeState& state,
+                       int type, std::string str,
+                       int num_of_lines, bool unterminated,
+                       LineMapRef line_map) {
+    // The merge candidate is the last token before the trailing run of
+    // Token::WS tokens (spaces and newlines). Only the tokens appended since
+    // the previous call are examined, so each token is looked at once per
+    // tokenize() pass; rescanning (or popping and re-pushing) the whole run
+    // on every call made a long chain of literals quadratic.
+    // The state is valid only while tokens before `scanned` are neither
+    // removed nor retyped (see StringMergeState); Debug builds check that.
+    assert(state.scanned <= result.size());
+    for (std::size_t i = state.scanned; i < result.size(); ++i) {
+        if (result[i].type != Token::WS)
+            state.ws_run_begin = i + 1;
     }
-    result.resize(scan);
+    state.scanned = result.size();
+    const std::size_t scan = state.ws_run_begin;
+    // O(1) cross-checks of the recorded run start: the candidate is a
+    // non-WS token, and the token after it (if any) is WS.
+    assert(scan <= result.size());
+    assert(scan == 0 || result[scan - 1].type != Token::WS);
+    assert(scan >= result.size() || result[scan].type == Token::WS);
 
     // A literal ended by a newline has no closing quote to drop; merging
     // used to drop its last character ('abc<LF>'def' gave 'abdef').
     if (scan > 0 && result[scan - 1].type == type && !result[scan - 1].unterminated) {
-        Token merged = std::move(result[scan - 1]);
-        result.resize(scan - 1);
+        // Merged in place: the whitespace run stays after the merged token.
+        Token& merged = result[scan - 1];
         merged.text.pop_back();
         merged.text += str.substr(1);
         merged.num_of_lines += num_of_lines;
         merged.unterminated = unterminated;
-        result.push_back(std::move(merged));
-        for (auto it = trailing_ws.rbegin(); it != trailing_ws.rend(); ++it) {
-            result.push_back(std::move(*it));
-        }
+        merged.line_map = std::move(line_map);
         return;
     }
 
-    for (auto it = trailing_ws.rbegin(); it != trailing_ws.rend(); ++it) {
-        result.push_back(std::move(*it));
-    }
     Token t = Token::create(type, std::move(str), num_of_lines);
     t.unterminated = unterminated;
+    t.line_map = std::move(line_map);
     result.push_back(std::move(t));
 }
 

@@ -43,6 +43,7 @@ bool validate_nonneg_parameter(int n, std::string_view name) {
 
 struct Param::CacheImpl {
     std::unordered_map<std::string, std::shared_ptr<const std::vector<Token>>> data;
+    std::unordered_map<std::string, std::string> resolved_paths;
 };
 
 Param::Param() : cache_(std::make_unique<CacheImpl>()) {}
@@ -222,6 +223,15 @@ std::shared_ptr<const std::vector<Token>> Param::get_cache(const std::string& ke
 void Param::set_cache(std::string key, std::vector<Token> tokens) {
     cache_->data.insert_or_assign(
         std::move(key), std::make_shared<const std::vector<Token>>(std::move(tokens)));
+}
+
+const std::string* Param::resolved_path(const std::string& candidate) const {
+    auto it = cache_->resolved_paths.find(candidate);
+    return it != cache_->resolved_paths.end() ? &it->second : nullptr;
+}
+
+void Param::set_resolved_path(std::string candidate, std::string canonical) {
+    cache_->resolved_paths.insert_or_assign(std::move(candidate), std::move(canonical));
 }
 
 // ---------------------------------------------------------------------------

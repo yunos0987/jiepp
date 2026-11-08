@@ -2,7 +2,7 @@
 
 {#define COUNT_T __INT32_TYPE}
 {#define FLAGS_T __BITS16_TYPE}
-{#if __DINT_MAX__ > 16#7fff \and\ defined(_JIEPP)}
+{#if __DINT_MAX__ > 16#7fff && defined(_JIEPP)}
 {#define WIDE_COUNTER 1}
 {#endif}
 

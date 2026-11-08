@@ -1,3 +1,5 @@
+![jiepp expands an IEC 61131-3 source with define, token-paste and if directives into plain text](docs/jiepp-banner.svg)
+
 # Jiepp
 
 [![CI](https://github.com/yunos0987/jiepp/actions/workflows/ci.yml/badge.svg)](https://github.com/yunos0987/jiepp/actions/workflows/ci.yml)
@@ -53,6 +55,7 @@ echo '{#define X 42} VAR x : INT := X; END_VAR' | .\build\windows-clang-ninja-de
 | `{#sinclude 'file'}` | システムパス限定インクルード / System-path-only include (like C `#include <...>`) |
 | `{#if EXPR}` / `{#elif}` / `{#else}` / `{#endif}` | 条件コンパイル / Conditional compilation |
 | `{#ifdef NAME}` / `{#ifndef NAME}` | マクロ存在チェック / Macro existence check |
+| `{#elifdef NAME}` / `{#elifndef NAME}` | マクロ存在チェックの `{#elif}` / `{#elif}` with a macro existence check |
 | `{#error 'msg'}` / `{#warning 'msg'}` | エラー・警告出力 / Error/warning output |
 | `@@` | トークン連結 / Token paste operator |
 | `@arg` | 文字列化演算子 / Stringize operator |
@@ -157,11 +160,15 @@ cat input.iec | jiepp -
 | `-U NAME` | マクロ定義取り消し | — |
 | `-I PATH` | インクルードパス追加 | — |
 | `-include FILE` | 入力前に強制インクルード | — |
-| `-w` | 警告抑制 | off |
-| `-Werror` | 警告→エラー昇格 | off |
-| `-Wundef` | 条件式で `0` に評価した未定義の識別子を警告（`PP54`）。`\and\` / `\or\` の評価されない右辺では出さない | off |
-| `-Werror=undef` | `-Wundef` と同じに有効にし、`PP54` をエラーにする（終了コード `1`、`-o` は書かない。`-w` では隠れない）。ほかの警告は昇格しない | off |
+| `-w` | 警告抑制（エラーに昇格した警告は隠れない） | off |
+| `-Werror` / `-Wno-error` | 警告→エラー昇格 / その取り消し（後に書いたほうが勝つ） | off |
+| `-W<name>` | 警告 `<name>` を有効にする。`<name>` は警告のコード（`PP35` など。`pp35` も可）か `undef`（`PP54`） | — |
+| `-Wundef` | 条件式で `0` に評価した未定義の識別子を警告（`PP54`）。`&&` / `\|\|` の評価されない右辺では出さない | off |
+| `-Wno-<name>` | 警告 `<name>` を出さない（`{#ignore}` と同じ） | — |
+| `-Werror=<name>` | 警告 `<name>` を有効にし、エラーにする（終了コード `1`、`-o` は書かない。`-w` では隠れない）。ほかの警告は昇格しない | — |
+| `-Wno-error=<name>` | `-Werror` / `-Werror=<name>` の昇格を `<name>` だけ取り消す（警告のまま出す）。同じ `<name>` への 4 形式は後に書いたものが勝つ | — |
 | `-M` / `-MM` | Makefile 依存関係出力（プリプロセス結果は出力しない。`-MD`/`-MMD` は出力も残す） | off |
+| `-MP` | 依存関係ルールに、ヘッダごとの空のルールを加える（`-M` 系と組み合わせる） | off |
 | `-nC` | コメント除去 | off |
 | `-dM` | マクロ一覧出力 | off |
 | `--max-expansion-steps N` | マクロ展開の仕事量の上限（`0` で無制限。超えると `PP64` で中断） | 16777216 |
@@ -170,6 +177,8 @@ cat input.iec | jiepp -
 | `--max-input-bytes N` / `--max_input_bytes N` | 読み込む入力の合計バイト数の上限（`0` で無制限。超えると `PP67` で中断） | 0（サンドボックスビルドも同じ） |
 | `--` | オプション終端 | — |
 | `--help` / `-h` | ヘルプ表示 | — |
+
+名前に `-` を含む長いオプション（`--max-include-depth`、`--remove-comments` など）は、`-` をすべて `_` にした綴り（`--max_include_depth`、`--remove_comments`）でも書けます。`-include` のような `-` 1 つのオプションと、`-` と `_` が混ざった綴り（`--max_include-depth`。`PP70`）は対象外です。
 
 全オプションの詳細は [`SPECIFICATION.md` §13](SPECIFICATION.md#13-cli-リファレンス--cli-reference) を参照してください。
 

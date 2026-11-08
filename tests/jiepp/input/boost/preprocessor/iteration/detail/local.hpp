@@ -11,9 +11,9 @@
 // #
 // # /* See http://www.boost.org for most recent version. */
 // #
-{# if \not\defined(BOOST_PP_LOCAL_LIMITS)}
+{# if !defined(BOOST_PP_LOCAL_LIMITS)}
 {#    error BOOST_PP_ERROR$:  local iteration boundaries are not defined}
-{# elif \not\defined(BOOST_PP_LOCAL_MACRO)}
+{# elif !defined(BOOST_PP_LOCAL_MACRO)}
 {#    error BOOST_PP_ERROR$:  local iteration target macro is not defined}
 {# else}
 {#    if  not BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_EDG()}

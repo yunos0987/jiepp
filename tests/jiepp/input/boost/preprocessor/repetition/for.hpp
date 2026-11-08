@@ -57,7 +57,7 @@
 
 {# define BOOST_PP_FOR_257_ERROR() BOOST_PP_ERROR(16#0002)}
 {# define BOOST_PP_FOR_257(s, p, o, m) /*n*/    BOOST_PP_IIF /*n*/        ( /*n*/        BOOST_PP_FOR_257_PR(s,p), /*n*/        BOOST_PP_FOR_257_ERROR, /*n*/        BOOST_PP_EMPTY /*n*/        ) /*n*/    () /*n*//**/}
-// @ define BOOST_PP_FOR_257(s, p, o, m) BOOST_PP_ERROR(16#0002)
+// # define BOOST_PP_FOR_257(s, p, o, m) BOOST_PP_ERROR(16#0002)
 // #
 {# define BOOST_PP_FOR_CHECK_BOOST_PP_NIL 1}
 // #

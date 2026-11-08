@@ -37,7 +37,7 @@
 {#    define BOOST_PP_SEQ_ELEM_III(im) BOOST_PP_SEQ_ELEM_IV(im)}
 {#    define BOOST_PP_SEQ_ELEM_IV(x, _) x}
 {# else}
-{#    if defined(__IBMC__) \or\ defined(__IBMCPP__)}
+{#    if defined(__IBMC__) || defined(__IBMCPP__)}
 {#        define BOOST_PP_SEQ_ELEM_I(i, seq) BOOST_PP_SEQ_ELEM_II(BOOST_PP_CAT(BOOST_PP_SEQ_ELEM_ @@ i, seq))}
 {#    else}
 {#        define BOOST_PP_SEQ_ELEM_I(i, seq) BOOST_PP_SEQ_ELEM_II(BOOST_PP_SEQ_ELEM_ @@ i seq)}

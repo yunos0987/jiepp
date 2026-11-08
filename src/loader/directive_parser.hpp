@@ -4,8 +4,10 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "../env/issue.hpp"
+#include "token.hpp"
 
 // Character a two-character "$<nc>" directive escape decodes to, or
 // std::nullopt when nc is a hex digit (first half of "$XX") or invalid.
@@ -77,7 +79,18 @@ private:
 // -> "$4" + LF); a trailing "$" or "$X" stays as is. No diagnostic is
 // raised here; *has_invalid (when non-null) is set to true if any such
 // invalid escape was kept.
-std::string decode_directive_text(std::string_view t, bool* has_invalid);
+// trace (when non-null) follows offsets through the decoding, for the source
+// lines of a directive's operand (task d1): trace->positions holds ascending
+// offsets into t and is rewritten in place to the offsets in the result at
+// which the decoding of those characters starts (an offset inside an escape
+// moves to the escape's end); trace->first_invalid is set to the offset in t
+// of the first invalid escape kept (npos if none).
+struct DecodeTrace {
+    std::vector<std::size_t>* positions = nullptr;
+    std::size_t first_invalid = std::string_view::npos;
+};
+std::string decode_directive_text(std::string_view t, bool* has_invalid,
+                                  DecodeTrace* trace = nullptr);
 
 // As above, but raises INVALID_ESCAPE_SEQUENCE (PP21) once, with the raw
 // text `t`, when `t` contains an invalid escape; then (if PP21 did not
@@ -110,8 +123,20 @@ std::string encode_directive_text(std::string_view t);
 // preferred if both are -- so the caller can raise INVALID_ESCAPE_SEQUENCE
 // (PP21) itself, once per directive, only when/if the directive turns out
 // to matter (e.g. not inside a skipped {#if 0} group).
+// lines (when non-null) carries the source lines (task d1): lines->body is
+// the line map of the directive token (Token::line_map, offsets after its
+// '{'); lines->arg is set to the map of the decoded arg (null when the arg
+// starts on the directive's line and has no break), and
+// lines->invalid_escape_line to the lines below the directive's line of the
+// raw escape *invalid_escape reports (its first invalid escape).
+struct DirectiveLines {
+    const LineMap* body = nullptr;
+    LineMapRef arg;
+    std::size_t invalid_escape_line = 0;
+};
 std::pair<std::string, std::string> parse_directive(std::string_view text,
-                                                      std::optional<std::string>& invalid_escape);
+                                                      std::optional<std::string>& invalid_escape,
+                                                      DirectiveLines* lines = nullptr);
 
 // As above, but raises INVALID_ESCAPE_SEQUENCE (PP21) once, unconditionally,
 // when *invalid_escape would have been set. Returns ("", "") on parse error

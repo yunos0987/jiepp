@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -25,30 +26,80 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// A path operand is '...' / "..." (a string literal, which the directive
-// decoding left with its IEC 61131-3 escapes as written -- SPEC §2 -- so
-// they are decoded here by decode_path_literal(), keeping the meaning
-// {#include 'a$$b.iec'} always had) or <...> (copied as is; its escapes
-// were decoded with the rest of the operand). The literal must be the
-// whole operand: 'a$' (the quote is escaped, so the literal never closes)
-// is not a path.
-bool strip_path(const std::string_view raw_path, std::string& path, bool& syspath_only) {
-    auto p = Util::trim_view(raw_path);
-    syspath_only = false;
-    if (p.size() < 2)
-        return false;
-    if (p.front() == '\'' || p.front() == '"') {
-        if (string_literal_end(p, 0) != p.size())
-            return false;
-        path = decode_path_literal(p);
-        return true;
+// The PP49 context of a directive: "{#name operand}" ("{#:operand}" for the
+// nameless marker form of {#line}), as for {#undef} and {#pragma}.
+std::string directive_context(const std::string& name, const std::string& raw_arg) {
+    const std::string arg = Util::escape_line_breaks(Util::trim_view(raw_arg));
+    return name.empty() ? "{#:" + arg + "}" : "{#" + name + " " + arg + "}";
+}
+
+using jiepp::preprocessor_detail::ExpandedPath;
+using jiepp::preprocessor_detail::expanded_path;
+using jiepp::preprocessor_detail::is_terminated_literal;
+using jiepp::preprocessor_detail::lex_operand;
+using jiepp::preprocessor_detail::read_header_name;
+using jiepp::preprocessor_detail::skip_blanks;
+
+// The path of an {#include}/{#sinclude}/{#syspath} operand (SPEC §7), read
+// on its tokens as gcc/clang read an #include operand:
+// - a terminated string literal written as the first token is the path,
+//   not macro-expanded; it was left with its IEC 61131-3 escapes as written
+//   (SPEC §2), so they are decoded here (decode_path_literal(), PP21);
+// - a '<' written as the first token starts a header name, read by
+//   read_header_name() up to the first '>' character, not macro-expanded
+//   (its $ escapes were decoded with the rest of the operand);
+// - otherwise the operand is macro-expanded and must start with a string
+//   literal or with '<' ... '>' tokens (expanded_path()).
+// Tokens after the path (macro-expanded, when the path was written
+// directly) are PP49 and the directive still runs (gcc/clang
+// -Wextra-tokens). Comments are whitespace, except inside a header name
+// written directly. The operand is lexed with its comments kept whatever
+// -nC says, so that header name keeps them. Returns nullopt for an operand
+// that is not a path (the caller's PP47); `angle` is true for <...>.
+struct IncludePath {
+    std::string path;
+    bool angle = false;
+};
+
+std::optional<IncludePath> read_include_operand(const std::string& raw_arg, const char* directive,
+                                                Env& env) {
+    // Work budget (PP64), as expand_operand_tokens() charges an operand.
+    env.charge_expansion_steps(raw_arg.size());
+    auto ts = lex_operand(raw_arg, /*remove_comments=*/false);
+    // Every newline in an operand is a decoded escape (see
+    // expand_operand_tokens()).
+    ts_mark_output_only(ts);
+    const std::size_t i = skip_blanks(ts, 0);
+    IncludePath r;
+    std::vector<Token> after; // the tokens after a path written directly
+    std::vector<Token> expanded;
+    std::size_t rest = 0;     // tokens of `expanded` from here on follow the path
+    if (i < ts.size() && (ts[i].type == Token::STRING || ts[i].type == Token::WSTRING)) {
+        if (!is_terminated_literal(ts[i]))
+            return std::nullopt;
+        r.path = decode_path_literal(ts[i].text);
+        after.assign(ts.begin() + static_cast<std::ptrdiff_t>(i) + 1, ts.end());
+    } else if (i < ts.size() && ts[i].type == Token::ANY && ts[i].text == "<") {
+        std::vector<Token> work(ts.rbegin(), ts.rend() - static_cast<std::ptrdiff_t>(i) - 1);
+        std::vector<Token> read;
+        if (!read_header_name(work, r.path, read))
+            return std::nullopt;
+        r.angle = true;
+        after.assign(work.rbegin(), work.rend());
+    } else {
+        expand(ts, expanded, env);
+        ExpandedPath p = expanded_path(expanded);
+        if (p.kind == ExpandedPath::Kind::none)
+            return std::nullopt;
+        r.angle = p.kind == ExpandedPath::Kind::angle;
+        r.path = r.angle ? std::move(p.text) : decode_path_literal(p.text);
+        rest = p.end;
     }
-    if (p.front() == '<' && p.back() == '>') {
-        syspath_only = true;
-        path = std::string(p.substr(1, p.size() - 2));
-        return true;
-    }
-    return false;
+    if (!after.empty())
+        expand(after, expanded, env);
+    if (skip_blanks(expanded, rest) < expanded.size())
+        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, directive_context(directive, raw_arg));
+    return r;
 }
 
 // A '//' comment from a directive operand has no newline after it once it
@@ -82,28 +133,23 @@ void line_comments_to_block_comments(std::vector<Token>& ts) {
 // coordinator's rev2 decision).
 constexpr LineNo kLineNoMax = 4294967295;
 
-// C3, item a (rev2): strict, unsigned-decimal-only line-number operand
-// parse. Unlike std::istream >> int (the previous implementation), this
-// does not accept leading whitespace beyond a plain trim, a leading
-// '+'/'-' sign, or a value above kLineNoMax. On success, returns the
-// parsed value and the (unparsed, not yet trimmed) remainder of `s` right
-// after the digit run -- e.g. an optional quoted filepath -- for the
-// caller to validate. Both the named form and the marker form share this
-// same range (0..4294967295); there is no longer a form-specific bound.
-std::optional<std::pair<LineNo, std::string_view>> parse_lineno_operand(std::string_view s) {
-    s = Util::ltrim_view(s);
-    std::size_t i = 0;
-    while (i < s.size() && s[i] >= '0' && s[i] <= '9')
-        ++i;
-    if (i == 0)
-        return std::nullopt; // no leading digit: empty, signed ("+5"/"-5"), or non-numeric
+// C3, item a (rev2): the line number of a {#line} operand is one token of
+// unsigned decimal digits (the lexer starts a number only at a digit, so a
+// '+'/'-' sign is a token of its own) whose value is at most kLineNoMax.
+// "5.0", "5_0" and "5abc" are not. Both the named form and the marker form
+// share this range (0..4294967295); there is no form-specific bound.
+std::optional<LineNo> lineno_token_value(const Token& t) {
+    if (t.type != Token::ANY || t.text.empty())
+        return std::nullopt;
     std::uint64_t v = 0;
-    for (std::size_t j = 0; j < i; ++j) {
-        v = v * 10 + static_cast<std::uint64_t>(s[j] - '0');
+    for (char ch : t.text) {
+        if (ch < '0' || ch > '9')
+            return std::nullopt;
+        v = v * 10 + static_cast<std::uint64_t>(ch - '0');
         if (v > static_cast<std::uint64_t>(kLineNoMax))
             return std::nullopt; // above 4294967295 (C3, item a)
     }
-    return std::make_pair(static_cast<LineNo>(v), s.substr(i));
+    return static_cast<LineNo>(v);
 }
 
 // Resolve a {#syspath} operand relative to the directory of the file
@@ -207,6 +253,17 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     // with -nC (gcc/clang without -C). Either way a comment is whitespace to
     // the checks below (Token::C has MASK_WS), so the definition is the same.
     auto ts = lex_operand(raw_arg, env.get_remove_comments());
+    // Task d1: like clang, which lexes a macro body once at its definition,
+    // the PP20/PP29 of a pragma body in the replacement list are reported
+    // here, at the lines the body is written on, and not again at each
+    // expansion. A -D value (handle_define() outside dispatch_directive(),
+    // so no RelexScope) keeps reporting them at the expansion.
+    const LineMap* operand_lines = nullptr;
+    if (RelexScope::find(raw_arg, &operand_lines)) {
+        for (auto& t : ts)
+            if (t.type == Token::PRAGMA)
+                report_pragma_body_issues(t, env);
+    }
     ts = ts_ltrim(std::move(ts));
 
     // PP80 (__VA_OPT__ outside a variadic macro), one per __VA_OPT__ token,
@@ -569,40 +626,48 @@ void handle_stringize(const std::string& raw_arg,
     }
 }
 
-void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, std::vector<Token>& ots) {
+void handle_setline(const std::string& raw_arg, const std::string& key, Env& env, std::vector<Token>& ots) {
+    const bool is_marker_form = key.empty();
     // C4: a nameless, operand-less directive ({#}, {#:}, and their
     // whitespace-only variants) is gcc's "empty directive" -- a no-op, not
     // an error. A *named* form with an empty operand ({#line}, {#set_line})
-    // still reaches the PP41 report below, via parse_lineno_operand()
-    // rejecting an operand with no leading digit.
+    // still reaches the PP41 report below: there is no line number token.
     if (is_marker_form && raw_arg.empty())
         return;
 
-    // Comments around the operand are whitespace, as in C; expand_operand_text()
-    // keeps them unless -nC.
-    std::string arg = iec3_blank_out_comments(expand_operand_text(raw_arg, env));
-    if (auto parsed = parse_lineno_operand(arg)) {
-        auto [new_lineno, rest] = *parsed;
+    // Like gcc/clang, the whole operand is macro-expanded and then read on
+    // its tokens (comments are whitespace): a line number token
+    // (lineno_token_value()), then optionally a terminated string literal as
+    // the file name ('<...>' or anything else is PP41). Tokens after that
+    // are PP49 and the line is still set (gcc/clang -Wextra-tokens).
+    const std::vector<Token> ts = expand_operand_tokens(raw_arg, env);
+    std::size_t i = skip_blanks(ts, 0);
+    const std::optional<LineNo> parsed = i < ts.size() ? lineno_token_value(ts[i]) : std::nullopt;
+    if (parsed) {
+        const LineNo new_lineno = *parsed;
         // item a (rev2): both forms now accept the same range,
-        // 0..4294967295, already enforced by parse_lineno_operand() above
-        // (anything outside it fell through to nullopt, so this branch
-        // never sees it). This replaces the two different ranges
+        // 0..4294967295, already enforced by lineno_token_value() above
+        // (anything outside it is nullopt, so this branch never sees it).
+        // This replaces the two different ranges
         // introduced by commit 2cb1cc6 (U1(a): named form 1..2147483647,
         // marker form 0..2147483646 -- one less than the named form, so a
         // named directive's emitted N-1 marker was itself always a valid
         // marker value). wrap_lineno() below now guarantees that instead,
         // unconditionally, for every effective line number including 0.
         {
-            // Read the whole remainder (not just one whitespace-delimited word) so
-            // quoted filenames containing spaces are captured intact; then trim
-            // and parse as a single path argument. A quoted path followed by
-            // trailing garbage, or an unquoted/syspath-only ('<...>') path, is
-            // rejected below instead of being silently accepted or truncated.
-            std::string_view raw_fp = Util::trim_view(rest);
+            // The file name is one literal token, so it may contain spaces.
             std::string new_fp;
-            bool syspath_only = false;
-            bool ok = raw_fp.empty() ||
-                (strip_path(raw_fp, new_fp, syspath_only) && !syspath_only);
+            i = skip_blanks(ts, i + 1);
+            bool ok = true;
+            if (i < ts.size()) {
+                ok = is_terminated_literal(ts[i]);
+                if (ok) {
+                    new_fp = decode_path_literal(ts[i].text);
+                    i = skip_blanks(ts, i + 1);
+                }
+            }
+            if (ok && i < ts.size())
+                ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, directive_context(key, raw_arg));
             if (ok) {
                 // C1/U1(a): a named form sets the line number of the *next*
                 // physical line (gcc semantics) to new_lineno, by advancing
@@ -648,16 +713,14 @@ void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, s
 }
 
 void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ots) {
-    // Comments around the operand are whitespace, as in C; expand_operand_text()
-    // keeps them unless -nC.
-    std::string raw_path = iec3_blank_out_comments(expand_operand_text(raw_arg, env), /*header_name=*/true);
-    std::string syspath;
-    bool _;
+    // Read like an {#include} operand (read_include_operand()).
+    const std::optional<IncludePath> p = read_include_operand(raw_arg, "syspath", env);
     // A9: a NUL (decoded from $00) would end the path early in the C-string
     // filesystem calls, so it is an invalid path, like a malformed operand.
-    if (strip_path(raw_path, syspath, _) && syspath.find('\0') == std::string::npos) {
+    if (p && p->path.find('\0') == std::string::npos) {
+        const std::string& syspath = p->path;
         env.add_syspath(resolve_syspath_base(syspath, env));
-        ots.push_back(Token::pragma("syspath", Util::encode_iec_string(syspath, '\''), env.is_standard_pragma_style()));
+        ots.push_back(Token::pragma("syspath", Util::encode_syspath_path(syspath), env.is_standard_pragma_style()));
         return;
     }
     // raw_arg is decoded, so re-escape it before it reaches the
@@ -670,14 +733,12 @@ void handle_include(const std::string& raw_arg,
                     Env& env,
                     std::vector<Token>& ots,
                     bool syspath_only) {
-    // Comments around the operand are whitespace, as in C; expand_operand_text()
-    // keeps them unless -nC.
-    std::string raw_path = iec3_blank_out_comments(expand_operand_text(raw_arg, env), /*header_name=*/true);
-    std::string include_path;
-    bool syspath_only_path;
+    const std::optional<IncludePath> p =
+        read_include_operand(raw_arg, syspath_only ? "sinclude" : "include", env);
     // A9: same NUL rule as {#syspath} above.
-    if (strip_path(raw_path, include_path, syspath_only_path)
-        && include_path.find('\0') == std::string::npos) {
+    if (p && p->path.find('\0') == std::string::npos) {
+        const std::string& include_path = p->path;
+        const bool syspath_only_path = p->angle;
         auto disp_path = fs::path(include_path).generic_string();
 
         // PP66: count the executed directive (valid path, about to resolve
@@ -743,28 +804,66 @@ void handle_ignore(const std::string& raw_arg, Env& env) {
 
 namespace {
 
+// The value of a {#max_*} operand (SPEC §11): one decimal integer, judged on
+// the operand's tokens. Comments are whitespace. The integer is one token of
+// decimal digits, optionally preceded, with nothing in between, by a '+' or
+// '-' token (try_push_number() starts a number only at a digit); its value
+// must fit an int. Anything else is nullopt: a trailing token ("2x" is one
+// token, "2 3" two), a literal, "2.9", "16#10", "1_0", a sign apart from
+// the digits ("- 3"), a document comment, a pragma, and a directive that the
+// lexer read from the decoded text ("${#x$}"), which lex_operand() drops.
+//
+// This replaced a text scan (comments blanked out, then std::stoi()) that
+// accepted and rejected the same operands without lexing them, so the lex
+// here adds no diagnostic: the lexer's PP20/PP22 and lex_operand()'s PP23
+// are ignored while it runs, and PP29 is not reported.
+std::optional<int> limit_operand_value(const std::string& raw_arg) {
+    std::vector<Token> ts;
+    bool directive = false;
+    {
+        Issue::Ignoring quiet({Issue::Code::UNCLOSED_COMMENT, Issue::Code::INVALID_PRAGMA_SYNTAX,
+                               Issue::Code::INVALID_PP_SYNTAX});
+        ts = ts_trim(lex_operand(raw_arg, /*remove_comments=*/true,
+                                 /*report_unterminated=*/false, /*report_nested_brace=*/true,
+                                 /*found_unterminated=*/nullptr,
+                                 /*report_unclosed_comment=*/true, &directive));
+    }
+    if (directive || ts.empty())
+        return std::nullopt;
+    bool negative = false;
+    std::size_t i = 0;
+    if (ts.size() == 2 && ts[0].type == Token::ANY && (ts[0].text == "+" || ts[0].text == "-")) {
+        negative = ts[0].text == "-";
+        i = 1;
+    }
+    if (ts.size() != i + 1 || ts[i].type != Token::ANY || ts[i].text.empty())
+        return std::nullopt;
+    // The digits of the one number token; its value, like std::stoi(), in
+    // the range of int.
+    const std::int64_t bound = negative ? -static_cast<std::int64_t>(INT_MIN) : INT_MAX;
+    std::int64_t v = 0;
+    for (char ch : ts[i].text) {
+        if (ch < '0' || ch > '9')
+            return std::nullopt;
+        v = v * 10 + (ch - '0');
+        if (v > bound)
+            return std::nullopt;
+    }
+    return static_cast<int>(negative ? -v : v);
+}
+
 // Parse raw_arg as an integer and call setter.
 // Validation (n <= 0, n > 2^24) is handled by the Env setter via ISSUE.
 // Parse failure is reported here as INVALID_LIMIT_OPERAND.
 void handle_limit_directive(const std::string& raw_arg, Env& env,
                             bool (Env::*setter)(int)) {
-    // One decimal integer; comments around it are whitespace (SPEC §11).
-    // std::stoi() alone accepted any trailing text ("2x", "2 3", "2.9" all
-    // silently meant 2) and rejected a leading comment.
-    const std::string arg = iec3_blank_out_comments(raw_arg);
-    std::size_t used = 0;
-    int n = 0;
-    try {
-        n = std::stoi(arg, &used);
-    } catch (const std::exception&) {
-        used = 0;
-    }
-    if (used == 0 || !Util::trim_view(std::string_view(arg).substr(used)).empty()) {
+    const std::optional<int> n = limit_operand_value(raw_arg);
+    if (!n) {
         // raw_arg is decoded, so re-escape it (see {#define} above).
         ISSUE(INVALID_LIMIT_OPERAND, Util::escape_line_breaks(raw_arg));
         return;
     }
-    (env.*setter)(n);
+    (env.*setter)(*n);
 }
 
 } // namespace
@@ -802,19 +901,91 @@ void handle_pragma_style(const std::string& raw_arg, Env& env) {
     env.set_pragma_style(ts[0].text);
 }
 
-void handle_pragma_once(const std::string& raw_arg, Env& env) {
-    // Only "once" is recognised; other pragma names are silently ignored.
+namespace {
+
+// The operand of {#pragma push_macro(...)} / {#pragma pop_macro(...)}, read
+// from its tokens `ts` (ts[0] is the pragma name; blanks and comments are
+// MASK_WS): '(' then one terminated '...' or "..." literal then ')'. On
+// success stores the literal's text without its quotes in `name` (escapes
+// as written, so a $ escape never forms an identifier) and whether tokens
+// follow the ')' in `extra`. The lexer has already joined adjacent literals
+// of the same quote (SPEC 2), so ('X' 'Y') names XY.
+bool push_pop_macro_name(const std::vector<Token>& ts, std::string& name, bool& extra) {
+    std::size_t i = 1;
+    auto at_token = [&]() {
+        while (i < ts.size() && (ts[i].type & Token::MASK_WS))
+            ++i;
+        return i < ts.size();
+    };
+    if (!at_token() || ts[i].type != Token::LP)
+        return false;
+    ++i;
+    if (!at_token() || (ts[i].type != Token::STRING && ts[i].type != Token::WSTRING) ||
+        ts[i].unterminated)
+        return false;
+    name = ts[i].text.substr(1, ts[i].text.size() - 2);
+    ++i;
+    if (!at_token() || ts[i].type != Token::RP)
+        return false;
+    ++i;
+    extra = at_token();
+    return true;
+}
+
+} // namespace
+
+bool handle_pragma(const std::string& raw_arg, Env& env, std::string* restored_name) {
+    // Recognised names: "once", "push_macro" and "pop_macro" (SPEC 3.8);
+    // other pragma names are silently ignored.
     // Comments are whitespace; tokens after "once" are a warning and the
     // pragma still applies, like clang. A document comment is a token.
-    // lex_operand() reports PP29 before the "once" check below, so an
+    // lex_operand() reports PP29 before the name check below, so an
     // unrecognised pragma name still gets it, e.g. {#pragma foo 'x}.
     auto ts = ts_trim(lex_operand(raw_arg, /*remove_comments=*/true));
-    if (ts.empty() || ts[0].type != Token::ANY || ts[0].text != "once")
-        return;
-    if (ts.size() > 1)
-        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE,
-              "{#pragma " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}");
-    env.record_pragma_once(env.current_file(), env.current_file_from_disk());
+    if (ts.empty() || ts[0].type != Token::ANY)
+        return false;
+    const std::string context =
+        "{#pragma " + Util::escape_line_breaks(Util::trim_view(raw_arg)) + "}";
+    if (ts[0].text == "once") {
+        if (ts.size() > 1)
+            ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, context);
+        env.record_pragma_once(env.current_file(), env.current_file_from_disk());
+        return false;
+    }
+    const bool push = ts[0].text == "push_macro";
+    if (!push && ts[0].text != "pop_macro")
+        return false;
+    // Like gcc/clang: a malformed operand is an error and the pragma is
+    // ignored; tokens after the ')' only warn (gcc), as for "once" above.
+    std::string name;
+    bool extra = false;
+    if (!push_pop_macro_name(ts, name, extra)) {
+        ISSUE(INVALID_PUSH_POP_MACRO, context);
+        return false;
+    }
+    if (extra)
+        ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, context);
+    // A string that is not an identifier ('1', 'X Y', '') never names a
+    // macro, so there is nothing to save or restore (gcc/clang are silent
+    // too). 'defined' cannot be {#define}d or {#undef}ined (PP02), so it is
+    // never saved or restored either.
+    if (!iec3_is_identifier(name) || name == "defined")
+        return false;
+    if (push) {
+        env.push_macro(name);
+        return false;
+    }
+    // Restoring is silent (no PP35 for a built-in macro, no redefinition
+    // warning). Report a change for -dD only if the definition differs.
+    Macro* before = env.lookup(name);
+    if (!env.pop_macro(name))
+        return false;
+    Macro* after = env.lookup(name);
+    if (before == after || (before && after && before->equal(*after)))
+        return false;
+    if (restored_name)
+        *restored_name = name;
+    return true;
 }
 
 } // namespace jiepp::preprocessor_detail

@@ -246,7 +246,7 @@ void cf::CfParser::error(const std::string& msg) {
 %token <CfValue> CF_IDENT
 %token CF_LPAREN CF_RPAREN
 %token CF_PLUS CF_MINUS CF_STAR CF_SLASH
-%token CF_AMP CF_EQ CF_NE CF_LT CF_LE CF_GT CF_GE
+%token CF_AMP CF_BANG CF_EQ CF_NE CF_LT CF_LE CF_GT CF_GE
 %token CF_SHL CF_SHR
 %token CF_HASH
 %token CF_UNKNOWN
@@ -503,6 +503,11 @@ unary_core:
         } else {
             type_error();
         }
+    }
+    // C's "!": logical negation at unary precedence, unlike \not\.
+  | CF_BANG  unary_expr               {
+        CfValue b = cast_to_bool($2);
+        $$ = CfValue::bool_value(!b.bval);
     }
   ;
 

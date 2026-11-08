@@ -37,11 +37,12 @@ void handle_stringize(const std::string& raw_arg,
                       Env& env,
                       std::vector<Token>& ots,
                       bool wide);
-// is_marker_form: true for the nameless marker directive ({#:N}, key == ""),
-// false for the named gcc-style directive ({#line N} / {#set_line N} /
-// {#set-line N}). See handle_setline()'s definition (directive_handlers.cpp)
-// for how this changes the effective line number (unit C, U1(a)).
-void handle_setline(const std::string& raw_arg, bool is_marker_form, Env& env, std::vector<Token>& ots);
+// key: the directive name as written -- "" for the nameless marker directive
+// ({#:N}), "line"/"set_line"/"set-line" for the named gcc-style directive.
+// See handle_setline()'s definition (directive_handlers.cpp) for how the two
+// forms differ in the effective line number (unit C, U1(a)); the name is
+// also the context of a PP49 for tokens after the operand.
+void handle_setline(const std::string& raw_arg, const std::string& key, Env& env, std::vector<Token>& ots);
 void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ots);
 void handle_include(const std::string& raw_arg,
                     Env& env,
@@ -59,21 +60,117 @@ void handle_max_expansion_depth(const std::string& raw_arg, Env& env);
 void handle_max_if_nesting(const std::string& raw_arg, Env& env);
 void handle_max_blank_lines(const std::string& raw_arg, Env& env);
 void handle_pragma_style(const std::string& raw_arg, Env& env);
-void handle_pragma_once(const std::string& raw_arg, Env& env);
+// {#pragma once}, {#pragma push_macro('NAME')} and {#pragma pop_macro('NAME')}
+// (SPEC 7.6, 3.8); other names are ignored. Returns true iff a pop_macro
+// changed NAME's definition, and then stores NAME in *restored_name (for the
+// -dD echo).
+bool handle_pragma(const std::string& raw_arg, Env& env, std::string* restored_name);
 
 // PP29 (UNTERMINATED_STRING_LITERAL) at the current Issue location if the
-// lexer marked t (Token::unterminated); clears the mark first, so neither
-// t nor a later copy (macro body, argument) is reported again.
+// lexer marked t (Token::unterminated) -- moved down to the line of its quote
+// when t has a line map (a literal lexed from a multi-line re-lexed text);
+// clears the mark first, so neither t nor a later copy (macro body,
+// argument) is reported again.
 void report_unterminated_literal(Token& t);
+
+// The text that a directive handler or a pragma expansion re-lexes, with its
+// source lines (task d1). While a scope is the innermost one, lex_operand()
+// of a text equal to `text` lexes it with `map` (iec3_relex()'s line_map), so
+// its diagnostics go to the lines the characters are written on, counted
+// from the current Issue location. Set by dispatch_directive() for the
+// decoded operand (raw_arg), by expand_pragma_token() and
+// report_pragma_body_issues() for a pragma body; scopes nest (a pragma
+// expanded inside a handler) and end with the enclosing call. A re-lex
+// outside any scope (-D values, macro-produced text, read_header_name())
+// has no map. Matching by content keeps the map off any other text lexed
+// while the scope is open (a macro's text, an included file's operands).
+class RelexScope {
+public:
+    RelexScope(const std::string& text, const LineMap* map) noexcept;
+    ~RelexScope();
+    RelexScope(const RelexScope&) = delete;
+    RelexScope& operator=(const RelexScope&) = delete;
+    // Whether the innermost scope is for `text`; *map is set to its map
+    // (null when the text is on one line).
+    static bool find(const std::string& text, const LineMap** map) noexcept;
+
+private:
+    const std::string* text_;
+    const LineMap* map_;
+    RelexScope* prev_;
+};
+
+// Reports the PP20 (unclosed comment) and PP29 (unterminated literal) of a
+// PRAGMA token's body once, where the body is written: lexes the body under
+// a RelexScope with the token's line map (the result is discarded), at the
+// current Issue location, then sets Token::pragma_unterminated_reported, so
+// its expansion -- once or many times, at another location -- re-lexes
+// the body without reporting them again, and drops the line map. For a
+// pragma in a {#define} body (handle_define(), the definition's line) and in
+// a function-macro argument (expand(), the line of its '{'). The body's
+// other lexer diagnostics (PP22, PP23) stay with its expansion. Does nothing
+// for a token already marked or not in the lexer's "{...}" form.
+void report_pragma_body_issues(Token& pragma, Env& env);
 
 // Lexes a decoded directive operand and reports PP29 for each unterminated
 // literal in it; with report_unterminated == false (message text, like
 // clang's #error/#warning) only clears the marks. Lexes with iec3_relex(),
 // so its own diagnostics (PP20/PP22/PP23) are also reported at the current
-// Issue location; report_nested_brace is passed to it.
+// Issue location -- each moved down to the line its character is written
+// on when a RelexScope for `text` gives a line map; report_nested_brace is
+// passed to it. Only PRAGMA tokens of the result keep a line map.
+// found_unterminated, if not null, is set to true when the text has an
+// unterminated literal or an unclosed comment (whether or not it was
+// reported); never set to false. report_unclosed_comment == false lexes an
+// unclosed comment without PP20 (the rescan of an already reported pragma).
+// found_directive, if not null, is set to true when a DIRECTIVE token was
+// dropped (and PP23 raised for it); never set to false.
 std::vector<Token> lex_operand(const std::string& text, bool remove_comments,
                                bool report_unterminated = true,
-                               bool report_nested_brace = true);
+                               bool report_nested_brace = true,
+                               bool* found_unterminated = nullptr,
+                               bool report_unclosed_comment = true,
+                               bool* found_directive = nullptr);
+
+// ---- Path operands (SPEC §7, §7.5, §9): {#include}, {#sinclude},
+// {#syspath}, {#line}'s file name and __has_include's operand. Judged on
+// tokens, as gcc/clang do; see ARCHITECTURE.md. ----
+
+// Whether t is a '...' or "..." literal closed by its own quote. Reads the
+// one token's text (string_literal_end()): an unterminated literal (`'a$'`)
+// is not a path.
+bool is_terminated_literal(const Token& t);
+
+// Index of the first token at or after i that is not whitespace or a
+// comment (Token::MASK_WS), or ts.size().
+std::size_t skip_blanks(const std::vector<Token>& ts, std::size_t i);
+
+// Reads a header name written directly: the '<' has just been taken from
+// `work`, a reversed token stack (back() is the next token). Like gcc/clang,
+// which read a header name from the source characters, the name is the
+// spellings of the next tokens up to the first '>' character, so a comment
+// opener or a quote inside <...> is part of the name and nothing in it is
+// macro-expanded. The lexer may have read that '>' inside a longer token (a
+// comment, a literal): the token is cut after the '>' and the rest of its
+// text is lexed again (without diagnostics: the source lex reported them)
+// and pushed back onto `work`. The tokens read move to `read` in order, the
+// cut token holding its text up to the '>'. Returns false, with every token
+// moved to `read`, when no token has a '>'. Each token is read once.
+bool read_header_name(std::vector<Token>& work, std::string& name, std::vector<Token>& read);
+
+// The path at the start of macro-expanded tokens, as gcc/clang read the
+// result of expanding an #include operand: after blanks, one terminated
+// string literal (`text` is the literal as written, escapes not decoded), or
+// a '<' token and the tokens up to the next '>' token (`text` is their
+// spellings joined, a comment as one blank). `end` is the index just past
+// the path, for the caller's check of the tokens after it.
+struct ExpandedPath {
+    enum class Kind { none, quoted, angle };
+    Kind kind = Kind::none;
+    std::string text;
+    std::size_t end = 0;
+};
+ExpandedPath expanded_path(const std::vector<Token>& ts);
 
 // What expand_operand_tokens() lexes (A2 / S-02):
 // - operand: a directive operand or message text.
@@ -95,7 +192,9 @@ enum class OperandKind { operand, pragma_body, nested_pragma_body };
 // it here spliced a line marker into the operand text itself.
 std::vector<Token> expand_operand_tokens(const std::string& text, Env& env,
                                          bool report_unterminated = true,
-                                         OperandKind kind = OperandKind::operand);
+                                         OperandKind kind = OperandKind::operand,
+                                         bool* found_unterminated = nullptr,
+                                         bool report_unclosed_comment = true);
 // Concatenated text of expand_operand_tokens().
 std::string expand_operand_text(const std::string& text, Env& env,
                                 bool report_unterminated = true);

@@ -163,9 +163,16 @@ TEST_F(DirectiveTest, UnknownDirectiveReportedOncePerInclusion) {
     EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, cs[1]);
 }
 
-TEST_F(DirectiveTest, SpecialInDirective) {
-    EXPECT_EQ(";'0';'1'", pp("{#define L ${## __COUNTER__$}};L;L"));
-    EXPECT_TRUE(empty());
+// A directive decoded from "${#...$}" in a macro replacement list is not a
+// directive (R1: only a raw "{#" read by the source lexer is one). It is not
+// run, not output, and reported with PP23 once, at the definition. (It used
+// to run the directive at each use: `;'0';'1'`.)
+TEST_F(DirectiveTest, DecodedDirectiveInDefineIsDropped) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ(";;", pp("{#define L ${## __COUNTER__$}};L;L"));
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::INVALID_PP_SYNTAX, cs[0]);
 }
 
 TEST_F(DirectiveTest, Ignore) {
@@ -276,12 +283,19 @@ TEST_F(DirectiveTest, DirectiveInsideMacroArgumentExecutedOnce) {
 }
 
 TEST_F(DirectiveTest, ControlDirectiveInsideMacroArgumentRejected) {
-    // Control directives ({#if}/{#elif}/{#else}/{#endif}/{#ifdef}/{#ifndef})
-    // found while collecting a macro call's argument list cannot be executed
-    // safely (they would run once per parameter occurrence, or not at all if
-    // the parameter is never referenced), so they are rejected diagnostically
-    // instead of silently misbehaving.
+    // Control directives ({#if}/{#elif}/{#else}/{#endif}/{#ifdef}/{#ifndef}/
+    // {#elifdef}/{#elifndef}) found while collecting a macro call's argument
+    // list cannot be executed safely (they would run once per parameter
+    // occurrence, or not at all if the parameter is never referenced), so
+    // they are rejected diagnostically instead of silently misbehaving.
     EXPECT_THROW(pp("{#define F(x) [x]};F(\n{#if TRUE}\nY\n{#endif}\n)"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+}
+
+TEST_F(DirectiveTest, ElifdefInsideMacroArgumentRejected) {
+    EXPECT_THROW(pp("{#define F(x) [x]};F({#elifdef A})"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_THROW(pp("{#define F(x) [x]};F({#elifndef A})"), Issue::Exception);
     EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
 }
 
@@ -466,6 +480,15 @@ TEST_F(DirectiveTest, NewlineInIfExpression) {
     EXPECT_TRUE(empty());
 }
 
+// A UTF-8 BOM decoded from "$EF$BB$BF" at the start of a re-lexed operand is
+// data, not a file's encoding mark: it is kept (source text strips a leading
+// BOM, see PreprocessTest.Bom).
+TEST_F(DirectiveTest, StringDirectiveKeepsDecodedBom) {
+    EXPECT_EQ("'\xEF\xBB\xBF" "x'", pp("{#string $EF$BB$BFx}"));
+    EXPECT_EQ("\"\xEF\xBB\xBF" "x\"", pp("{#wstring $EF$BB$BFx}"));
+    EXPECT_TRUE(empty());
+}
+
 TEST_F(DirectiveTest, NewlineInStringAndMessageDirectives) {
     // {#string} emits its own content before the swallowed newline is
     // echoed, so the "\n" trails here instead of leading.
@@ -538,7 +561,7 @@ TEST_F(DirectiveTest, OperandDiagnosticsStayOnOneLine) {
     }
     {
         // handle_include() shares the same INVALID_PATH ISSUE() site as
-        // handle_syspath() above (strip_path() failure), but is a distinct
+        // handle_syspath() above (read_include_operand() failure), but is a distinct
         // handler -- verify it separately.
         SCOPED_TRACE("{#include abc$n}");
         pp("{#include abc$n}");
@@ -1122,7 +1145,7 @@ TEST_F(DirectiveTest, InvalidEscapeKeptLiterally) {
     }
     {
         SCOPED_TRACE("{#line 10 'f$q.iec'}__FILE__;");
-        EXPECT_EQ("(*{#:9 'f$$q.iec'}*)'f$$q.iec';",
+        EXPECT_EQ("(*{#:9 'f$24q.iec'}*)'f$$q.iec';",
                    pp("{#line 10 'f$q.iec'}__FILE__;"));
         auto cs = codes();
         ASSERT_EQ(1u, cs.size());
@@ -1255,6 +1278,83 @@ TEST_F(DirectiveTest, InvalidEscapeReportedOnceThroughMacroArgument) {
     ASSERT_EQ(1u, cs.size());
     EXPECT_EQ(Issue::Code::INVALID_ESCAPE_SEQUENCE, cs[0]);
     EXPECT_NE(std::string::npos, output.find("x$q y;")) << "output:\n" << output;
+}
+
+// A directive executed while collecting a macro call's arguments reports its
+// diagnostics at the physical line it is written on, like a directive outside
+// an argument. Before the fix it reported at the macro-name line.
+TEST_F(DirectiveTest, DirectiveInMacroArgumentReportsOwnLine) {
+    Issue::ContinueMode guard({});
+    {
+        SCOPED_TRACE("single line");
+        pp("{#define F(x) x}\nF({#warning w} 1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:2.0: warning: PP92: 'w'"}, messages());
+    }
+    {
+        SCOPED_TRACE("multi-line argument");
+        pp("{#define F(x) x}\nF(\n\n{#warning w}\n1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:4.0: warning: PP92: 'w'"}, messages());
+    }
+    {
+        SCOPED_TRACE("error directive");
+        pp("{#define F(x) x}\n;\nF(\n{#error boo}\n1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:4.0: error: PP91: 'boo'"}, messages());
+    }
+    {
+        SCOPED_TRACE("comment and string spanning lines before the directive");
+        pp("{#define F(x) x}\nF((* a\nb *) \"s$\nt\"\n{#warning w}\n1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:5.0: warning: PP92: 'w'"}, messages());
+    }
+    {
+        SCOPED_TRACE("other diagnostic: unknown directive");
+        pp("{#define F(x) x}\nF(\n\n{#foo}\n1);");
+        EXPECT_EQ(std::vector<std::string>{"<unknown location>:4.0: error: PP45: Unknown directive; 'foo'"},
+                  messages());
+    }
+}
+
+TEST_F(DirectiveTest, DirectiveInNestedMacroArgumentReportsOwnLine) {
+    Issue::ContinueMode guard({});
+    pp("{#define F(x) x}\n{#define G(x) x}\nG(\nF(\n{#warning w}\n1));");
+    EXPECT_EQ(std::vector<std::string>{"<unknown location>:5.0: warning: PP92: 'w'"}, messages());
+}
+
+TEST_F(DirectiveTest, DirectiveInMacroArgumentAfterLineDirective) {
+    Issue::ContinueMode guard({});
+    // {#line 100} makes the next physical line 100: define 100, F 101, directive 102.
+    pp("{#line 100}\n{#define F(x) x}\nF(\n{#warning w}\n1);");
+    EXPECT_EQ(std::vector<std::string>{"<unknown location>:102.0: warning: PP92: 'w'"}, messages());
+}
+
+TEST_F(DirectiveTest, TwoDirectivesInOneMacroArgument) {
+    Issue::ContinueMode guard({});
+    pp("{#define F(x) x}\nF(\n{#warning a}\n\n{#warning b}\n1);");
+    EXPECT_EQ((std::vector<std::string>{"<unknown location>:3.0: warning: PP92: 'a'",
+                                        "<unknown location>:5.0: warning: PP92: 'b'"}),
+              messages());
+}
+
+// {#line} / {#set_line} / {#include} are rejected inside an argument (PP02,
+// their output would precede the macro's expansion), so no directive that
+// moves the line counter runs there; the rejection itself is reported at the
+// directive's own line.
+TEST_F(DirectiveTest, SetLineInMacroArgumentRejectedAtOwnLine) {
+    Issue::ContinueMode guard({});
+    EXPECT_THROW(pp("{#define F(x) x}\nF(\n\n{#line 50}\n1);"), Issue::Exception);
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_NE(std::string::npos, msgs[0].find("<unknown location>:4.0: error: PP02")) << msgs[0];
+}
+
+// The fix only changes where diagnostics are reported: __LINE__ after the
+// call, and the output, are the same with and without the directive.
+TEST_F(DirectiveTest, DirectiveInMacroArgumentDoesNotChangeLineTracking) {
+    Issue::ContinueMode guard({});
+    const std::string with_dir = pp("{#define F(x) x}\nF(\n{#warning w}\n1) __LINE__\n__LINE__;");
+    const std::string without_dir = pp("{#define F(x) x}\nF(\n\n1) __LINE__\n__LINE__;");
+    EXPECT_EQ(without_dir, with_dir);
+    // F's closing ')' is on line 4 and the last __LINE__ on line 5.
+    EXPECT_NE(std::string::npos, with_dir.find("4\n5;")) << with_dir;
 }
 
 // Unchanged: a single directive with two invalid escapes in the same

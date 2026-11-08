@@ -217,6 +217,19 @@ TEST_F(HasIncludeTest, HasIncludeInsideAssert) {
     EXPECT_NE(std::string::npos, ms[0].find("PP91: 'missing'")) << ms[0];
 }
 
+// A macro-named operand whose ')' is missing consumes the rest of the
+// condition as the text of the malformed call, unexpanded: the PP52 text
+// shows M, not its value, and the nested call is not read on its own.
+TEST_F(HasIncludeTest, MacroOperandWithoutCloseParenConsumesTheRest) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("n", pp_hi("{#define M 'existing.iec'}{#if __has_include(M __has_include(M 1}y{#else}n{#endif}"));
+    auto ms = messages();
+    ASSERT_EQ(1u, ms.size());
+    EXPECT_NE(std::string::npos,
+              ms[0].find("PP52: Invalid expression; '__has_include(M __has_include(M 1'"))
+        << ms[0];
+}
+
 // H4: regression -- __has_include_next is not implemented, so it reads as
 // undefined and never appears in a macro dump.
 TEST_F(HasIncludeTest, HasIncludeNextNotImplemented) {
@@ -257,10 +270,11 @@ TEST_F(HasIncludeTest, QuotedPathEscapes) {
 
 // ---- __has_include in __assert, __counter_set and {#if} ----
 //
-// Behaviour pins for the token path (eval_cond_value_tokens(): __assert and
-// __counter_set) and the text path ({#if}). The expected values are the
-// output and diagnostics of 7e231f7, the commit before the pre-scan and the
-// '>' search were made linear; they pass on both.
+// Behaviour pins for __assert and __counter_set (eval_cond_value_tokens())
+// and {#if}. The expected values were taken from 7e231f7, the commit before
+// the __has_include scans were made linear. Since __has_include became an
+// operator of the expansion (gcc/clang's operand rules), the pins whose
+// result changed say so.
 
 namespace {
 
@@ -374,24 +388,26 @@ TEST_F(HasIncludeTest, TokenPathResolutionEdgeCases) {
         {"__has_include('a>b.iec')",
          ";|<unknown location>:1.0: error: PP91: 'm'\n",
          "0|"},
-        // An invalid escape in a quoted path: PP21 is reported once for
-        // every candidate call whose text reaches the literal, so nested
-        // calls repeat it.
+        // An invalid escape in a quoted path: PP21 is reported once per
+        // literal, in source order, however deeply the calls nest (also in
+        // the {#if} context, see NestedInvalidEscapeReportedOnce).
         {"__has_include('a$q')",
          ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP91: 'm'\n",
          "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n"},
         {"__has_include('a$q' __has_include('b$q' __has_include('c$q')))",
-         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include('a$q' __has_include('b$q' 0))'\n",
-         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include('a$q' __has_include('b$q' 0))'\n"},
+         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include('a$q' __has_include('b$q' 0))'\n",
+         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''a$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''b$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''c$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include('a$q' __has_include('b$q' 0))'\n"},
         {"__has_include(__has_include(__has_include('d$q')))",
-         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(0))'\n",
-         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(0))'\n"},
+         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(0))'\n",
+         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''d$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(0))'\n"},
         {"__has_include(<z> __has_include('e$q') __has_include('existing.iec'))",
-         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n",
-         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n"},
+         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n",
+         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''e$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> 0 1)'\n"},
+        // Nothing inside a comment is read as __has_include, a document
+        // comment included: no PP21 for its literal.
         {"__has_include(<z> (*! __has_include('f$q') *))",
-         ";|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''f$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n",
-         "0|<unknown location>:1.0: error: PP21: Invalid escape sequence; ''f$q''\n<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n"},
+         ";|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n",
+         "0|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(<z> (*! __has_include('f$q') *))'\n"},
         {"__has_include(__has_include(<a)) b>)",
          ", m);|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(<a)) b>'\n",
          ")0|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(__has_include(<a)) b>'\n"},
@@ -432,12 +448,94 @@ TEST_F(HasIncludeTest, TextPathAngleEdgeCases) {
         EXPECT_EQ(expected, run(src)) << src;
 }
 
+// ---- PP21 in nested candidate calls: once per literal position ----
+
+namespace {
+
+// The literals ('a$q', 'b$q', ...) named by the PP21 messages, in order.
+std::string hi_pp21_literals(const std::vector<std::string>& ms) {
+    std::string r;
+    for (const auto& m : ms) {
+        const std::string::size_type at = m.find("PP21: Invalid escape sequence; ''");
+        if (at == std::string::npos)
+            continue;
+        r += m.substr(at + 33, 3);
+    }
+    return r;
+}
+
+// __has_include('a$q' __has_include('b$q' ... __has_include('<last>$q')...))
+std::string hi_nested_invalid(int depth, char first = 'a') {
+    std::string open, close;
+    for (int i = 0; i < depth; ++i) {
+        open += "__has_include('";
+        open += static_cast<char>(first + i);
+        open += "$q' ";
+        close += ")";
+    }
+    return open + close;
+}
+
+} // namespace
+
+TEST_F(HasIncludeTest, NestedInvalidEscapeReportedOnce) {
+    Issue::ContinueMode guard({});
+    const std::string nest5 = hi_nested_invalid(5);
+    // Expression context (__assert, __counter_set) and {#if} context.
+    pp_hi("__assert(" + nest5 + ", m);");
+    EXPECT_EQ("a$qb$qc$qd$qe$q", hi_pp21_literals(messages())) << "__assert";
+    pp_hi("__counter_set(c, " + nest5 + ")__counter_peek(c)");
+    EXPECT_EQ("a$qb$qc$qd$qe$q", hi_pp21_literals(messages())) << "__counter_set";
+    pp_hi("{#if " + nest5 + "}y{#else}n{#endif}");
+    EXPECT_EQ("a$qb$qc$qd$qe$q", hi_pp21_literals(messages())) << "{#if}";
+}
+
+TEST_F(HasIncludeTest, InvalidEscapeSiblingsAndDuplicateTextEachReported) {
+    Issue::ContinueMode guard({});
+    // The same literal text at two positions: two reports.
+    const std::string flat = "__has_include('s$q') + __has_include('s$q')";
+    pp_hi("__assert(" + flat + ", m);");
+    EXPECT_EQ("s$qs$q", hi_pp21_literals(messages())) << "flat __assert";
+    pp_hi("{#if " + flat + "}y{#else}n{#endif}");
+    EXPECT_EQ("s$qs$q", hi_pp21_literals(messages())) << "flat {#if}";
+    // Two sibling nests with the same texts, and a well-formed call between.
+    const std::string sib = hi_nested_invalid(2) + " + __has_include('existing.iec') + " +
+                            hi_nested_invalid(2);
+    pp_hi("__assert(" + sib + ", m);");
+    EXPECT_EQ("a$qb$qa$qb$q", hi_pp21_literals(messages())) << "sibling __assert";
+    pp_hi("{#if " + sib + "}y{#else}n{#endif}");
+    EXPECT_EQ("a$qb$qa$qb$q", hi_pp21_literals(messages())) << "sibling {#if}";
+    // {#ignore PP21} suppresses every report, nested or not.
+    pp_hi("{#ignore PP21}__assert(" + hi_nested_invalid(3) + ", m);");
+    EXPECT_EQ("", hi_pp21_literals(messages())) << "ignored";
+}
+
+// Operation count, not time: with n nested literals the number of reports
+// is n (it was n(n+1)/2). A timing limit would be flaky under load.
+TEST_F(HasIncludeTest, DeepNestedInvalidEscapeCountScalesLinearly) {
+    Issue::ContinueMode guard({});
+    constexpr int kDepth = 2000;
+    std::string open, close;
+    for (int i = 0; i < kDepth; ++i) {
+        open += "__has_include('x$q' ";
+        close += ")";
+    }
+    pp_hi("__assert(" + open + close + ", m);");
+    const auto ms = messages();
+    std::size_t pp21 = 0;
+    for (const auto& m : ms)
+        if (m.find("PP21:") != std::string::npos)
+            ++pp21;
+    EXPECT_EQ(static_cast<std::size_t>(kDepth), pp21);
+}
+
 // ---- Built-in calls nested in an __assert expression or a __counter_set value ----
 //
-// The token-path pre-scan does not look inside the arguments of a nested call
-// of __assert, __error, __counter, __counter_peek or __counter_set that is
-// still the built-in: the inner call handles its own arguments. Tests marked
-// "guard" pass with and without that rule.
+// The arguments of a nested call of __assert, __error, __counter,
+// __counter_peek or __counter_set that is still the built-in are handled by
+// the inner call: its expression is evaluated there, and a message is not an
+// expression (the __has_include operator is suspended while it is expanded).
+// Tests marked "guard" pinned the rule of the former pre-scan.
 
 namespace {
 
@@ -528,7 +626,7 @@ TEST_F(HasIncludeTest, NestedNonBuiltinCallsStillResolve) {
 }
 
 // A call whose ')' is missing extends to the end of the operand; nothing in
-// it is looked at by the outer pre-scan, and the call reports PP34 itself.
+// it is resolved by the outer expression, and the call reports PP34 itself.
 TEST_F(HasIncludeTest, UnclosedNestedBuiltinCall) {
     Issue::ContinueMode guard({});
     auto run = [this](const std::string& src) {
@@ -570,33 +668,36 @@ TEST_F(HasIncludeTest, BuiltinInsideHasIncludeCall) {
                   "__counter_peek(c)"));
 }
 
-// Only names written in the expression count: a call made by a macro is
-// ordinary text (guard), and a `defined` made by a macro does not protect the
-// name after it, which is skipped as a call.
-TEST_F(HasIncludeTest, MacroProducedBuiltinCallIsNotSkipped) {
+// __has_include is an operator of the expansion (gcc/clang), so a built-in
+// call made by a macro behaves like one written in the expression: the
+// message of __error is not an expression and keeps its text. A `defined`
+// made by a macro takes the name after it, and the operator in the
+// parenthesized expression that follows is resolved.
+TEST_F(HasIncludeTest, MacroProducedBuiltinCallFollowsTheExpansion) {
     Issue::ContinueMode guard({});
     auto run = [this](const std::string& src) {
         std::string out = pp_hi(src);
         return hi_result(out, messages());
     };
-    EXPECT_EQ(";|<unknown location>:1.0: error: PP91: '[1]'\n",
+    EXPECT_EQ(";|<unknown location>:1.0: error: PP91: '[__has_include('existing.iec')]'\n",
               run("{#define E __error}__assert(E([__has_include('existing.iec')]) 1, m);"));
-    EXPECT_EQ(";|<unknown location>:1.0: error: PP52: Invalid expression; '1([__has_include('existing.iec')])'\n",
+    EXPECT_EQ(";|<unknown location>:1.0: error: PP52: Invalid expression; '1([1])'\n",
               run("{#define D defined}__assert(D __error([__has_include('existing.iec')]), m);"));
 }
 
-// guard: the text path of {#if} resolves __has_include before lexing, so it
-// still reaches into the arguments of a nested built-in call.
-TEST_F(HasIncludeTest, IfConditionStillResolvesNestedBuiltinArguments) {
+// The {#if} condition follows the same rule as __assert: the message of a
+// nested built-in call is not an expression, so a __has_include in it keeps
+// its text.
+TEST_F(HasIncludeTest, IfConditionNestedBuiltinMessageKeepsItsText) {
     Issue::ContinueMode guard({});
     auto run = [this](const std::string& src) {
         std::string out = pp_hi(src);
         return hi_result(out, messages());
     };
-    EXPECT_EQ("A|<unknown location>:1.0: error: PP91: '[1]'\n",
+    EXPECT_EQ("A|<unknown location>:1.0: error: PP91: '[__has_include('existing.iec')]'\n",
               run("{#if __assert(0, [__has_include('existing.iec')]) 1}A{#endif}"));
     EXPECT_EQ("A|", run("{#if __assert(1, __has_include('existing.iec')) 1}A{#endif}"));
-    EXPECT_EQ("A|<unknown location>:1.0: error: PP91: '[0]'\n",
+    EXPECT_EQ("A|<unknown location>:1.0: error: PP91: '[__has_include('missing_hi.iec')]'\n",
               run("{#if __assert(0, [__has_include('missing_hi.iec')]) 1}A{#endif}"));
 }
 
@@ -637,7 +738,9 @@ double hi_seconds(std::chrono::steady_clock::time_point t0) {
 } // namespace
 
 // N flat probes of a missing file in __assert and in __counter_set.
-// Pre-fix: 9.8 / 9.6 s.
+// Pre-fix: 9.8 / 9.6 s. The limit is 6 s: 3 s was flaky on a loaded machine
+// (the guard runs in parallel with other tests), and 6 s is still below the
+// quadratic implementation's time.
 TEST_F(HasIncludeTest, FlatProbes_TimingGuard) {
     constexpr int kN = 20000;
     const std::string probe =
@@ -653,7 +756,7 @@ TEST_F(HasIncludeTest, FlatProbes_TimingGuard) {
         double secs = hi_seconds(t0);
         EXPECT_EQ(expected, out);
         EXPECT_TRUE(empty());
-        EXPECT_LT(secs, 3.0) << src.substr(0, 16) << "... n=" << kN << " took " << secs << "s";
+        EXPECT_LT(secs, 6.0) << src.substr(0, 16) << "... n=" << kN << " took " << secs << "s";
     }
 }
 
@@ -686,6 +789,26 @@ TEST_F(HasIncludeTest, NestedMalformedCalls_TimingGuard) {
             << s.name;
         EXPECT_LT(secs, 3.0) << s.name << " n=" << s.n << " took " << secs << "s";
     }
+}
+
+// A macro-named operand whose ')' is missing: the search for it reads the
+// rest of the condition once and consumes it as the text of the malformed
+// call, so repeated calls stay linear. Pre-fix: every call searched the rest
+// again; with the default step limit n=4000 already gave PP64 instead of PP52.
+TEST_F(HasIncludeTest, MacroOperandWithoutCloseParen_TimingGuard) {
+    constexpr int kN = 20000;
+    const std::string src =
+        "{#define M 'existing.iec'}{#if " + hi_repeat("__has_include(M ", kN) + "1}y{#else}n{#endif}";
+    Issue::ContinueMode guard({});
+    auto t0 = std::chrono::steady_clock::now();
+    std::string out = pp_hi(src);
+    double secs = hi_seconds(t0);
+    EXPECT_EQ("n", out);
+    auto ms = messages();
+    ASSERT_EQ(1u, ms.size());
+    EXPECT_NE(std::string::npos, ms[0].find("error: PP52: Invalid expression; '__has_include(M "))
+        << ms[0].substr(0, 80);
+    EXPECT_LT(secs, 3.0) << "n=" << kN << " took " << secs << "s";
 }
 
 // '<' operands in an {#if} whose '>' is far away: many flat calls with the

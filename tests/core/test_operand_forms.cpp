@@ -1,0 +1,499 @@
+#include "test_helper.hpp"
+
+#include <fstream>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+// Pins the accepted and rejected forms of the directive operands that are
+// read as a path or a number ({#include}, {#sinclude}, {#syspath}, {#line},
+// {#max_*}) and of the __has_include operator: the output and every
+// diagnostic (code and context, in order). The path and {#line} operands
+// follow gcc/clang's rules (SPEC §7, §9): a path written directly is not
+// macro-expanded, a header name ends at the first '>', and tokens after the
+// operand are PP49.
+
+namespace {
+
+using Msgs = std::vector<std::string>;
+
+struct Case {
+    std::string src;
+    std::string out;
+    Msgs msgs;
+};
+
+// s as a C++ string literal, to paste an actual value into a Case.
+std::string lit(const std::string& s) {
+    std::string r = "\"";
+    for (char c : s) {
+        if (c == '\n')
+            r += "\\n";
+        else if (c == '"' || c == '\\')
+            r += std::string("\\") + c;
+        else
+            r += c;
+    }
+    return r + "\"";
+}
+
+std::string lit(const Msgs& ms) {
+    std::string r = "{";
+    for (std::size_t i = 0; i < ms.size(); ++i)
+        r += (i ? ", " : "") + lit(ms[i]);
+    return r + "}";
+}
+
+class OperandFormTest : public JieppTest {
+protected:
+    fs::path dir_;
+
+    void SetUp() override {
+        JieppTest::SetUp();
+        dir_ = fs::temp_directory_path() / "jiepp_operand_form_test";
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+        fs::create_directories(dir_ / "sys");
+        std::ofstream(dir_ / "f.iec", std::ios::binary) << "F\n";
+        std::ofstream(dir_ / "sys" / "s.iec", std::ios::binary) << "S\n";
+    }
+
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+        JieppTest::TearDown();
+    }
+
+    // Preprocesses src in a fresh Issue state (a {#line} of an earlier run
+    // does not leak into the location), with the current directory at dir_
+    // and dir_/sys as the only syspath, collecting every diagnostic.
+    Env run(const std::string& src, std::string& out, Msgs& msgs) {
+        Issue::initialize(output());
+        DiagBox::initialize();
+        CwdGuard cwd(dir_);
+        Issue::ContinueMode cont({});
+        Env env = setup();
+        env.add_syspath((dir_ / "sys").generic_string());
+        out = pp(src, env);
+        msgs = messages();
+        return env;
+    }
+
+    void check(const std::vector<Case>& cases) {
+        for (const auto& c : cases) {
+            std::string out;
+            Msgs msgs;
+            run(c.src, out, msgs);
+            EXPECT_EQ(c.out, out) << lit(c.src) << " -> " << lit(out);
+            EXPECT_EQ(c.msgs, msgs) << lit(c.src) << " -> " << lit(msgs);
+        }
+    }
+};
+
+const std::string kF = "(*{#:0 'f.iec'}*)\nF\n";
+const std::string kS = "(*{#:0 's.iec'}*)\nS\n";
+const std::string kA = "(*{#:1 '<unknown location>'}*)A";
+const std::string kAt = "<unknown location>:1.0: ";
+
+std::string pp47(const std::string& context) {
+    return kAt + "error: PP47: Invalid path; '" + context + "'";
+}
+
+std::string pp11(const std::string& context) {
+    return kAt + "error: PP11: No such file or directory; '" + context + "'";
+}
+
+std::string pp49(const std::string& context) {
+    return kAt + "warning: PP49: Extra tokens at end of directive; '" + context + "'";
+}
+
+} // namespace
+
+// ---- {#include} / {#sinclude} ----
+
+TEST_F(OperandFormTest, IncludeQuotedAndAnglePaths) {
+    check({
+        {"{#include 'f.iec'}A", kF + kA, {}},
+        {"{#include \"f.iec\"}A", kF + kA, {}},
+        {"{#include <s.iec>}A", kS + kA, {}},
+        {"{#sinclude 's.iec'}A", kS + kA, {}},
+        {"{#sinclude <s.iec>}A", kS + kA, {}},
+        {"{#include <s.iec>   }A", kS + kA, {}},
+        {"{#include $n'f.iec'$n}A", kF + kA, {}},
+    });
+}
+
+TEST_F(OperandFormTest, IncludeCommentsAroundThePath) {
+    check({
+        {"{#include (* c *) 'f.iec' (* d *)}A", kF + kA, {}},
+        {"{#include /* c */\"f.iec\"// d$n}A", kF + kA, {}},
+        {"{#include // c$n'f.iec'}A", kF + kA, {}},
+        {"{#include (* c *)<s.iec>(* d *)}A", kS + kA, {}},
+        {"{#include <s.iec> // c}A", kS + kA, {}},
+        // Up to the first '>', <...> is path text, comment openers included.
+        {"{#include <a//b.iec>}A", kA, {pp11("a//b.iec")}},
+        {"{#include <a (* c *) b>}A", kA, {pp11("a (* c *) b")}},
+    });
+}
+
+TEST_F(OperandFormTest, IncludeMacroExpandedPath) {
+    check({
+        {"{#define P 'f.iec'}{#include P}A", kF + kA, {}},
+        {"{#define P <s.iec>}{#include P}A", kS + kA, {}},
+        {"{#define C (* c *)}{#include C 'f.iec'}A", kF + kA, {}},
+    });
+}
+
+TEST_F(OperandFormTest, IncludeMalformedPathIsPP47) {
+    check({
+        {"{#include f.iec}A", kA, {pp47("f.iec")}},
+        {"{#include <s.iec}A", kA, {pp47("<s.iec")}},
+        {"{#include s.iec>}A", kA, {pp47("s.iec>")}},
+        {"{#include //! d$n'f.iec'}A", kA, {pp47("//! d$n'f.iec'")}},
+        {"{#include}A", kA, {kAt + "error: PP47: Invalid path"}},
+        {"{#include 'f.iec}A",
+         kA,
+         {kAt + "warning: PP29: Missing terminating quote character; ''f.iec'", pp47("'f.iec")}},
+        // A macro that makes '/' and '*' does not make a comment: the
+        // expanded operand starts with '/' (study row a2).
+        {"{#define S /}{#include S* c */ 'f.iec'}A", kA, {pp47("S* c */ 'f.iec'")}},
+        // An empty macro expands to nothing (gcc/clang).
+        {"{#define E}{#include E}A", kA, {pp47("E")}},
+    });
+}
+
+TEST_F(OperandFormTest, IncludeExtraTokensArePP49) {
+    // Tokens after the path are a warning and the file is still included,
+    // like gcc/clang's -Wextra-tokens (study rows a1, a3b). After a path
+    // written directly they are macro-expanded first, so an empty macro adds
+    // nothing.
+    check({
+        {"{#include 'f.iec' x}A", kF + kA, {pp49("{#include 'f.iec' x}")}},
+        {"{#include 'f' + 'g'}A", kA, {pp49("{#include 'f' + 'g'}"), pp11("f")}},
+        {"{#include <s.iec> x}A", kS + kA, {pp49("{#include <s.iec> x}")}},
+        {"{#include 'f.iec' (*! d *)}A", kF + kA, {pp49("{#include 'f.iec' (*! d *)}")}},
+        {"{#sinclude 'f.iec' x}A", kA, {pp49("{#sinclude 'f.iec' x}"), pp11("f.iec")}},
+        {"{#define S /}{#include 'f.iec' S/x}A", kF + kA, {pp49("{#include 'f.iec' S/x}")}},
+        {"{#define H 'f.iec'}{#include H extra}A", kF + kA, {pp49("{#include H extra}")}},
+        {"{#define P <s.iec> x}{#include P}A", kS + kA, {pp49("{#include P}")}},
+        {"{#define E}{#include 'f.iec' E}A", kF + kA, {}},
+        {"{#define E}{#include <s.iec> E (* c *)}A", kS + kA, {}},
+    });
+}
+
+TEST_F(OperandFormTest, IncludeAnglePathIsAHeaderName) {
+    // A '<' written directly starts a header name up to the first '>'
+    // character, as gcc/clang read it from the source: nothing in it is
+    // macro-expanded (study row a4), and a '>' read inside a comment ends it
+    // there. What follows the '>' is extra tokens.
+    check({
+        {"{#define P s}{#include <P.iec>}A", kA, {pp11("P.iec")}},
+        {"{#include <s.iec>>}A", kS + kA, {pp49("{#include <s.iec>>}")}},
+        {"{#include <s.iec> x>}A", kS + kA, {pp49("{#include <s.iec> x>}")}},
+        {"{#include <a> (* c *) b>}A", kA, {pp49("{#include <a> (* c *) b>}"), pp11("a")}},
+        {"{#include <a (* > *) b>}A", kA, {pp49("{#include <a (* > *) b>}"), pp11("a (* ")}},
+    });
+}
+
+TEST_F(OperandFormTest, IncludeMacroExpandedAnglePath) {
+    // From a macro, <...> is the '<' token to the next '>' token, their
+    // spellings joined; a comment among them is one blank (gcc/clang).
+    // Blanks are kept as written (study row a4c).
+    check({
+        {"{#define P < a . iec >}{#include P}A", kA, {pp11(" a . iec ")}},
+        {"{#define P <s(* c *).iec>}{#include P}A", kA, {pp11("s .iec")}},
+        {"{#define P <s.iec}{#include P>}A", kS + kA, {}},
+    });
+}
+
+TEST_F(OperandFormTest, IncludeAdjacentLiteralsAreJoined) {
+    // The lexer joins adjacent literals of the operand (SPEC 2) before the
+    // path is read.
+    check({
+        {"{#include 'f.iec' 'g'}A", kA, {pp11("f.iecg")}},
+        {"{#include 'f.' 'iec'}A", kF + kA, {}},
+    });
+}
+
+// ---- {#syspath} ----
+
+TEST_F(OperandFormTest, SyspathForms) {
+    check({
+        {"{#syspath (* c *) 'sys' (* d *)}{#sinclude 's.iec'}A",
+         "(*{syspath:'sys'}*)" + kS + kA,
+         {}},
+        {"{#syspath \"sys\"}{#sinclude 's.iec'}A", "(*{syspath:'sys'}*)" + kS + kA, {}},
+        {"{#syspath <sys>}A", "(*{syspath:'sys'}*)A", {}},
+        {"{#syspath sys}A", "A", {pp47("sys")}},
+        {"{#syspath 'sys' x}A", "(*{syspath:'sys'}*)A", {pp49("{#syspath 'sys' x}")}},
+        {"{#define D 'sys'}{#syspath D}A", "(*{syspath:'sys'}*)A", {}},
+        {"{#syspath <sys}A", "A", {pp47("<sys")}},
+    });
+}
+
+// ---- {#line} ----
+
+TEST_F(OperandFormTest, LineForms) {
+    check({
+        {"{#line 5}\n__LINE__ __FILE__", "(*{#:4}*)\n5 '<unknown location>'", {}},
+        {"{#line 5 'f'}\n__LINE__ __FILE__", "(*{#:4 'f'}*)\n5 'f'", {}},
+        {"{#line 5 \"f\"}\n__LINE__ __FILE__", "(*{#:4 'f'}*)\n5 'f'", {}},
+        {"{#line (* c *) 5 (* d *) 'f' (* e *)}\n__LINE__ __FILE__", "(*{#:4 'f'}*)\n5 'f'", {}},
+        {"{#define N 7}{#define F 'g'}{#line N F}\n__LINE__ __FILE__", "(*{#:6 'g'}*)\n7 'g'", {}},
+        // No blank is needed between the number and the path.
+        {"{#line 5'f'}\n__LINE__ __FILE__", "(*{#:4 'f'}*)\n5 'f'", {}},
+        {"{#line 5 'a' 'b'}\n__LINE__ __FILE__", "(*{#:4 'ab'}*)\n5 'ab'", {}},
+        {"{#line 05 // c}\n__LINE__", "(*{#:4}*)\n5", {}},
+        {"{#line 4294967295}\n", "(*{#:4294967294}*)\n", {}},
+        {"{#line /* x */ 5}\n__LINE__", "(*{#:4}*)\n5", {}},
+        {"{#define E}{#line 5 'f' E}\n__LINE__", "(*{#:4 'f'}*)\n5", {}},
+    });
+}
+
+TEST_F(OperandFormTest, LineExtraTokensArePP49) {
+    // Tokens after the file name are a warning and the line is still set,
+    // like gcc/clang (study row a6c). The context names the directive as
+    // written.
+    check({
+        {"{#line 5 'f' x}\n__LINE__ __FILE__", "(*{#:4 'f'}*)\n5 'f'", {pp49("{#line 5 'f' x}")}},
+        {"{#set_line 5 'f' 'g' (*! d *)}\n__LINE__",
+         "(*{#:4 'fg'}*)\n5",
+         {pp49("{#set_line 5 'f' 'g' (*! d *)}")}},
+        {"{#:5 'f' x}\n__LINE__", "(*{#:5 'f'}*)\n6", {pp49("{#:5 'f' x}")}},
+        {"{#define L 5 'f' x}{#line L}\n__LINE__", "(*{#:4 'f'}*)\n5", {pp49("{#line L}")}},
+    });
+}
+
+TEST_F(OperandFormTest, LineRejectedForms) {
+    const std::string pp41 = kAt + "error: PP41: Invalid operand for 'set_line'";
+    check({
+        {"{#line 5 <f>}A", "A", {pp41 + "; '5 <f>'"}},
+        {"{#line +5}A", "A", {pp41 + "; '+5'"}},
+        {"{#line -5}A", "A", {pp41 + "; '-5'"}},
+        {"{#line 4294967296}A", "A", {pp41 + "; '4294967296'"}},
+        {"{#line 5abc}A", "A", {pp41 + "; '5abc'"}},
+        {"{#line 5.0}A", "A", {pp41 + "; '5.0'"}},
+        {"{#line 5_0}A", "A", {pp41 + "; '5_0'"}},
+        {"{#line 5 (*! d *)}A", "A", {pp41 + "; '5 (*! d *)'"}},
+        {"{#line 5 x}A", "A", {pp41 + "; '5 x'"}},
+        // A macro that makes '/' and '*' does not make a comment (study rows
+        // a5, a6).
+        {"{#define S /}{#line S* x */ 5}A", "A", {pp41 + "; 'S* x */ 5'"}},
+        {"{#define S /}{#line 5 S/x}A", "A", {pp41 + "; '5 S/x'"}},
+        {"{#line 'f'}A", "A", {pp41 + "; ''f''"}},
+        {"{#line}A", "A", {pp41}},
+    });
+}
+
+// ---- {#max_*} ----
+
+TEST_F(OperandFormTest, LimitDirectiveValues) {
+    struct Limit {
+        const char* directive;
+        int (Env::*getter)() const;
+    };
+    const Limit limits[] = {
+        {"max_include_depth", &Env::get_max_include_depth},
+        {"max_expansion_depth", &Env::get_max_expansion_depth},
+        {"max_if_nesting", &Env::get_max_if_nesting},
+        {"max_blank_lines", &Env::get_max_blank_lines},
+    };
+    const std::pair<const char*, int> operands[] = {
+        {"5", 5},
+        {"+3", 3},
+        {"007", 7},
+        {" (* c *) 5 (* d *) ", 5},
+        {"/* c */5// d", 5},
+        {"5$n", 5},
+        {"$n5 /* a $n b */", 5},
+        // An unclosed comment after the integer runs to the end of the
+        // operand; it adds no diagnostic.
+        {"5 (* x$}", 5},
+    };
+    for (const auto& l : limits) {
+        for (const auto& [operand, value] : operands) {
+            const std::string src = std::string("{#") + l.directive + " " + operand + "}A";
+            std::string out;
+            Msgs msgs;
+            Env env = run(src, out, msgs);
+            EXPECT_EQ(value, (env.*l.getter)()) << src;
+            EXPECT_EQ("A", out) << src;
+            EXPECT_EQ(Msgs{}, msgs) << src << " -> " << lit(msgs);
+        }
+    }
+}
+
+TEST_F(OperandFormTest, LimitDirectiveRejectedOperands) {
+    const std::string pp43 = kAt + "error: PP43: Invalid operand for limit directive";
+    for (const char* d : {"max_include_depth", "max_expansion_depth", "max_if_nesting",
+                          "max_blank_lines"}) {
+        std::vector<Case> cases;
+        for (const char* operand :
+             {"5x", "5 3", "2.9", "0x10", "16#10", "1_0", "- 3", "+ 3", "-(* c *)3", "'5'",
+              "5 'x'", "(*! d *) 5", "5 @@", "x", "2147483648"}) {
+            cases.push_back({std::string("{#") + d + " " + operand + "}A", "A",
+                             {pp43 + "; '" + operand + "'"}});
+        }
+        cases.push_back({std::string("{#") + d + "}A", "A", {pp43}});
+        // The operand is not lexed for diagnostics: an unterminated literal,
+        // a pragma or a directive decoded from $-escapes adds no PP29, PP22
+        // or PP23.
+        cases.push_back({std::string("{#") + d + " 5 'x}A", "A", {pp43 + "; '5 'x'"}});
+        cases.push_back({std::string("{#") + d + " 5 ${x$}}A", "A", {pp43 + "; '5 {x}'"}});
+        cases.push_back({std::string("{#") + d + " 5 ${#x$}}A", "A", {pp43 + "; '5 {#x}'"}});
+        cases.push_back({std::string("{#") + d + " 5$00}A", "A", {pp43 + "; '5$00'"}});
+        check(cases);
+    }
+}
+
+TEST_F(OperandFormTest, LimitDirectiveSignedValueReachesTheSetter) {
+    // "-3", "+0" and "-2147483648" are integers, so not PP43; the setter
+    // rejects them (PP44).
+    const std::string pp44 = kAt + "error: PP44: Invalid parameter value; 'max_include_depth'";
+    check({
+        {"{#max_include_depth -3}A", "A", {pp44}},
+        {"{#max_include_depth +0}A", "A", {pp44}},
+        {"{#max_include_depth -2147483648}A", "A", {pp44}},
+    });
+}
+
+// ---- __has_include ----
+
+#ifndef JIEPP_SANDBOX
+
+TEST_F(OperandFormTest, HasIncludeForms) {
+    const char* const yes[] = {
+        "__has_include('f.iec')",
+        "__has_include(\"f.iec\")",
+        "__has_include(<s.iec>)",
+        "__has_include( 'f.iec' )",
+        "__has_include (<s.iec>)",
+        "defined(__has_include)",
+        "defined __has_include",
+        "defined(__has_include) and __has_include('f.iec')",
+        "__has_include('f.iec') and __has_include(<s.iec>)",
+    };
+    for (const char* cond : yes) {
+        check({{std::string("{#if ") + cond + "}Y{#else}N{#endif}", "Y", {}},
+               {std::string("__assert(") + cond + ", m)A", "A", {}},
+               {std::string("__counter_set(c, ") + cond + ")__counter_peek(c)", "1", {}}});
+    }
+    for (const char* cond : {"__has_include('nope.iec')", "__has_include(<f.iec>)"}) {
+        check({{std::string("{#if ") + cond + "}Y{#else}N{#endif}", "N", {}},
+               {std::string("__counter_set(c, ") + cond + ")__counter_peek(c)", "0", {}}});
+    }
+}
+
+TEST_F(OperandFormTest, HasIncludeOperandIsMacroExpanded) {
+    // An operand that is not written as a path is macro-expanded, like
+    // gcc/clang (study row a11); <...> written directly is not (row a12).
+    // A __has_include made by a macro is the operator too.
+    check({
+        {"{#define P 'f.iec'}{#if __has_include(P)}Y{#else}N{#endif}", "Y", {}},
+        {"{#define P 'f.iec'}__assert(__has_include(P), m)A", "A", {}},
+        {"{#define P 'f.iec'}__counter_set(c, __has_include(P))__counter_peek(c)", "1", {}},
+        {"{#define P <s.iec>}{#if __has_include(P)}Y{#else}N{#endif}", "Y", {}},
+        {"{#define P s}{#if __has_include(<P.iec>)}Y{#else}N{#endif}", "N", {}},
+        {"{#define H __has_include('f.iec')}{#if H}Y{#else}N{#endif}", "Y", {}},
+        {"{#define P 'f.iec' x}{#if __has_include(P)}Y{#else}N{#endif}",
+         "N",
+         {kAt + "error: PP52: Invalid expression; '__has_include('f.iec' x)'"}},
+    });
+}
+
+TEST_F(OperandFormTest, HasIncludeWithoutParentheses) {
+    const std::string pp52 = kAt + "error: PP52: Invalid expression; '__has_include 'f.iec''";
+    check({
+        {"{#if __has_include}Y{#else}N{#endif}", "N", {}},
+        {"{#if __has_include 'f.iec'}Y{#else}N{#endif}", "N", {pp52}},
+        {"__assert(__has_include 'f.iec', m)A", "A", {pp52}},
+    });
+}
+
+TEST_F(OperandFormTest, HasIncludeIsTheSameInEveryContext) {
+    // {#if} and __assert read the operator on the same tokens (study rows
+    // a7-a10): comments are whitespace, adjacent literals are joined by the
+    // lexer (decision: unlike gcc/clang), and nothing inside a comment or a
+    // literal is read as __has_include.
+    const std::string pp52 =
+        kAt + "error: PP52: Invalid expression; '__has_include(1 '__has_include(\"a$q\")')'";
+    check({
+        {"{#if __has_include(/* c */ 'f.iec' /* d */)}Y{#else}N{#endif}", "Y", {}},
+        {"__assert(__has_include(/* c */ 'f.iec' /* d */), m)A", "A", {}},
+        {"{#if __has_include('f' '.iec')}Y{#else}N{#endif}", "Y", {}},
+        {"__assert(__has_include('f' '.iec'), m)A", "A", {}},
+        // In a directive the quote in a comment starts no literal, so "$q"
+        // there is an invalid escape of the operand itself (SPEC §2), one
+        // PP21 for the directive; the path PP21 that the call in the
+        // comment used to add is gone. "$$q" decodes to "$q" silently.
+        {"{#if (* __has_include('a$q') *) 1}Y{#else}N{#endif}",
+         "Y",
+         {kAt + "error: PP21: Invalid escape sequence; '(* __has_include('a$q') *) 1'"}},
+        {"{#if (* __has_include('a$$q') *) 1}Y{#else}N{#endif}", "Y", {}},
+        {"__assert((* __has_include('a$q') *) 1, m)A", "A", {}},
+        {"{#if __has_include(1 '__has_include(\"a$q\")')}Y{#else}N{#endif}", "N", {pp52}},
+        {"__assert(__has_include(1 '__has_include(\"a$q\")'), m)A", "A", {pp52}},
+        // A header name written directly keeps a comment opener (row a13 and
+        // SPEC §7): the '>' inside the comment ends it.
+        {"{#if __has_include(<s.iec>) && __has_include ( 'f.iec' )}Y{#else}N{#endif}", "Y", {}},
+        {"{#if __has_include(<.//s.iec>) && 1}Y{#else}N{#endif}", "Y", {}},
+    });
+}
+
+TEST_F(OperandFormTest, HeaderNameKeepsCommentOpenersUnderNC) {
+    // -nC removes comments, but a header name written directly keeps its
+    // comment openers as path text, in {#include} and in {#if}, as gcc/clang
+    // (which read it from the characters) do. A comment elsewhere in the
+    // condition is still removed.
+    Issue::initialize(output());
+    DiagBox::initialize();
+    CwdGuard cwd(dir_);
+    Issue::ContinueMode cont({});
+    Env env = setup({}, /*remove_comments=*/true);
+    env.add_syspath((dir_ / "sys").generic_string());
+    // The include itself is the check; the marker spells the path the way
+    // the platform resolves ".//" (Windows keeps ".//s.iec", Linux gives
+    // "./s.iec").
+    const std::string out = pp("{#include <.//s.iec>}A", env);
+    EXPECT_TRUE(out == "(*{#:0 './/s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A" ||
+                out == "(*{#:0 './s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A")
+        << out;
+    EXPECT_EQ("Y", pp("{#if __has_include(<.//s.iec>) && 1}Y{#else}N{#endif}", env));
+    EXPECT_EQ("Y", pp("{#if __has_include( (* c *) <.(*x*)/s.iec>) || (* d *) 1}Y{#else}N{#endif}",
+                      env));
+    EXPECT_EQ(Msgs{}, messages());
+}
+
+#else // JIEPP_SANDBOX
+
+// The sandbox test presets run only the tests named Sandbox*.
+class SandboxOperandFormTest : public OperandFormTest {};
+
+TEST_F(SandboxOperandFormTest, HasIncludeUseIsPP62) {
+    // A call made by a macro is a use too (the operator is read during the
+    // expansion, like gcc/clang).
+    for (const char* cond : {"__has_include('f.iec')", "__has_include (<s.iec>)",
+                             "H"}) {
+        std::string out;
+        Msgs msgs;
+        run(std::string("{#define H __has_include(x)}{#if ") + cond + "}Y{#else}N{#endif}", out,
+            msgs);
+        ASSERT_FALSE(msgs.empty()) << cond;
+        EXPECT_EQ(kAt + "error: PP62: Directive is restricted in sandbox mode; '__has_include'",
+                  msgs[0])
+            << cond << " -> " << lit(msgs);
+    }
+}
+
+TEST_F(SandboxOperandFormTest, DefinedHasIncludeIsNotPP62) {
+    check({
+        {"{#if defined(__has_include)}Y{#else}N{#endif}", "N", {}},
+        {"{#if defined __has_include}Y{#else}N{#endif}", "N", {}},
+        {"{#ifdef __has_include}Y{#else}N{#endif}", "N", {}},
+        // Nothing inside a comment is read as __has_include (decision 4).
+        {"{#if (* __has_include(x) *) 1}Y{#else}N{#endif}", "Y", {}},
+    });
+}
+
+#endif // JIEPP_SANDBOX

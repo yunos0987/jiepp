@@ -258,10 +258,11 @@ TEST_F(SetlineTest, Filepath) {
     EXPECT_THROW(pp("{#line 2 a$$.iec}__FILE__;"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_SETLINE_OPERAND, code());
 
-    // $$ in single-quoted filename
-    EXPECT_EQ("(*{#:1 'a$$.iec'}*)'a$$.iec';", pp("{#line 2 'a$$.iec'}__FILE__;"));
+    // $$ in single-quoted filename (the marker writes "$" as "$24",
+    // __FILE__ as "$$")
+    EXPECT_EQ("(*{#:1 'a$24.iec'}*)'a$$.iec';", pp("{#line 2 'a$$.iec'}__FILE__;"));
     // $$ in double-quoted filename
-    EXPECT_EQ("(*{#:1 'a$$.iec'}*)'a$$.iec';", pp("{#line 2 \"a$$.iec\"}__FILE__;"));
+    EXPECT_EQ("(*{#:1 'a$24.iec'}*)'a$$.iec';", pp("{#line 2 \"a$$.iec\"}__FILE__;"));
     EXPECT_TRUE(empty()) << "unexpected errors";
 
     // Error records reflect the setline filepath
@@ -270,6 +271,50 @@ TEST_F(SetlineTest, Filepath) {
 
     pp("{#line 2 'a$$.iec'}{#info}");
     EXPECT_EQ("a$.iec:1.0: info: PP93: ''", message());
+}
+
+// ---- line-marker file-name escaping ----
+
+// The file name in a line marker writes "$", "{", "}" as "$24", "$7B",
+// "$7D" (and "'" as "$27"), in both pragma styles, so the marker holds no
+// raw brace. __FILE__ keeps the IEC string escapes ("$$", raw braces).
+TEST_F(SetlineTest, MarkerFileNameEscapes) {
+    // The operand spells the name a$b{c}d'e.iec with hex escapes.
+    const std::string src = "{#line 10 'a$24b$7Bc$7Dd$27e.iec'}__FILE__;";
+    EXPECT_EQ("(*{#:9 'a$24b$7Bc$7Dd$27e.iec'}*)'a$$b{c}d$27e.iec';", pp(src));
+    {
+        auto env = setup();
+        env.set_pragma_style("standard");
+        EXPECT_EQ("{#:9 'a$24b$7Bc$7Dd$27e.iec'}'a$$b{c}d$27e.iec';", pp(src, env));
+    }
+    EXPECT_TRUE(empty()) << "unexpected errors";
+}
+
+// jiepp output re-fed to jiepp with its markers kept: the marker's file
+// name and line number are restored. Before the marker escapes, the raw
+// "}" in the name closed the pragma early (PP22).
+TEST_F(SetlineTest, MarkerFileNameRoundTrip) {
+    for (const char* style : {"annotated", "standard"}) {
+        SCOPED_TRACE(style);
+        std::string first;
+        {
+            auto env = setup();
+            env.set_pragma_style(style);
+            first = pp("{#line 10 'a$24b$7Bc$7Dd$27e.iec'}\nx;\n", env);
+        }
+        ASSERT_TRUE(empty()) << "unexpected errors";
+
+        auto env = setup();
+        env.set_pragma_style(style);
+        std::string second;
+        ASSERT_NO_THROW(second = pp(first + "__FILE__;\n__LINE__;\n{#info}\n", env));
+        const std::string marker = std::string(style) == "standard"
+            ? "{#:9 'a$24b$7Bc$7Dd$27e.iec'}"
+            : "(*{#:9 'a$24b$7Bc$7Dd$27e.iec'}*)";
+        EXPECT_EQ(marker + "\nx;\n'a$$b{c}d$27e.iec';\n12;\n\n", second);
+        EXPECT_EQ("a$b{c}d'e.iec:13.0: info: PP93: ''", message());
+        EXPECT_EQ(0, Issue::error_count_);
+    }
 }
 
 // ---- #line filepath (B2 fixes) ----
@@ -285,9 +330,10 @@ TEST_F(SetlineTest, SetLineFilenameWithSpaces) {
 }
 
 TEST_F(SetlineTest, SetLineTrailingGarbageRejected) {
-    // Fact: extra words after a quoted filename are rejected, not silently ignored.
-    EXPECT_THROW(pp("{#line 2 'a.iec' junk}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::INVALID_SETLINE_OPERAND, code());
+    // Like gcc/clang (-Wextra-tokens), extra words after a quoted filename
+    // are a warning (PP49), not silently ignored, and the line is still set.
+    EXPECT_EQ("(*{#:1 'a.iec'}*)1;", pp("{#line 2 'a.iec' junk}__LINE__;"));
+    EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, code());
 }
 
 TEST_F(SetlineTest, SetLineAngleBracketRejected) {

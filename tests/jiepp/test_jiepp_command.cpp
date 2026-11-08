@@ -1278,6 +1278,60 @@ TEST_F(JieppCommandTest, DDDollarEscapePreserved) {
         << "-dD corrupted dollar-escape: expected {#define DOLLAR $$}";
 }
 
+TEST_F(JieppCommandTest, DDEchoesPopMacroOnlyWhenItChangesTheDefinition) {
+    // -dD: a {#pragma pop_macro} that changes the definition is echoed as the
+    // {#define}/{#undef} it amounts to; a pop that changes nothing and every
+    // push echo nothing (SPECIFICATION.md 3.8).
+    fs::current_path(jiepp_root_dir());
+    auto tmpdir = fs::temp_directory_path();
+
+    fs::path src = tmpdir / "dd_push_pop.iec";
+    {
+        std::ofstream f(src);
+        f << "{#define X 1}\n"
+             "{#pragma push_macro('X')}\n"
+             "{#undef X}\n"
+             "{#define X 2}\n"
+             "{#pragma pop_macro('X')}\n"   // X: 2 -> 1, echoes {#define X 1}
+             "{#pragma push_macro('X')}\n"
+             "{#pragma pop_macro('X')}\n"   // unchanged, echoes nothing
+             "{#pragma push_macro('Y')}\n"
+             "{#define Y 1}\n"
+             "{#pragma pop_macro('Y')}\n"   // Y: 1 -> undefined, echoes {#undef Y}
+             "VAR v: INT; END_VAR\n";
+    }
+    fs::path output = tmpdir / "dd_push_pop.piec";
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+    opts.output_filepath = output.generic_string();
+    opts.no_line_markers = true;
+    opts.dD = true;
+
+    ASSERT_EQ(0, jiepp_command(opts));
+
+    std::ifstream of(output, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(of)), std::istreambuf_iterator<char>());
+
+    auto count = [&](const std::string& needle) {
+        std::size_t n = 0;
+        for (std::size_t pos = 0; (pos = content.find(needle, pos)) != std::string::npos;
+             pos += needle.size())
+            ++n;
+        return n;
+    };
+    // The original {#define X 1} and the echo of the first pop.
+    EXPECT_EQ(2u, count("{#define X 1}")) << content;
+    EXPECT_EQ(1u, count("{#undef X}")) << content;
+    EXPECT_EQ(1u, count("{#define X 2}")) << content;
+    EXPECT_EQ(1u, count("{#define Y 1}")) << content;
+    EXPECT_EQ(1u, count("{#undef Y}")) << content;
+    EXPECT_EQ(0u, count("push_macro")) << content;
+    EXPECT_EQ(0u, count("pop_macro")) << content;
+    // The echo comes after {#define X 2}, in place of the pop.
+    EXPECT_LT(content.find("{#define X 2}"), content.rfind("{#define X 1}")) << content;
+    EXPECT_NE(std::string::npos, content.find("v: INT")) << content;
+}
+
 // ─── F6: -MD / -MMD ─────────────────────────────────────────────────────────
 
 TEST_F(JieppCommandTest, MDWritesDepFileAndOutput) {
@@ -1424,6 +1478,121 @@ TEST_F(JieppCommandTest, MDDefaultFalse) {
     ASSERT_EQ(0, jiepp_command(opts));
 
     EXPECT_FALSE(fs::exists(dep_out)) << ".d file created without -MD";
+}
+
+// ─── -MP ────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// A fresh directory with mp_main.iec including mp_a.iec and mp_b.iec, where
+// mp_b.iec includes mp_a.iec again; the current directory is that directory
+// until destruction (relative names keep the expected rules exact). It is
+// actual_dir()/mp (per build tree and per test), so `ctest -j` processes and
+// a concurrent Debug/Release run never share it.
+struct MpTree {
+    fs::path dir;
+    MpTree() {
+        fs::current_path(jiepp_root_dir());
+        dir = fs::absolute(actual_dir() / "mp");
+        fs::remove_all(dir);
+        fs::create_directories(dir);
+        write("mp_main.iec", "{#include 'mp_a.iec'}{#include 'mp_b.iec'}m\n");
+        write("mp_a.iec", "a\n");
+        write("mp_b.iec", "{#include 'mp_a.iec'}b\n");
+        fs::current_path(dir);
+    }
+    ~MpTree() { fs::current_path(jiepp_root_dir()); }
+    void write(const std::string& name, const std::string& text) const {
+        std::ofstream f(dir / name, std::ios::binary);
+        f << text;
+    }
+    std::string read(const std::string& name) const {
+        std::ifstream f(dir / name, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+};
+
+} // namespace
+
+TEST_F(JieppCommandTest, DepMPAddsEmptyRulePerHeader) {
+    // gcc/clang -MP: after the rule, one empty rule per prerequisite except
+    // the main input, in rule order, each once (mp_a.iec is included twice).
+    MpTree t;
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_main.iec"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "x.d";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mp_main.output: \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\n"
+              "mp_a.iec:\nmp_b.iec:\n",
+              t.read("x.d"));
+
+    // Without -MP: the rule only.
+    opts.MP = false;
+    opts.dep_file = "y.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mp_main.output: \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\n", t.read("y.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, DepMPIncludesForceIncludedFile) {
+    // A -include file is a prerequisite other than the main input, so it gets
+    // an empty rule too (gcc/clang).
+    MpTree t;
+    t.write("mp_pre.iec", "p\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_main.iec"};
+    opts.include_filepaths = {"mp_pre.iec"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "x.d";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mp_main.output: \\\n  mp_pre.iec \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\n"
+              "mp_pre.iec:\nmp_a.iec:\nmp_b.iec:\n",
+              t.read("x.d"));
+}
+
+TEST_F(JieppCommandTest, DepMPWithMTKeepsHeaderNames) {
+    // -MT renames the rule's target only.
+    MpTree t;
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_main.iec"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "x.d";
+    opts.dep_target = "tgt";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("tgt: \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\nmp_a.iec:\nmp_b.iec:\n", t.read("x.d"));
+}
+
+TEST_F(JieppCommandTest, DepMPEscapesLikePrerequisites) {
+    MpTree t;
+    t.write("mp_s.iec", "{#include 'mp s.iec'}\n");
+    t.write("mp s.iec", "s\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_s.iec"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "x.d";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mp_s.output: \\\n  mp_s.iec \\\n  mp\\ s.iec\nmp\\ s.iec:\n", t.read("x.d"));
+}
+
+TEST_F(JieppCommandTest, DepMPAloneChangesNothing) {
+    // -MP without -M/-MM/-MD/-MMD: same output, no .d file, no diagnostic.
+    MpTree t;
+    JieppOptions opts;
+    opts.input_filepaths = {"mp_main.iec"};
+    opts.output_filepath = "plain.iec";
+    ASSERT_EQ(0, jiepp_command(opts));
+    opts.MP = true;
+    opts.output_filepath = "mp.iec";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ(t.read("plain.iec"), t.read("mp.iec"));
+    EXPECT_FALSE(fs::exists(t.dir / "mp_main.d"));
+    EXPECT_FALSE(fs::exists(t.dir / "mp.d"));
+    EXPECT_TRUE(messages().empty());
 }
 
 // ─── F3: __VA_OPT__ ─────────────────────────────────────────────────────────
@@ -2839,6 +3008,36 @@ TEST_F(JieppCommandTest, HasBuiltinDetectsDisabledAssertCli) {
     fs::remove(src, ec);
 }
 
+// The function form -D '__assert(...)=' removes the whole __assert call; the
+// object form -D __assert= leaves the argument text "(0, m)" in the output.
+TEST_F(JieppCommandTest, DisableAssertFunctionFormRemovesCallCli) {
+    fs::current_path(jiepp_root_dir());
+    fs::path src = write_temp_iec("assert_disable_form", "__assert(0, m);\n");
+
+    JieppOptions opts;
+    opts.input_filepaths = {src.generic_string()};
+
+    int rc = 0;
+    opts.define_macros = {"__assert(...)="};
+    std::string out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_EQ(std::string::npos, out.find("(0, m)")) << out;
+    EXPECT_EQ(std::string::npos, out.find("__assert")) << out;
+    EXPECT_NE(std::string::npos, out.find(";")) << out;
+    EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__assert: redefining built-in macro'",
+              message());
+
+    opts.define_macros = {"__assert="};
+    out = run_capturing_stdout(opts, rc);
+    EXPECT_EQ(0, rc);
+    EXPECT_NE(std::string::npos, out.find("(0, m);")) << out;
+    EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__assert: redefining built-in macro'",
+              message());
+
+    std::error_code ec;
+    fs::remove(src, ec);
+}
+
 // -U __has_builtin warns PP35 (the operator keeps working) and exits 0.
 TEST_F(JieppCommandTest, UOptionOnHasBuiltinWarns) {
     fs::current_path(jiepp_root_dir());
@@ -2877,7 +3076,7 @@ TEST_F(JieppCommandTest, WundefPrintsWarningExitZero) {
     EXPECT_NE(std::string::npos, out.find("B")) << out;
     EXPECT_TRUE(empty());
 
-    opts.warn_undef = true;
+    opts.warnings = {{WarningAction::ENABLE, Issue::Code::UNDEFINED_IDENTIFIER}};   // -Wundef
     out = run_capturing_stdout(opts, rc);
     EXPECT_EQ(0, rc);
     EXPECT_NE(std::string::npos, out.find("B")) << out;
@@ -2902,7 +3101,7 @@ TEST_F(JieppCommandTest, WerrorUndefCli) {
     JieppOptions opts;
     opts.input_filepaths = {src.generic_string()};
     opts.output_filepath = out_path.generic_string();
-    opts.werror_undef = true;
+    opts.warnings = {{WarningAction::PROMOTE, Issue::Code::UNDEFINED_IDENTIFIER}};  // -Werror=undef
     Issue::initialize(output());
     EXPECT_EQ(1, jiepp_command(opts));
     std::string msg = message();
@@ -2926,14 +3125,14 @@ TEST_F(JieppCommandTest, WerrorUndefCli) {
     // -Wundef and -Werror combined with -Werror=undef: still an error, exit 1.
     Issue::initialize(output());
     opts.silent = false;
-    opts.warn_undef = true;
+    opts.warnings.push_back({WarningAction::ENABLE, Issue::Code::UNDEFINED_IDENTIFIER});  // -Wundef
     EXPECT_EQ(1, jiepp_command(opts));
     msg = message();
     EXPECT_NE(std::string::npos, msg.find("error: PP54: 'FOO'")) << msg;
     EXPECT_FALSE(fs::exists(out_path));
 
     Issue::initialize(output());
-    opts.warn_undef = false;
+    opts.warnings.pop_back();  // -Werror=undef only
     opts.werror = true;
     EXPECT_EQ(1, jiepp_command(opts));
     msg = message();
@@ -2957,7 +3156,7 @@ TEST_F(JieppCommandTest, WerrorUndefCli) {
 
     // -Werror alone: PP54 stays off, nothing printed, exit 0.
     Issue::initialize(output());
-    opts.werror_undef = false;
+    opts.warnings.clear();
     opts.werror = true;
     EXPECT_EQ(0, jiepp_command(opts));
     EXPECT_TRUE(empty());
@@ -2965,6 +3164,217 @@ TEST_F(JieppCommandTest, WerrorUndefCli) {
 
     fs::remove(src, ec);
     fs::remove(out_path, ec);
+}
+
+// ---- -W<name> / -Wno-<name> / -Werror=<name> / -Wno-error=<name> (SPEC 13) ----
+//
+// Each run goes through parse_args() and jiepp_command() like main(): an
+// Issue::Exception out of parse_args() is exit 1 (main() returns 1 after the
+// diagnostic is printed). Input and output live in the temp directory under
+// the test's own name, so concurrent ctest processes do not share them.
+
+class WarningOptionCliTest : public JieppCommandTest {
+protected:
+    // {#define A 1}{#define A 2}: one PP35. {#if X}{#endif}: one PP54 when on.
+    static constexpr const char* REDEFINE = "{#define A 1}{#define A 2}\n";
+    static constexpr const char* UNDEF_IF = "{#if X}{#endif}\n";
+
+    struct Result {
+        int rc;
+        std::vector<std::string> msgs;
+        bool output_written;
+    };
+
+    Result run(std::vector<std::string> args, const std::string& input) {
+        const std::string stem =
+            std::string("wopt_") + ::testing::UnitTest::GetInstance()->current_test_info()->name();
+        src_ = fs::temp_directory_path() / (stem + ".iec");
+        out_ = fs::temp_directory_path() / (stem + ".piec");
+        {
+            std::ofstream f(src_, std::ios::binary);
+            f << input;
+        }
+        std::error_code ec;
+        fs::remove(out_, ec);
+
+        args.insert(args.begin(), "jiepp");
+        args.push_back(src_.generic_string());
+        args.push_back("-o");
+        args.push_back(out_.generic_string());
+        std::vector<char*> argv;
+        for (auto& a : args)
+            argv.push_back(a.data());
+
+        Issue::initialize(output());
+        Result r{0, {}, false};
+        try {
+            JieppOptions opts = parse_args(static_cast<int>(argv.size()), argv.data());
+            r.rc = jiepp_command(opts);
+        } catch (const Issue::Exception&) {
+            r.rc = 1;
+        }
+        r.msgs = messages();
+        r.output_written = fs::exists(out_);
+        return r;
+    }
+
+    static bool has(const Result& r, const std::string& needle) {
+        for (const auto& m : r.msgs)
+            if (m.find(needle) != std::string::npos)
+                return true;
+        return false;
+    }
+
+    void TearDown() override {
+        Issue::initialize(std::cerr);
+        std::error_code ec;
+        if (!src_.empty())
+            fs::remove(src_, ec);
+        if (!out_.empty())
+            fs::remove(out_, ec);
+        JieppCommandTest::TearDown();
+    }
+
+private:
+    fs::path src_;
+    fs::path out_;
+};
+
+// Baseline for the tests below: PP35 is a warning, exit 0.
+TEST_F(WarningOptionCliTest, RedefinitionWarnsByDefault) {
+    auto r = run({}, REDEFINE);
+    EXPECT_EQ(0, r.rc);
+    ASSERT_EQ(1u, r.msgs.size());
+    EXPECT_TRUE(has(r, "warning: PP35")) << r.msgs[0];
+}
+
+// -Wno-PP35 hides PP35, exit 0; the code is case-insensitive.
+TEST_F(WarningOptionCliTest, WnoCodeSuppresses) {
+    for (const char* opt : {"-Wno-PP35", "-Wno-pp35"}) {
+        auto r = run({opt}, REDEFINE);
+        EXPECT_EQ(0, r.rc) << opt;
+        EXPECT_TRUE(r.msgs.empty()) << opt;
+        EXPECT_TRUE(r.output_written) << opt;
+    }
+}
+
+// -Werror=PP35: PP35 is an error, exit 1, -o is not written.
+TEST_F(WarningOptionCliTest, WerrorCodePromotes) {
+    auto r = run({"-Werror=PP35"}, REDEFINE);
+    EXPECT_EQ(1, r.rc);
+    ASSERT_EQ(1u, r.msgs.size());
+    EXPECT_TRUE(has(r, "error: PP35")) << r.msgs[0];
+    EXPECT_FALSE(r.output_written);
+}
+
+// -Wno-error=PP35 exempts PP35 from -Werror, and undoes an earlier
+// -Werror=PP35 (the later option wins): a warning, exit 0.
+TEST_F(WarningOptionCliTest, WnoErrorCodeDemotes) {
+    for (const auto& args : std::vector<std::vector<std::string>>{
+             {"-Werror", "-Wno-error=PP35"},
+             {"-Wno-error=PP35", "-Werror"},
+             {"-Werror=PP35", "-Wno-error=PP35"}}) {
+        auto r = run(args, REDEFINE);
+        EXPECT_EQ(0, r.rc) << args[0] << ' ' << args[1];
+        ASSERT_EQ(1u, r.msgs.size()) << args[0] << ' ' << args[1];
+        EXPECT_TRUE(has(r, "warning: PP35")) << r.msgs[0];
+        EXPECT_TRUE(r.output_written);
+    }
+    // The reverse order promotes again.
+    auto r = run({"-Wno-error=PP35", "-Werror=PP35"}, REDEFINE);
+    EXPECT_EQ(1, r.rc);
+    EXPECT_TRUE(has(r, "error: PP35"));
+}
+
+// -Wundef -Wno-undef: no PP54. -Wno-undef -Wundef: PP54 (the later wins).
+TEST_F(WarningOptionCliTest, WundefWnoUndefLastWins) {
+    auto off = run({"-Wundef", "-Wno-undef"}, UNDEF_IF);
+    EXPECT_EQ(0, off.rc);
+    EXPECT_TRUE(off.msgs.empty());
+
+    auto on = run({"-Wno-undef", "-Wundef"}, UNDEF_IF);
+    EXPECT_EQ(0, on.rc);
+    ASSERT_EQ(1u, on.msgs.size());
+    EXPECT_TRUE(has(on, "warning: PP54")) << on.msgs[0];
+}
+
+// -Werror=undef -Wno-undef: no PP54 (suppression beats promotion), exit 0.
+// The reverse order is an error.
+TEST_F(WarningOptionCliTest, WnoUndefBeatsEarlierWerrorUndef) {
+    auto r = run({"-Werror=undef", "-Wno-undef"}, UNDEF_IF);
+    EXPECT_EQ(0, r.rc);
+    EXPECT_TRUE(r.msgs.empty());
+    EXPECT_TRUE(r.output_written);
+
+    auto r2 = run({"-Wno-undef", "-Werror=undef"}, UNDEF_IF);
+    EXPECT_EQ(1, r2.rc);
+    EXPECT_TRUE(has(r2, "error: PP54"));
+}
+
+// -Wno-error=undef alone does not switch PP54 on: no diagnostic, exit 0.
+// -Werror -Wundef -Wno-error=undef: PP54 stays a warning while PP35 is an
+// error (exit 1).
+TEST_F(WarningOptionCliTest, WnoErrorUndefAlone) {
+    auto r = run({"-Wno-error=undef"}, UNDEF_IF);
+    EXPECT_EQ(0, r.rc);
+    EXPECT_TRUE(r.msgs.empty());
+
+    auto r2 = run({"-Werror", "-Wundef", "-Wno-error=undef"},
+                  std::string(UNDEF_IF) + REDEFINE);
+    EXPECT_EQ(1, r2.rc);
+    EXPECT_TRUE(has(r2, "warning: PP54"));
+    EXPECT_TRUE(has(r2, "error: PP35"));
+}
+
+// -Wno-error cancels an earlier -Werror (the later wins): warnings stay
+// warnings, exit 0. -Wno-error alone does nothing.
+TEST_F(WarningOptionCliTest, WnoErrorCancelsWerror) {
+    for (const auto& args : std::vector<std::vector<std::string>>{
+             {"-Wno-error"}, {"-Werror", "-Wno-error"}}) {
+        auto r = run(args, REDEFINE);
+        EXPECT_EQ(0, r.rc) << args.size();
+        ASSERT_EQ(1u, r.msgs.size());
+        EXPECT_TRUE(has(r, "warning: PP35")) << r.msgs[0];
+    }
+    // -Wno-error leaves -Werror=PP35 in force (gcc/clang).
+    auto r = run({"-Werror=PP35", "-Wno-error"}, REDEFINE);
+    EXPECT_EQ(1, r.rc);
+    EXPECT_TRUE(has(r, "error: PP35"));
+}
+
+// A name that is not a warning code or undef is PP71 with the option as
+// typed, exit 1, before any input is read.
+TEST_F(WarningOptionCliTest, InvalidNameIsPP71) {
+    for (const char* opt : {"-Wno-PP11", "-Wno-PP99", "-Wno-35", "-Wno-foo"}) {
+        auto r = run({opt}, REDEFINE);
+        EXPECT_EQ(1, r.rc) << opt;
+        ASSERT_EQ(1u, r.msgs.size()) << opt;
+        EXPECT_EQ(0u, r.msgs[0].find("jiepp: error: PP71: ")) << r.msgs[0];
+        EXPECT_NE(std::string::npos, r.msgs[0].find(std::string("'") + opt + ":")) << r.msgs[0];
+        EXPECT_FALSE(r.output_written) << opt;
+    }
+}
+
+// -w hides plain warnings but not one promoted by -Werror=<name>.
+TEST_F(WarningOptionCliTest, WDoesNotHidePromotedWarning) {
+    auto r = run({"-w", "-Werror=PP35"}, REDEFINE);
+    EXPECT_EQ(1, r.rc);
+    ASSERT_EQ(1u, r.msgs.size());
+    EXPECT_TRUE(has(r, "error: PP35")) << r.msgs[0];
+
+    auto r2 = run({"-w"}, REDEFINE);
+    EXPECT_EQ(0, r2.rc);
+    EXPECT_TRUE(r2.msgs.empty());
+}
+
+// -Wall, -Wextra and clang-only names are still unknown options (PP70).
+TEST_F(WarningOptionCliTest, OtherWNamesStayPP70) {
+    for (const char* opt : {"-Wall", "-Wextra", "-Wmacro-redefined"}) {
+        auto r = run({opt}, REDEFINE);
+        EXPECT_EQ(1, r.rc) << opt;
+        ASSERT_EQ(1u, r.msgs.size()) << opt;
+        EXPECT_EQ(0u, r.msgs[0].find("jiepp: error: PP70: ")) << r.msgs[0];
+    }
 }
 
 // ---- A8: output write failures are PP10 '<stdout>' ----

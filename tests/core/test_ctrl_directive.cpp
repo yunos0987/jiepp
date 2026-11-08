@@ -22,6 +22,26 @@ TEST_F(CtrlDirectiveTest, IfBoolean) {
     EXPECT_TRUE(empty());
 }
 
+TEST_F(CtrlDirectiveTest, IfAmpAmpAndBarBar) {
+    EXPECT_EQ("1e", strip(pp("{#define A 1}{#if defined(A) && A = 1}1{#endif}e")));
+    EXPECT_EQ("e",  strip(pp("{#if defined(B) && B = 1}1{#endif}e")));
+    EXPECT_EQ("1e", strip(pp("{#if defined(B) || 1}1{#endif}e")));
+    // A macro may supply the operator.
+    EXPECT_EQ("1e", strip(pp("{#define BOTH(x, y) x && y}{#if BOTH(1, 1)}1{#endif}e")));
+    EXPECT_EQ("2e", strip(pp("{#if 0}1{#elif 0 || 1}2{#endif}e")));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(CtrlDirectiveTest, SkippedGroupDoesNotReportDirectiveOperands) {
+    // An invalid escape (PP21) in a directive matters only where it is reached.
+    EXPECT_EQ("e", strip(pp("{#if 0}{#define A $q}{#if $q}{#endif}{#unknown $q}{#endif}e")));
+    EXPECT_EQ("e", strip(pp("{#if 0}{#if 1}{#else $q}{#endif $q}{#elif 0}{#endif}e")));
+    EXPECT_TRUE(empty());
+    // The same operand is reported once its enclosing group is active.
+    EXPECT_THROW(pp("{#if 0}{#else $q}{#endif}"), Issue::Exception);
+    EXPECT_THROW(pp("{#if 1}{#else}{#endif $q}"), Issue::Exception);
+}
+
 TEST_F(CtrlDirectiveTest, IfInteger) {
     EXPECT_EQ("1e", strip(pp("{#if -1}1{#endif}e")));
     EXPECT_EQ("e",  strip(pp("{#if -0}1{#endif}e")));
@@ -200,6 +220,73 @@ TEST_F(CtrlDirectiveTest, Elif2) {
     EXPECT_EQ("2e", strip(pp("{#if 0}1{#elif 1}2{#elif 0}3{#else}4{#endif}e")));
     EXPECT_EQ("1e", strip(pp("{#if 1}1{#elif 0}2{#elif 0}3{#else}4{#endif}e")));
     EXPECT_TRUE(empty());
+}
+
+// ---- #elifdef / #elifndef (C23/C++23) ----
+
+TEST_F(CtrlDirectiveTest, Elifdef) {
+    EXPECT_EQ("3e", strip(pp("{#if 0}1{#elifdef A}2{#else}3{#endif}e")));
+    EXPECT_EQ("2e", strip(pp("{#define A}{#if 0}1{#elifdef A}2{#else}3{#endif}e")));
+    EXPECT_EQ("2e", strip(pp("{#if 0}1{#elifndef A}2{#else}3{#endif}e")));
+    EXPECT_EQ("3e", strip(pp("{#define A}{#if 0}1{#elifndef A}2{#else}3{#endif}e")));
+    // NAME is not macro-expanded, like {#ifdef}.
+    EXPECT_EQ("2e", strip(pp("{#define A B}{#define B}{#undef B}{#if 0}1{#elifdef A}2{#endif}e")));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(CtrlDirectiveTest, ElifdefNotEvaluatedAfterTakenBranch) {
+    // A true branch was taken: {#elifdef} is not evaluated.
+    EXPECT_EQ("1e", strip(pp("{#if 1}1{#elifdef A}2{#endif}e")));
+    // A taken {#elifdef} closes the chain for a later {#elif}.
+    EXPECT_EQ("2e", strip(pp("{#define A}{#if 0}1{#elifdef A}2{#elif 1}3{#endif}e")));
+    // Mixed with {#elif} in one chain.
+    EXPECT_EQ("3e", strip(pp("{#if 0}1{#elif 0}2{#elifndef A}3{#else}4{#endif}e")));
+    // Inside an inactive group it is skipped like {#elif}.
+    EXPECT_EQ("k", strip(pp("{#if 0}{#if 1}{#elifdef A}{#else}{#endif}{#endif}k")));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(CtrlDirectiveTest, ElifdefOperandErrors) {
+    Issue::ContinueMode guard({});
+    // Extra tokens: PP49 naming the directive, only NAME is tested.
+    EXPECT_EQ("e", strip(pp("{#if 0}1{#elifdef A B}2{#endif}e")));
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE, PlainTextMessage::parse_code(msgs[0]));
+    EXPECT_NE(std::string::npos, msgs[0].find("'{#elifdef A B}'")) << msgs[0];
+    // Missing / non-identifier NAME: PP40 and the branch is false.
+    EXPECT_EQ("3e", strip(pp("{#if 0}1{#elifdef}2{#else}3{#endif}e")));
+    EXPECT_EQ(std::vector<Issue::Code>{Issue::Code::INVALID_DEFINED_OPERAND}, codes());
+    EXPECT_EQ("3e", strip(pp("{#if 0}1{#elifndef 1}2{#else}3{#endif}e")));
+    EXPECT_EQ(std::vector<Issue::Code>{Issue::Code::INVALID_DEFINED_OPERAND}, codes());
+}
+
+TEST_F(CtrlDirectiveTest, ElifdefPlacementErrors) {
+    EXPECT_THROW(pp("{#if 0}{#else}{#elifdef A}{#endif}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::ELIF_ERROR, code());
+    EXPECT_THROW(pp("{#elifdef A}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::ELIF_ERROR, code());
+    EXPECT_THROW(pp("{#elifndef A}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::ELIF_ERROR, code());
+    // A similar but unknown name is still PP45.
+    EXPECT_THROW(pp("{#elifndefx A}"), Issue::Exception);
+    EXPECT_EQ(Issue::Code::UNKNOWN_DIRECTIVE, code());
+}
+
+TEST_F(CtrlDirectiveTest, ElifdefOperandScannedForUnterminatedQuote) {
+    Issue::ContinueMode guard({});
+    // Not evaluated (an earlier branch was taken), but the enclosing group
+    // is active: the operand is still scanned, like {#elif}.
+    EXPECT_EQ("1", strip(pp("{#if 1}1{#elifdef A 'x}2{#endif}")));
+    EXPECT_EQ(std::vector<Issue::Code>{Issue::Code::UNTERMINATED_STRING_LITERAL}, codes());
+    // Enclosing group inactive: not scanned.
+    EXPECT_EQ("", strip(pp("{#if 0}{#if 1}{#elifdef A 'x}{#endif}{#endif}")));
+    EXPECT_TRUE(codes().empty());
+    // Evaluated: PP29 from the scan, then PP49 for the extra token.
+    EXPECT_EQ("2", strip(pp("{#define A}{#if 0}{#elifdef A 'x}2{#endif}")));
+    EXPECT_EQ((std::vector<Issue::Code>{Issue::Code::UNTERMINATED_STRING_LITERAL,
+                                        Issue::Code::EXTRA_TOKENS_AT_END_OF_DIRECTIVE}),
+              codes());
 }
 
 // ---- #ifdef / #ifndef ----

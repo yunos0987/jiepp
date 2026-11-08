@@ -2,6 +2,8 @@
 #include "../env/issue.hpp"
 #include "../env/param_constants.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -66,6 +68,45 @@ void require_value(int i, int argc, const std::string& opt_name) {
         ISSUE(MISSING_OPTION_VALUE, opt_name);
 }
 
+// "PP" and two digits, "PP" in either case: the shape of a code name in
+// -W<name> and friends. {#ignore}'s operand has the same shape but upper
+// case only (handle_ignore(), directive_handlers.cpp).
+bool has_code_shape(const std::string& name) {
+    return name.size() == 4 &&
+        (name[0] == 'P' || name[0] == 'p') && (name[1] == 'P' || name[1] == 'p') &&
+        std::isdigit(static_cast<unsigned char>(name[2])) &&
+        std::isdigit(static_cast<unsigned char>(name[3]));
+}
+
+// <name> of -W<name> / -Wno-<name> / -Werror=<name> / -Wno-error=<name>
+// (SPEC 13): the alias "undef" (PP54), or a code name (has_code_shape())
+// whose code has WARNING severity. Anything else -- an ERROR/SEVERE code,
+// an unassigned number (severity_of() reports it as SEVERE), any other
+// text -- is nullopt.
+std::optional<Issue::Code> warning_code(const std::string& name) {
+    if (name == "undef")
+        return Issue::Code::UNDEFINED_IDENTIFIER;
+    if (!has_code_shape(name))
+        return std::nullopt;
+    const auto code = static_cast<Issue::Code>(
+        static_cast<unsigned int>((name[2] - '0') * 10 + (name[3] - '0')));
+    if (!Issue::is_warning(code))
+        return std::nullopt;
+    return code;
+}
+
+// Appends {action, <name>'s code} to opts.warnings, where <name> is `arg`
+// after its `prefix_len`-character prefix; an invalid <name> is PP71 with
+// `arg` as typed.
+void add_warning_option(JieppOptions& opts, const std::string& arg,
+                        std::size_t prefix_len, WarningAction action) {
+    if (auto code = warning_code(arg.substr(prefix_len))) {
+        opts.warnings.push_back({action, *code});
+        return;
+    }
+    ISSUE(INVALID_OPTION_VALUE, arg + ": must be a warning code (PPnn) or undef");
+}
+
 // A8: --help and --version exit with `exit_code` only when their text got
 // out: std::cout's state after a flush, then fflush(stdout) and
 // ferror(stdout) of the C stream it is synced with. Otherwise exit 1
@@ -90,15 +131,21 @@ void display_help_and_exit(int exit_code = 0) {
         "  -I PATH                  Add syspath\n"
         "  -include FILE            Force-include file before input\n"
         "  -w                       Suppress warnings\n"
-        "  -Werror                  Promote warnings to errors\n"
+        "  -Werror                  Promote warnings to errors (-Wno-error: cancel)\n"
+        "  -W<name>                 Enable warning <name> (only PP54 is off by default)\n"
+        "  -Wno-<name>              Do not report warning <name>\n"
+        "  -Werror=<name>           Enable warning <name> and report it as an error\n"
+        "  -Wno-error=<name>        Keep warning <name> a warning under -Werror / -Werror=<name>\n"
+        "                           <name>: a warning code (PP35, pp35, ...) or undef (= PP54);\n"
+        "                           for the same <name> the last option wins\n"
         "  -Wundef                  Warn when an undefined identifier in a condition evaluates to 0\n"
-        "  -Werror=undef            Like -Wundef, but report it as an error\n"
         "  -M                       Output Makefile dependency rules\n"
         "  -MM                      Like -M but exclude system includes\n"
         "  -MD                      Write dependency rules to .d file (keep normal output)\n"
         "  -MMD                     Like -MD but exclude system includes\n"
         "  -MF FILE                 Write dependency rules to file\n"
         "  -MT TARGET               Set dependency target name\n"
+        "  -MP                      Add an empty rule for each header (with -M/-MM/-MD/-MMD)\n"
         "  --max-include-depth N    Maximum include depth (default: 100)\n"
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
         "  --max-expansion-steps N  Maximum macro expansion work in steps (default: 16777216; 0 = no limit)\n"
@@ -121,8 +168,23 @@ void display_help_and_exit(int exit_code = 0) {
         "  --silent                 Suppress all diagnostic output\n"
         "  --                       End of options\n"
         "  --help / -h              Show this help\n"
-        "  --version                Show version\n";
+        "  --version                Show version\n"
+        "Every --long-name option also accepts --long_name (for example --max_include_depth).\n";
     exit_after_stdout(exit_code);
+}
+
+// Lookup key for a "--" option: a name that has no '-' after the leading
+// "--" has every '_' mapped to '-', so "--max_include_depth" finds the
+// "--max-include-depth" branch. Mixed spellings ("--max_include-depth") are
+// left unchanged and stay unknown options (PP70), as do single-dash options.
+// Only the option name is passed here, never its value; callers keep the
+// original spelling for diagnostics.
+std::string long_option_key(const std::string& arg) {
+    std::string key = arg;
+    if (key.size() > 2 && key.compare(0, 2, "--") == 0 &&
+        key.find('-', 2) == std::string::npos)
+        std::replace(key.begin() + 2, key.end(), '_', '-');
+    return key;
 }
 
 } // namespace
@@ -165,6 +227,7 @@ JieppOptions parse_args(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; ) {
         std::string arg = argv[i];
+        const std::string key = long_option_key(arg);
 
         // After --, everything is an input filepath
         if (end_of_options) {
@@ -250,13 +313,38 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
-        if (arg == "-Wundef") {
-            opts.warn_undef = true;
+        if (arg == "-Wno-error") {
+            opts.werror = false;
             ++i; continue;
         }
 
-        if (arg == "-Werror=undef") {
-            opts.werror_undef = true;
+        // Per-code warning options (SPEC 13), kept in order in
+        // opts.warnings. After -Wno-error=, -Werror= and -Wno- any <name>
+        // that warning_code() rejects is PP71. -W<name> is taken only for
+        // "undef" or a code-shaped <name>, so other -W... spellings (-Wall,
+        // -Wmacro-redefined, ...) stay unknown options (PP70).
+        if (arg.starts_with("-Wno-error=")) {
+            add_warning_option(opts, arg, 11, WarningAction::DEMOTE);
+            ++i; continue;
+        }
+
+        if (arg.starts_with("-Werror=")) {
+            add_warning_option(opts, arg, 8, WarningAction::PROMOTE);
+            ++i; continue;
+        }
+
+        if (arg.starts_with("-Wno-")) {
+            add_warning_option(opts, arg, 5, WarningAction::DISABLE);
+            ++i; continue;
+        }
+
+        if (arg.starts_with("-W") && (arg.substr(2) == "undef" || has_code_shape(arg.substr(2)))) {
+            add_warning_option(opts, arg, 2, WarningAction::ENABLE);
+            ++i; continue;
+        }
+
+        if (arg == "-MP") {
+            opts.MP = true;
             ++i; continue;
         }
 
@@ -294,67 +382,67 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
-        if (arg == "--max-include-depth" || arg == "--max_include_depth") {
+        if (key == "--max-include-depth") {
             require_value(i, argc, arg);
             opts.max_include_depth = parse_positive_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-expansion-depth" || arg == "--max_expansion_depth") {
+        if (key == "--max-expansion-depth") {
             require_value(i, argc, arg);
             opts.max_expansion_depth = parse_positive_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-expansion-steps" || arg == "--max_expansion_steps") {
+        if (key == "--max-expansion-steps") {
             require_value(i, argc, arg);
             opts.max_expansion_steps = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-include-count" || arg == "--max_include_count") {
+        if (key == "--max-include-count") {
             require_value(i, argc, arg);
             opts.max_include_count = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-input-bytes" || arg == "--max_input_bytes") {
+        if (key == "--max-input-bytes") {
             require_value(i, argc, arg);
             opts.max_input_bytes = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--error-limit" || arg == "--error_limit") {
+        if (key == "--error-limit") {
             require_value(i, argc, arg);
             opts.error_limit = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-if-nesting" || arg == "--max_if_nesting") {
+        if (key == "--max-if-nesting") {
             require_value(i, argc, arg);
             opts.max_if_nesting = parse_positive_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--max-blank-lines" || arg == "--max_blank_lines") {
+        if (key == "--max-blank-lines") {
             require_value(i, argc, arg);
             opts.max_blank_lines = parse_nonnegative_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--pp-output-pragma-style" || arg == "--pp_output_pragma_style") {
+        if (key == "--pp-output-pragma-style") {
             require_value(i, argc, arg);
             opts.pp_output_pragma_style = parse_pragma_style(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--recursion-limit" || arg == "--recursion_limit") {
+        if (key == "--recursion-limit") {
             require_value(i, argc, arg);
             opts.recursion_limit = parse_positive_int(argv[++i], arg);
             ++i; continue;
         }
 
-        if (arg == "--remove-comments" || arg == "-nC") {
+        if (key == "--remove-comments" || arg == "-nC") {
             opts.remove_comments = true;
             ++i; continue;
         }

@@ -3,7 +3,7 @@
 #include "jiepp/option.hpp"
 
 // jiepp command-line output of __xmlattr / __xmltext (SPECIFICATION.md 12.12)
-// inside {ld}...{end}, the way rungst writes IEC 61131-10 LD XML, under the
+// inside {ld}...{end}, the way rungiec writes IEC 61131-10 LD XML, under the
 // default (annotated) pragma style, -P and --pp-output-pragma-style standard.
 
 namespace {

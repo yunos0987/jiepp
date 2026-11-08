@@ -599,6 +599,27 @@ TEST_F(SmokeTest, HelpListsMaxExpansionSteps) {
         << "stdout: " << r.out;
 }
 
+TEST_F(SmokeTest, HelpStatesUnderscoreSpellingOfLongOptions) {
+    auto r = run("--help");
+    EXPECT_EQ(r.exit_code, 0);
+    EXPECT_NE(r.out.find("Every --long-name option also accepts --long_name "
+                         "(for example --max_include_depth).\n"),
+              std::string::npos)
+        << "stdout: " << r.out;
+}
+
+TEST_F(SmokeTest, RemoveCommentsUnderscoreSpellingRuns) {
+    fs::path input = tmp_dir_ / "rc_underscore.iec";
+    write_file(input, "a (* c *) b\n");
+    auto hyphen = run("-P --remove-comments \"" + input.generic_string() + "\"");
+    auto under = run("-P --remove_comments \"" + input.generic_string() + "\"");
+    EXPECT_EQ(hyphen.exit_code, 0) << hyphen.err;
+    EXPECT_EQ(under.exit_code, 0) << under.err;
+    EXPECT_EQ(hyphen.out, under.out);
+    EXPECT_EQ(hyphen.out.find("(*"), std::string::npos) << hyphen.out;
+    EXPECT_EQ(under.err, hyphen.err);
+}
+
 TEST_F(SmokeTest, ExpansionStepsLimitStopsWithPP64AndPartialOutput) {
     fs::path input = tmp_dir_ / "steps_bomb.iec";
     write_file(input, step_bomb_source(24));
@@ -776,7 +797,9 @@ TEST_F(SmokeTest, UnclosedDirectiveInDeepRelexKeepsPP23) {
 
     auto r = run("\"" + input.generic_string() + "\"");
     EXPECT_EQ(r.exit_code, 1);
-    EXPECT_EQ(count_lines_with(r.err, ": PP23:"), 1u) << "stderr: " << r.err;
+    // The source lex reports the unclosed directive; the re-lex of the
+    // pragma body then drops the directive and reports it again.
+    EXPECT_EQ(count_lines_with(r.err, ": PP23:"), 2u) << "stderr: " << r.err;
     EXPECT_NE(r.err.find(": PP23: Invalid preprocessor syntax; '{#define Q 1 '"),
               std::string::npos) << "stderr: " << r.err;
     // The source lex runs before {#ignore PP22} takes effect.
@@ -1288,6 +1311,18 @@ TEST_F(SmokeTest, IgnoredPP14CannotHideDirectoryInclude) {
     auto r = run("\"" + input.generic_string() + "\"");
     EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
     EXPECT_NE(r.err.find("PP14"), std::string::npos) << "stderr: " << r.err;
+}
+
+// An empty -include operand resolves to the current directory: PP14 whose
+// context says the filename is empty.
+TEST_F(SmokeTest, EmptyForceIncludeOperandIsPP14WithContext) {
+    fs::path input = tmp_dir_ / "empty_fi.iec";
+    write_file(input, "x := 1;\n");
+
+    auto r = run("-include \"\" \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
+    EXPECT_NE(r.err.find("PP14: Include target is a directory; 'empty filename'"),
+              std::string::npos) << "stderr: " << r.err;
 }
 
 TEST_F(SmokeTest, IgnoredPP12CannotHideIncludeDepthExceeded) {

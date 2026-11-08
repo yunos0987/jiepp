@@ -40,8 +40,10 @@ bool eval_cond(const std::string& raw_cond, Env& env);
 // is not macro-expanded; comments in raw_arg are whitespace. A missing or
 // non-identifier NAME is INVALID_DEFINED_OPERAND and the group is false
 // (even for {#ifndef}), so a later {#elif}/{#else} may still be taken.
-// Tokens after NAME are PP49 (warning) and ignored.
-bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, Env& env);
+// Tokens after NAME are PP49 (warning) and ignored; `directive` ("ifdef",
+// "ifndef", "elifdef" or "elifndef") names the directive in that diagnostic.
+// {#elifdef}/{#elifndef} use the same evaluation.
+bool eval_ifdef(const std::string& raw_arg, bool is_ifndef, const char* directive, Env& env);
 
 // Whether NAME counts as defined for {#ifdef}/{#ifndef}/`defined`. See the
 // definition in expand_ctrl.cpp for the __has_include special case.
@@ -51,6 +53,16 @@ bool macro_name_is_defined(std::string_view name, Env& env);
 // `defined` and (normal build) `__has_include`, and for a symbol-table entry
 // that is still a built-in kind (is_builtin_macro()); 0 otherwise.
 bool has_builtin(std::string_view name, Env& env);
+
+#ifdef JIEPP_SANDBOX
+// Sandbox build: whether the condition being evaluated has reported PP62
+// for a __has_include(...) call, so it is reported once per condition
+// (expand()'s __has_include branch). The scope that installs or reuses the
+// transient 'defined' operator for one evaluation (DefinedScope,
+// expand_ctrl.cpp) saves it, starts it at false and restores it, like the
+// operator's operand-error state.
+bool& sandbox_has_include_reported();
+#endif
 
 // The __has_builtin operator branch of expand(), called with the operator
 // token already popped from `work` while the transient 'defined' operator is

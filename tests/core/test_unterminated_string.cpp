@@ -421,9 +421,96 @@ TEST_F(UnterminatedStringTest, OrdinaryPragmaInInactiveGroupNotScanned) {
     EXPECT_TRUE(empty());
 }
 
-TEST_F(UnterminatedStringTest, PragmaInsideMacroBodyReportedOncePerExpansion) {
+// Task d1 (D-b): like a literal in the replacement list, a pragma body's
+// literal is reported once, where the {#define} is, like clang (which lexes
+// a macro body once, at its definition), not at each expansion.
+TEST_F(UnterminatedStringTest, PragmaInsideMacroBodyReportedOnceAtDefinition) {
     EXPECT_EQ("\n(*{a 'x}*) (*{a 'x}*)\n", pp("{#define P ${a 'x$}}\nP P\n"));
-    EXPECT_EQ((std::vector<std::string>{w29(2, "'x"), w29(2, "'x")}), messages());
+    EXPECT_EQ((std::vector<std::string>{w29(1, "'x")}), messages());
+}
+
+// A bare { ... } pragma in a macro argument is expanded when the argument is
+// pre-expanded and again when the substituted text is rescanned (once per
+// use of the parameter); PP29 for its literal is reported once, as the
+// argument is collected, at the pragma's line (task d1, D-c).
+TEST_F(UnterminatedStringTest, PragmaInArgumentReportedOnce) {
+    Issue::ContinueMode guard({});
+    const std::string out = pp("{#define F(x) [x]}\nF(\n{ x \"abc }\n1\n)\n");
+    EXPECT_NE(std::string::npos, out.find("[(*{x \"abc }*) 1]")) << out;
+    EXPECT_EQ((std::vector<std::string>{w29(3, "\"abc ")}), messages());
+}
+
+TEST_F(UnterminatedStringTest, PragmaInArgumentUsedTwiceReportedOnce) {
+    Issue::ContinueMode guard({});
+    const std::string out = pp("{#define G(x) [x][x]}\nG(\n{ x \"abc }\n1\n)\n");
+    EXPECT_NE(std::string::npos, out.find("[(*{x \"abc }*) 1][(*{x \"abc }*) 1]")) << out;
+    EXPECT_EQ((std::vector<std::string>{w29(3, "\"abc ")}), messages());
+}
+
+// Task d1 (D-c): reported even when the parameter is never used.
+TEST_F(UnterminatedStringTest, PragmaInUnusedArgumentReportedOnce) {
+    Issue::ContinueMode guard({});
+    const std::string out = pp("{#define F(x) []}\nF(\n{ x\n 'abc }\n)\n");
+    EXPECT_NE(std::string::npos, out.find("[]")) << out;
+    EXPECT_EQ((std::vector<std::string>{w29(4, "'abc ")}), messages());
+}
+
+TEST_F(UnterminatedStringTest, PragmaInArgumentUsedThreeTimesReportedOnce) {
+    Issue::ContinueMode guard({});
+    (void)pp("{#define H(x) x x x}\nH(\n{ x 'abc }\n)\n");
+    EXPECT_EQ(1u, codes().size());
+}
+
+// Control: the {#pragma ...} directive form is run once as the argument is
+// collected.
+TEST_F(UnterminatedStringTest, PragmaDirectiveInArgumentReportedOnce) {
+    Issue::ContinueMode guard({});
+    (void)pp("{#define F(x) [x][x]}\nF(\n{#pragma x \"abc }\n1\n)\n");
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::UNTERMINATED_STRING_LITERAL, cs[0]);
+}
+
+// PP20 (unclosed comment) in a bare pragma in a macro argument follows the
+// same rule as PP29: reported once, at its line, as the argument is
+// collected; neither expansion reports it.
+TEST_F(UnterminatedStringTest, UnclosedCommentInPragmaArgumentReportedOnce) {
+    Issue::ContinueMode guard({});
+    const std::string out = pp("{#define G(x) [x][x]}\nG(\n{ y (* abc }\n)\n");
+    EXPECT_NE(std::string::npos, out.find("[(*{y (* abc }*)][(*{y (* abc }*)]")) << out;
+    EXPECT_EQ((std::vector<std::string>{
+                  "<unknown location>:3.0: error: PP20: Unclosed comment; '(* abc '"}),
+              messages());
+}
+
+TEST_F(UnterminatedStringTest, UnclosedCommentInPragmaArgumentUsedThreeTimesReportedOnce) {
+    Issue::ContinueMode guard({});
+    (void)pp("{#define H(x) x x x}\nH(\n{ x (* abc }\n)\n");
+    auto cs = codes();
+    ASSERT_EQ(1u, cs.size());
+    EXPECT_EQ(Issue::Code::UNCLOSED_COMMENT, cs[0]);
+}
+
+// Both in one argument: each is reported once.
+TEST_F(UnterminatedStringTest, LiteralAndCommentInPragmaArgumentEachReportedOnce) {
+    Issue::ContinueMode guard({});
+    (void)pp("{#define G(x) [x][x]}\nG(\n{ x 'abc }\n{ y (* q }\n)\n");
+    auto cs = codes();
+    ASSERT_EQ(2u, cs.size());
+    EXPECT_EQ(Issue::Code::UNTERMINATED_STRING_LITERAL, cs[0]);
+    EXPECT_EQ(Issue::Code::UNCLOSED_COMMENT, cs[1]);
+}
+
+// A pragma that is not rescanned (outside a macro argument) still reports
+// the comment, and a macro body pragma reports it once, at its definition
+// (task d1, D-b; as for PP29).
+TEST_F(UnterminatedStringTest, UnclosedCommentInPragmaOutsideArgumentStillReported) {
+    Issue::ContinueMode guard({});
+    (void)pp("{ a (* x }\n{#define P ${ (* y $}}\nP P\n");
+    auto cs = codes();
+    ASSERT_EQ(2u, cs.size());
+    for (auto c : cs)
+        EXPECT_EQ(Issue::Code::UNCLOSED_COMMENT, c);
 }
 
 // ---- PP29: suppression ----

@@ -23,16 +23,28 @@ namespace {
 // directory), records that fact into `*found_directory` (if non-null,
 // without clearing an already-set flag) and reports no match, so callers
 // keep searching remaining candidates.
-bool try_resolve(const fs::path& candidate, bool* found_directory, std::string& out) {
+bool try_resolve(const fs::path& candidate, bool* found_directory, std::string& out, Env& env) {
+    // A file already resolved by this Env needs no file system calls, which
+    // are the expensive part (canonicalising looks at every path component);
+    // an {#include} guard re-reads the same headers many times. Only a hit is
+    // remembered, so a missing file is looked for again each time. Like the
+    // token cache, a hit is kept for the Env's lifetime.
+    std::string key = candidate.generic_string();
+    if (const std::string* resolved = env.resolved_path(key)) {
+        out = *resolved;
+        return true;
+    }
     std::error_code ec;
-    if (!fs::exists(candidate, ec))
+    const fs::file_status status = fs::status(candidate, ec);
+    if (!fs::exists(status))
         return false;
-    if (!fs::is_regular_file(candidate, ec)) {
+    if (!fs::is_regular_file(status)) {
         if (found_directory)
             *found_directory = true;
         return false;
     }
-    out = Util::canonical_path(candidate.generic_string());
+    out = Util::canonical_path(key);
+    env.set_resolved_path(std::move(key), out);
     return true;
 }
 
@@ -49,7 +61,7 @@ std::string Loader::fullpath(const std::string& filepath, LoadType load_type, En
     fs::path p(filepath);
     std::string out;
     if (p.is_absolute()) {
-        if (try_resolve(p, found_directory, out))
+        if (try_resolve(p, found_directory, out, env))
             return out;
     } else {
         if (load_type == LoadType::INCLUDE) {
@@ -57,17 +69,17 @@ std::string Loader::fullpath(const std::string& filepath, LoadType load_type, En
             if (!cur_file.empty()) {
                 fs::path base_dirpath = fs::path(cur_file).parent_path();
                 fs::path candidate = base_dirpath / filepath;
-                if (try_resolve(candidate, found_directory, out))
+                if (try_resolve(candidate, found_directory, out, env))
                     return out;
             } else {
                 fs::path candidate = fs::current_path() / p;
-                if (try_resolve(candidate, found_directory, out))
+                if (try_resolve(candidate, found_directory, out, env))
                     return out;
             }
         }
         for (const auto& sp : env.syspaths()) {
             fs::path candidate = fs::path(sp) / filepath;
-            if (try_resolve(candidate, found_directory, out))
+            if (try_resolve(candidate, found_directory, out, env))
                 return out;
         }
     }

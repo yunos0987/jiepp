@@ -52,6 +52,20 @@ CMake Tools 拡張を使用している場合、CMakePresets.json が自動検�
 
 Tests live in `tests/` and use Google Test. Group related tests in the appropriate subdirectory (`constfold/`, `core/`, `env/`, `jiepp/`, `loader/`, `macro/`, `util/`). The shared e2e/assertion helpers live directly at `tests/test_helper.hpp` (not in its own subdirectory).
 
+## Boost.Preprocessor テスト入力の更新 / Updating the Boost Test Corpus
+
+`tests/jiepp/input/boost/preprocessor/` は上流の [boostorg/preprocessor](https://github.com/boostorg/preprocessor) を `tools/convert_boost_pp.py` で jiepp の構文に機械変換したものです（現在は Boost 1.92.0）。手で編集しないでください。変換規則はスクリプトの先頭に書いてあります。
+
+```bash
+git clone --depth 1 --branch boost-1.92.0 https://github.com/boostorg/preprocessor <dir>
+python tools/convert_boost_pp.py <dir>/include/boost/preprocessor tests/jiepp/input/boost/preprocessor
+python tools/convert_boost_pp.py --check <dir>/include/boost/preprocessor tests/jiepp/input/boost/preprocessor
+```
+
+演算子は 1 個ずつ置き換えるので、C と jiepp で結合の仕方が異なる式（括弧のない `&`・`|`・`^` と比較や `+`・`<<` などの混在、比較の左辺の `!x`。SPECIFICATION.md §6.2）は意味が黙って変わります。スクリプトはそうした `#if`・`#elif`・`#define` を `precedence:` の行で標準エラーに出し、終了コード 1 を返します（ファイルは書き出します）。出た場合は変換結果を確かめ、必要なら変換規則を足してください。
+
+更新後は Release の ctest で `BoostPreprocessorIntegration` を実行し、出力が変わった場合は「テスト期待値（ゴールデン）の更新」の手順で `tests/jiepp/output/boost.*` を更新します。
+
 ## サンプルの更新 / Updating Samples
 
 `iec_61131-3/samples/` 配下の `.iec` ファイルを変更した場合、`.piec` ファイルを再生成する必要があります。また、ドキュメント内でのサンプル引用と `.piec` 出力が一致することを確認してください。
@@ -104,6 +118,7 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
   ```
 - 設定用キャッシュ変数: `JIEPP_PERF_REPEAT`（既定 10）、`JIEPP_PERF_MODE`（`all`|`greedy`|`greedy2`、既定 `all`）、`JIEPP_PERF_RESULTS_DIR`（既定 `<build>/perftest/results`）、`JIEPP_PERF_CASES`（セミコロン区切りのケース名リストで対象を絞り込み、既定は空 = 全ケース。存在しないケース名を含むとエラー終了）。
 - TSV 形式: `build/<preset>/perftest/results/stats.<YYYYmmdd_HHMMSS>.tsv`。ヘッダは `case name`, `time_1 [ms]` … `time_N [ms]`, `min [ms]`, `median [ms]`, `mean [ms]`, `stdev [ms]`（小数点以下 3 桁）。
+- **実際の使い方に近いケース**: `boost_*` は Boost.Preprocessor のテスト入力を `{#syspath}` で読み込みます（`boost_library_load`: ライブラリ全体の読み込みと再インクルード、`boost_repeat`: `BOOST_PP_REPEAT` の入れ子、`boost_arithmetic`: `BOOST_PP_WHILE` を使う算術、`boost_seq_list`: 長いシーケンスとリスト、`boost_variadic_tuple`: 引数の多い可変長マクロ、`boost_local_iterate`: `{#if}` の連鎖による反復）。`skipped_directive_groups` はスキップされるグループ内の長いディレクティブ、`include_guard_repeat` はガード付きヘッダの繰り返しインクルードです。ボトルネックを探すときは、実行時間より再現性の高い命令数（Linux の `valgrind --tool=callgrind`）が便利です。
 - **ケースの追加**: `bench/cases/<name>/<name>.py` に `ns`（サイズのタプル）と `file(o, n)`（または `generate(testid, dirpath)`）を書きます。同じディレクトリにあるほかのファイル（`samefile.dat` など）は入力と一緒にコピーされ、直接は実行されません（拡張子 `.gxxx`・`.gtxt`・`.txt` のファイルは入力として実行されるので、付けないでください）。`perftest.py run` は jiepp の終了コードが 0 以外だと失敗します。固定で渡すのは展開の深さなどの上限だけで、`--max-include-count`（既定 10000）と `--error-limit`（既定 1000）は既定値のままです。インクルードの回数を上限より少なくし、エラーを出さない入力にしてください（抑制できるコードなら `{#ignore}` を使えます）。`perftest_smoke` は 2 ケースだけの自己診断なので、ケースを足しても変更は要りません。
 - 計測値は必ず Release プリセットで取得してください。Debug ビルドでも動作しますが `WARNING` が出力され、数値は代表値になりません。
 

@@ -1,10 +1,28 @@
 (*{#:0 'iec_61131-3/samples/generic_function.iec'}*)
 (* generic_function.iec - Generate type-parameterized functions using @@ and function macros *)
 (*{#:11 'iec_61131-3/samples/generic_function.iec'}*)
-function add_int: int 	var_input 		in1, in2: int; 	end_var 	add_int := in1 + in2; 	end_function;
-function add_dint: dint 	var_input 		in1, in2: dint; 	end_var 	add_dint := in1 + in2; 	end_function;
-function add_lreal: lreal 	var_input 		in1, in2: lreal; 	end_var 	add_lreal := in1 + in2; 	end_function;
+function add_int: int
+var_input
+	in1, in2: int;
+end_var
+add_int := in1 + in2;
+end_function;
+(*{#:12 'iec_61131-3/samples/generic_function.iec'}*)
+function add_dint: dint
+var_input
+	in1, in2: dint;
+end_var
+add_dint := in1 + in2;
+end_function;
+(*{#:13 'iec_61131-3/samples/generic_function.iec'}*)
+function add_lreal: lreal
+var_input
+	in1, in2: lreal;
+end_var
+add_lreal := in1 + in2;
+end_function;
 
+(*{#:15 'iec_61131-3/samples/generic_function.iec'}*)
 program Main
 var
 	i: int;

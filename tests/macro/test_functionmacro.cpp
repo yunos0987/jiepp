@@ -502,11 +502,21 @@ TEST_F(FuncMacroTest, ParamListExpectedParameterName) {
     expect_param_list_error("F('s') ok", reason);
     expect_param_list_error("F(%IX0.1) ok", reason);
     expect_param_list_error("F(${x$}) ok", reason);
-    expect_param_list_error("F(${#undef X$}) ok", reason);
     expect_param_list_error("F(@a) ok", reason);
     expect_param_list_error("F((a)) ok", reason);
     expect_param_list_error("F([a]) ok", reason);
     expect_param_list_error("F(\xE5\xA4\x89\xE6\x95\xB0) ok", reason);
+}
+
+// R1: a directive decoded from "${#...$}" in a parameter list is dropped
+// (PP23) before the list is parsed, so the list is "()" and F is defined.
+// (It used to be PP30 "expected parameter name" with F left undefined.)
+TEST_F(FuncMacroTest, ParamListDecodedDirectiveIsDropped) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("D", pp("{#define F(${#undef X$}) ok}{#ifdef F}D{#else}U{#endif}"));
+    auto msgs = messages();
+    ASSERT_EQ(1u, msgs.size());
+    EXPECT_EQ(Issue::Code::INVALID_PP_SYNTAX, PlainTextMessage::parse_code(msgs[0]));
 }
 
 // R3: the parameter list runs out of tokens before a closing ')'.
@@ -885,11 +895,13 @@ TEST_F(FuncMacroTest, GnuNamedVariadicMustBeLast) {
     expect_param_list_error("F(args. ..) x", "expected ',' or ')'");
 }
 
-// jiepp does not delete the comma before an omitted named variadic's
-// arguments (the GNU `, ## args` idiom) -- same deviation as for '...',
-// documented in SPECIFICATION.md.
-TEST_F(FuncMacroTest, GnuNamedVariadicCommaPasteKeepsComma) {
-    EXPECT_EQ(";g(x,);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x);"));
+// The GNU `, ## args` idiom works for a named variadic as for '...': the
+// comma is deleted when the arguments are omitted, kept when they are
+// present (even empty), and never pasted with them (gcc/clang).
+TEST_F(FuncMacroTest, GnuNamedVariadicCommaPaste) {
+    EXPECT_EQ(";g(x);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x);"));
+    EXPECT_EQ(";g(x, y);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x, y);"));
+    EXPECT_EQ(";g(x,);", pp("{#define LOG(fmt, args...) g(fmt, @@ args)};LOG(x,);"));
     EXPECT_TRUE(empty());
 }
 

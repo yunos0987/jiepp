@@ -269,7 +269,7 @@ TEST_F(HasBuiltinTest, MultiLineOperandKeepsLineNumbers) {
 }
 
 // The pattern that motivated the operator: detect a disabled __assert.
-TEST_F(HasBuiltinTest, RungstGuardPattern) {
+TEST_F(HasBuiltinTest, RungiecGuardPattern) {
     Issue::ContinueMode guard({});
     Env env = setup({{"__assert", ""}});
     auto msgs = messages();

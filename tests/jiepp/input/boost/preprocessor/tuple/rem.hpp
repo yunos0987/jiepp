@@ -34,7 +34,7 @@
 /*
   VC++8.0 cannot handle the variadic version of BOOST_PP_TUPLE_REM(size)
 */
-{# if \not\(BOOST_PP_VARIADICS_MSVC \and\ _MSC_VER <= 1400)}
+{# if !(BOOST_PP_VARIADICS_MSVC && _MSC_VER <= 1400)}
 {#    if BOOST_PP_VARIADICS_MSVC}
         /* To be used internally when the size could be 0 ( or 1 ) */
 {#       define BOOST_PP_TUPLE_REM_CAT(size) BOOST_PP_REM_CAT}

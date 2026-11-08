@@ -2,6 +2,8 @@
 
 #include "loader/lexer.hpp"
 
+#include <chrono>
+
 // ---- helpers ----
 
 static std::vector<Token> ts(const std::string& text, bool remove_comments = false) {
@@ -147,16 +149,15 @@ TEST_F(LexerLiteralTest, StringSequence2) {
 // ---- zombie WS/newline token regression (F1) ----
 
 TEST_F(LexerLiteralTest, StringLiteralNotFirstTokenLeavesNoZombie) {
-    // push_string_token() pops the trailing WS/newline run off `result`
-    // into a local buffer and re-appends it; before the fix, the popped
-    // slots were never actually removed from `result` (no resize/erase),
-    // so a moved-from-but-still-WS-typed "zombie" token (empty text, but
-    // a real, nonzero num_of_lines carried over from Token's defaulted
-    // move) survived in the vector ahead of the freshly re-appended copy.
-    // This only manifests when the string literal is NOT the first token
-    // in the stream (i.e. there is a real trailing-WS run to pop), which
-    // is why the pre-existing DollarNewlineContinuationCountsLines test
-    // (string literal as the sole/first input token) never caught it.
+    // Pins the token stream after a string literal that follows a WS/newline
+    // run: the run must appear exactly once, before the literal. History: the
+    // old push_string_token() popped the trailing WS run and re-appended it,
+    // but the popped slots were never removed from `result`, so a moved-from
+    // WS-typed "zombie" token (empty text, nonzero num_of_lines) stayed ahead
+    // of the re-appended copy. That only showed when the literal was NOT the
+    // first token, which DollarNewlineContinuationCountsLines (literal as the
+    // first input token) never caught. Since 79ab404 the merge is in place
+    // and WS tokens are never moved.
     const auto toks = ts("A;\n'x';");
     int ws_tokens_before_string = 0;
     int total_num_of_lines = 0;
@@ -217,3 +218,93 @@ TEST_F(LexerLiteralTest, StringSequence2Extended) {
     EXPECT_EQ("'ab' \"cd\"", pp("'ab' \"cd\""));
     EXPECT_TRUE(empty());
 }
+
+// ---- long chains of adjacent literals (linear-time merge) ----
+
+TEST_F(LexerLiteralTest, MergedChainKeepsTokensAndLineCounts) {
+    // Three pieces across spaces and newlines, the middle one spanning a
+    // $-escaped newline: one STRING token carrying the $-newline, then the
+    // whitespace run in its original order.
+    expect_tokens({make(Token::STRING, "'ab$\ncdef'", 1), make(Token::WS, " "),
+                   make(Token::WS, "\n", 1), make(Token::WS, " "),
+                   make(Token::WS, "\n\n", 2)},
+                  "'a' \n 'b$\ncd'\n\n'ef'");
+    // A WSTRING chain is not merged into a preceding STRING chain.
+    expect_tokens({make(Token::STRING, "'ab'"), make(Token::WS, " "),
+                   make(Token::WS, " "), make(Token::WSTRING, "\"cd\""),
+                   make(Token::WS, "\n", 1)},
+                  "'a' 'b' \"c\"\n\"d\"");
+    // A comment between two chains ends the first chain.
+    expect_tokens({make(Token::STRING, "'ab'"), make(Token::WS, " "),
+                   make(Token::C, "(*x*)"), make(Token::STRING, "'cd'"),
+                   make(Token::WS, " ")},
+                  "'a' 'b'(*x*)'c' 'd'");
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(LexerLiteralTest, MergedChainOfManyLiteralsMatchesExpectedText) {
+    // One STRING token with every piece in order, then each separator as
+    // its own WS token in the original order (a newline counts one line).
+    constexpr int kN = 1000;
+    std::string src;
+    std::string merged = "'";
+    std::vector<Token> ws;
+    for (int i = 0; i < kN; ++i) {
+        const std::string piece = std::to_string(i % 10);
+        src += "'" + piece + "'";
+        merged += piece;
+        if (i + 1 < kN) {
+            const bool nl = (i % 3 == 2);
+            src += nl ? "\n" : " ";
+            ws.push_back(nl ? make(Token::WS, "\n", 1) : make(Token::WS, " "));
+        }
+    }
+    merged += "'";
+    std::vector<Token> expected{make(Token::STRING, merged)};
+    expected.insert(expected.end(), ws.begin(), ws.end());
+    expect_tokens(expected, src);
+    EXPECT_TRUE(empty());
+}
+
+// ---- Release-only timing guard for the literal merge ----
+//
+// Release-only (like BoostPreprocessorIntegration): a Debug build is not
+// representative of real performance (see AGENTS.md). Before the merge was
+// made linear, every literal popped and re-pushed the whole whitespace run
+// after the merged literal, so n literals cost O(n^2) token moves: on the
+// base Release build this test measured 154 s (space-separated) and 146 s
+// (newline-separated) for n=40000. After the change each takes well under
+// 0.1 s, so EXPECT_LT(3.0) has a wide margin in both directions. The
+// token checks make sure the guard cannot pass by dropping tokens.
+#ifdef NDEBUG
+TEST_F(LexerLiteralTest, AdjacentLiteralMergeIsLinear_TimingGuard) {
+    static constexpr int kN = 40000;
+
+    auto check = [](const std::string& sep, int nl_per_sep) {
+        std::string src;
+        for (int i = 0; i < kN; ++i) {
+            if (i > 0) src += sep;
+            src += "'a'";
+        }
+        auto t0 = std::chrono::steady_clock::now();
+        const auto toks = ts(src);
+        auto t1 = std::chrono::steady_clock::now();
+        const double secs = std::chrono::duration<double>(t1 - t0).count();
+        EXPECT_LT(secs, 3.0) << "n=" << kN << " separator size " << sep.size()
+                             << " took " << secs << "s";
+        ASSERT_EQ(static_cast<std::size_t>(kN), toks.size());
+        EXPECT_EQ(Token::STRING, toks[0].type);
+        EXPECT_EQ(static_cast<std::size_t>(kN + 2), toks[0].text.size());
+        int ws_lines = 0;
+        for (std::size_t i = 1; i < toks.size(); ++i) {
+            EXPECT_EQ(Token::WS, toks[i].type);
+            ws_lines += toks[i].num_of_lines;
+        }
+        EXPECT_EQ((kN - 1) * nl_per_sep, ws_lines);
+    };
+
+    check(" ", 0);
+    check("\n", 1);
+    EXPECT_TRUE(empty());
+}
+#endif

@@ -32,6 +32,32 @@ TEST_F(PreprocessTest, Bom) {
     EXPECT_TRUE(empty());
 }
 
+// ---- lexer diagnostics start at the Env's own line ----
+
+TEST_F(PreprocessTest, LexerDiagnosticLineStartsAtEnvLineno) {
+    // A reused Env: each call's PP20 (unclosed comment, found by the lexer)
+    // is reported relative to that call's Env line, not always from line 1.
+    Issue::ContinueMode guard({});
+    auto env = setup();
+    env.set_lineno(7);
+    (void)pp("\n(* x", env);
+    auto first = messages();
+    ASSERT_EQ(1u, first.size());
+    EXPECT_THAT(first[0], ::testing::HasSubstr(":8.0: error: PP20"));
+
+    env.set_lineno(50);
+    (void)pp("\n(* x", env);
+    auto second = messages();
+    ASSERT_EQ(1u, second.size());
+    EXPECT_THAT(second[0], ::testing::HasSubstr(":51.0: error: PP20"));
+
+    // PP22 (a raw '{' inside a pragma) and PP23 use the same base.
+    env.set_lineno(20);
+    (void)pp("\n{ { a }", env);
+    for (const auto& m : messages())
+        EXPECT_THAT(m, ::testing::HasSubstr(":21.0:")) << m;
+}
+
 // ---- test_lexer_error ----
 
 TEST_F(PreprocessTest, LexerError) {
@@ -562,15 +588,164 @@ TEST_F(PreprocessTest, RewrittenPragmaRescanStillReportsRawBrace) {
 
 // Guard (design review H1): PP23 for an unclosed directive found by a
 // deeper re-lex is never suppressed. With PP22 ignored it is the only
-// error, so dropping it would turn the run into a success.
+// error, so dropping it would turn the run into a success. The re-lex of
+// the pragma body does not run the directive (R1): it drops it and reports
+// PP23 again, so Q stays undefined.
 TEST_F(PreprocessTest, UnclosedDirectiveInDeepRelexStillReportsPP23) {
     Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
     Issue::Ignoring ignoring({Issue::Code::INVALID_PRAGMA_SYNTAX});
     const std::string out = pp("{ { {#define Q 1 }\nQ\n");
-    EXPECT_NE(std::string::npos, out.find("\n1\n")) << out;
+    EXPECT_NE(std::string::npos, out.find("\nQ\n")) << out;
     EXPECT_EQ((std::vector<std::string>{
                   "PP23: Invalid preprocessor syntax; '{#define Q 1 '",
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1 }'",
               }),
               diag_tails(messages()));
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+// A directive written "${#...$}" in a pragma body is not a directive (the
+// source lexer pairs "${" as an escaped '{'), so the re-lex of the body must
+// not run it: Q stays undefined, the directive is dropped from the pragma
+// text, and PP23 is reported (the first PP23 is the source lexer's own, for
+// the unclosed directive it reads from the "$}" pair).
+TEST_F(PreprocessTest, EscapedDirectiveInBarePragmaBodyDoesNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("(*{$}*)\nQ\n", pp("{ ${#define Q 1$} }\nQ\n"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1$} '",
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1$} }'",
+              }),
+              diag_tails(messages()));
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+// With PP23 ignored, both reports (the lexer's and the drop's, same code) are
+// hidden by the user's request, but the directive is still not run.
+TEST_F(PreprocessTest, EscapedDirectiveInBarePragmaBodyIgnoredPP23StillDropped) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    Issue::Ignoring ignoring({Issue::Code::INVALID_PP_SYNTAX});
+    EXPECT_EQ("(*{$}*)\nQ\n", pp("{ ${#define Q 1$} }\nQ\n"));
+    EXPECT_TRUE(messages().empty());
+}
+
+// {#undef}, {#line} and {#include} are not run either.
+TEST_F(PreprocessTest, EscapedOtherDirectivesInBarePragmaBodyDoNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("\n(*{a $}*)\n5\n", pp("{#define Q 5}\n{ a ${#undef Q$} b }\nQ\n"));
+    EXPECT_EQ(2, Issue::error_count_);
+    EXPECT_EQ("(*{$}*)\n2\n", pp("{ ${#line 100$} }\n__LINE__\n")); // 100 if {#line} ran
+    EXPECT_EQ("(*{$}*)\nx\n", pp("{ ${#include \"no_such_file.h\"$} }\nx\n"));
+    for (const auto& m : messages())
+        EXPECT_EQ(std::string::npos, m.find("PP11")) << m;
+}
+
+// A pragma in a macro argument is expanded at the argument pre-expansion
+// and on every rescan; the directive does not run in any of them.
+TEST_F(PreprocessTest, EscapedDirectiveInPragmaInMacroArgumentDoesNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("\n(*{$}*)\nQ\n",
+              pp("{#define M(x) x}\nM({ ${#define Q 1$} })\nQ\n"));
+    EXPECT_EQ(2, Issue::error_count_);
+    EXPECT_EQ("\n(*{$}*)\nQ\n",
+              pp("{#define M(x) x}\nM(M({ ${#define Q 1$} }))\nQ\n"));
+}
+
+// A pragma in a macro replacement list.
+TEST_F(PreprocessTest, EscapedDirectiveInPragmaInMacroBodyDoesNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    // The replacement list is "{ ${#define Q 1$} }" ($24 = '$').
+    EXPECT_EQ("\n(*{$}*)\nQ\n", pp("{#define P ${ $24$7B#define Q 1$24$7D $}}\nP\nQ\n"));
+    EXPECT_EQ(2, Issue::error_count_);
+}
+
+// A nested pragma body: the directive does not run at any depth.
+TEST_F(PreprocessTest, EscapedDirectiveInNestedPragmaBodyDoesNotRun) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    // The outer body " ${ ${#define Q 1$} " re-lexes to '$' and the unclosed
+    // nested pragma "{ ${#define Q 1$} " (PP22); its body re-lexes to '$' and
+    // the unclosed directive "{#define Q 1$} " (PP23 from the lexer), which
+    // lex_operand() drops (PP23 again, with the '}' the lexer appended).
+    EXPECT_EQ("(*{$(*{$}*)}*)\nQ\n", pp("{ ${ ${#define Q 1$} }\nQ\n"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{ ${#define Q 1$} '",
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1$} '",
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1$} }'",
+              }),
+              diag_tails(messages()));
+}
+
+// The {#pragma ...} form never ran such a directive; it now reports the drop
+// like every other re-lexed text (R1).
+TEST_F(PreprocessTest, EscapedDirectiveInPragmaDirectiveIsReported) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("\nQ\n", pp("{#pragma x ${#define Q 1$}}\nQ\n"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1}'",
+              }),
+              diag_tails(messages()));
+}
+
+// A directive after an even number of '$' has a raw '{' in the pragma body:
+// PP22 from the source lex, PP23 from the source lex (unclosed), and the
+// re-lex drops it too (R1) instead of running it as before.
+TEST_F(PreprocessTest, DirectiveAfterEvenDollarsInPragmaBodyIsDropped) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("(*{$$}*)\nQ\n", pp("{ $${#define Q 1 }\nQ\n"));
+    EXPECT_EQ((std::vector<std::string>{
+                  "PP22: Invalid syntax for pragma; '{'",
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1 '",
+                  "PP23: Invalid preprocessor syntax; '{#define Q 1 }'",
+              }),
+              diag_tails(messages()));
+}
+
+// R1: text that jiepp re-lexes never forms a directive. A directive decoded
+// from "${#...$}" or "$7B#...$7D" in a directive operand is not run, not
+// output, and reported with PP23; the operand continues without it.
+TEST_F(PreprocessTest, DecodedDirectiveInOperandIsDropped) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    const char* ops[] = {"{#string ${#define Q 1$}} Q",
+                         "{#wstring ${#define Q 1$}} Q",
+                         "{## ${#define Q 1$}} Q",
+                         "{#token ${#define Q 1$}} Q",
+                         "{#string $7B#define Q 1$7D} Q",
+                         "{#if 0${#define Q 1$}}{#endif} Q",
+                         "{#warning ${#define Q 1$}} Q",
+                         "{#error ${#define Q 1$}} Q"};
+    for (const char* src : ops) {
+        SCOPED_TRACE(src);
+        const std::string out = pp(src);
+        EXPECT_NE(std::string::npos, out.rfind(" Q")) << out; // Q stays undefined
+        EXPECT_EQ(std::string::npos, out.find('1')) << out;
+        bool found = false;
+        for (const auto& m : messages())
+            if (m.find("PP23") != std::string::npos && m.find("{#define Q 1}") != std::string::npos)
+                found = true;
+        EXPECT_TRUE(found);
+    }
+}
+
+// R1 in a replacement list: the gap that let a directive run through macro
+// expansion. Z must stay undefined however R is used.
+TEST_F(PreprocessTest, DecodedDirectiveInReplacementListIsDropped) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    EXPECT_EQ("\n\n(*{a  b }*)\nZ\n", pp("{#define R ${#define Z 1$}}\n{#define M(x) x}\n{ a R b }\nZ\n"));
     EXPECT_EQ(1, Issue::error_count_);
+    EXPECT_EQ("\n\n \nZ\n", pp("{#define R ${#define Z 1$}}\n{#define M(x) x}\nR M(R)\nZ\n"));
+    EXPECT_EQ("\n''\nZ\n", pp("{#define R ${#define Z 1$}}\n{#string R}\nZ\n"));
+}
+
+// A -D value is re-lexed like a {#define} body.
+TEST_F(PreprocessTest, DecodedDirectiveInCommandLineDefineIsDropped) {
+    Issue::ContinueMode guard({Issue::Code::MAX_EXPANSION_DEPTH_EXCEEDED});
+    Env e = setup({{"R", "{#define Z 1}"}}, false);
+    EXPECT_EQ("a  b Z", pp("a R b Z", e));
+    EXPECT_EQ(1, Issue::error_count_);
+}
+
+// Guard: a directive written literally in a macro argument (not in a
+// pragma body) still runs.
+TEST_F(PreprocessTest, DirectiveInMacroArgumentStillRuns_Guard) {
+    EXPECT_EQ("\nx 1\n", pp("{#define M(x) x}\nM({#define Q 1} x) Q\n"));
 }

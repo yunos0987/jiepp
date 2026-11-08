@@ -351,11 +351,11 @@ TEST_F(SandboxDirectiveTest, AssertHasIncludeIsPP62AndPP52) {
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, cs[1]);
 }
 
-// The pre-scan for __has_include does not look inside the arguments of a
-// nested __assert, __error, __counter, __counter_peek or __counter_set that is
-// still the built-in: the inner call handles its own arguments (a message is
-// expanded only when it is reported, a counter name is checked as written).
-// Tests marked "guard" pass with and without that rule.
+// The arguments of a nested __assert, __error, __counter, __counter_peek or
+// __counter_set that is still the built-in are handled by the inner call (a
+// message is expanded only when it is reported and is not an expression, a
+// counter name is checked as written). Tests marked "guard" pinned the rule
+// of the former pre-scan.
 TEST_F(SandboxDirectiveTest, AssertNestedMessageHasIncludeIsNotPP62) {
     Issue::ContinueMode guard({});
     using C = Issue::Code;
@@ -381,7 +381,7 @@ TEST_F(SandboxDirectiveTest, AssertNestedMessageHasIncludeIsNotPP62) {
 }
 
 // The expression of a nested call is evaluated by that call, whose own
-// pre-scan reports the operator once, then the evaluator reports the call
+// expansion reports the operator once, then the evaluator reports the call
 // text that stays in the expression (as AssertHasIncludeIsPP62AndPP52).
 TEST_F(SandboxDirectiveTest, AssertNestedExpressionHasIncludeIsPP62Once) {
     Issue::ContinueMode guard({});
@@ -450,9 +450,11 @@ TEST_F(SandboxDirectiveTest, AssertBuiltinInsideHasIncludeCall) {
               run("__assert(__has_include('a' __error([__has_include('x')])), m);"));
 }
 
-// Only names written in the expression count: a call made by a macro is
-// ordinary text (guard), and a `defined` made by a macro does not protect the
-// name after it, which is skipped as a call.
+// The operator is read during the expansion (gcc/clang), so a built-in call
+// made by a macro behaves like one written in the expression: the message of
+// __error is not an expression, no PP62. A `defined` made by a macro takes
+// the name after it, and the operator in the parenthesized expression that
+// follows is reported.
 TEST_F(SandboxDirectiveTest, AssertMacroProducedBuiltinCall) {
     Issue::ContinueMode guard({});
     using C = Issue::Code;
@@ -460,19 +462,19 @@ TEST_F(SandboxDirectiveTest, AssertMacroProducedBuiltinCall) {
         pp(src);
         return codes();
     };
-    EXPECT_EQ((std::vector<C>{C::SANDBOX_RESTRICTED_DIRECTIVE, C::ERROR_MESSAGE}),
+    EXPECT_EQ((std::vector<C>{C::ERROR_MESSAGE}),
               run("{#define E __error}__assert(E([__has_include('x')]) 1, m);"));
-    EXPECT_EQ((std::vector<C>{C::INVALID_EXPRESSION}),
+    EXPECT_EQ((std::vector<C>{C::SANDBOX_RESTRICTED_DIRECTIVE, C::INVALID_EXPRESSION}),
               run("{#define D defined}__assert(D __error([__has_include('x')]), m);"));
 }
 
-// guard: the {#if} condition is resolved as text before lexing and is not
-// changed: an operator inside a nested call's argument is still reported.
-TEST_F(SandboxDirectiveTest, IfConditionNestedBuiltinStillPP62) {
+// The {#if} condition follows the same rule as __assert: an operator in the
+// message of a nested call is not a use.
+TEST_F(SandboxDirectiveTest, IfConditionNestedBuiltinMessageIsNotPP62) {
     Issue::ContinueMode guard({});
     using C = Issue::Code;
     EXPECT_EQ("A", pp("{#if __assert(1, __has_include('x')) 1}A{#endif}"));
-    EXPECT_EQ((std::vector<C>{C::SANDBOX_RESTRICTED_DIRECTIVE}), codes());
+    EXPECT_EQ((std::vector<C>{}), codes());
 }
 
 // __has_builtin(NAME) needs no filesystem access, so it is allowed; the

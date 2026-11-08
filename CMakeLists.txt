@@ -246,7 +246,20 @@ if(GTest_FOUND OR TARGET GTest::gtest)
         )
 
         include(GoogleTest)
-        gtest_discover_tests(jiepp_test)
+        # Wall-clock tests (gtest names ending in _TimingGuard, plus the
+        # explicitly named SmokeTest below) assert an elapsed-time limit, so
+        # they must not compete for CPU with other tests under `ctest -j N`.
+        # Test names are not known at configure time, so discover them in a
+        # second pass with TEST_FILTER and mark only that pass RUN_SERIAL;
+        # the first pass excludes the same set so no test is registered twice.
+        # Test names are unchanged (no TEST_PREFIX/TEST_SUFFIX).
+        set(_JIEPP_SERIAL_TEST_FILTER
+            "*_TimingGuard:SmokeTest.DefaultStepLimitStopsDoublingBombQuickly")
+        gtest_discover_tests(jiepp_test
+            TEST_FILTER "-${_JIEPP_SERIAL_TEST_FILTER}")
+        gtest_discover_tests(jiepp_test
+            TEST_FILTER "${_JIEPP_SERIAL_TEST_FILTER}"
+            PROPERTIES RUN_SERIAL TRUE)
 
         if(Python3_Interpreter_FOUND AND NOT JIEPP_SANDBOX)
             add_test(NAME perftest_smoke
