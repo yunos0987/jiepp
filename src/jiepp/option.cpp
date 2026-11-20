@@ -132,9 +132,11 @@ void display_help_and_exit(int exit_code = 0) {
         "  -D NAME[=VALUE]          Define macro\n"
         "  -U NAME                  Undefine macro (-D and -U apply in the order written)\n"
         "  -I PATH                  Add syspath\n"
+        "  -isystem PATH            Add a system directory (searched after -I; -MM/-MMD leave out\n"
+        "                           what is found there or included from there)\n"
         "  -include FILE            Force-include file before input\n"
-        "                           (-oPATH, -DNAME, -UNAME, -IPATH, -includeFILE, -MFFILE,\n"
-        "                           -MTTARGET and -MQTARGET also take the value glued on)\n"
+        "                           (-oPATH, -DNAME, -UNAME, -IPATH, -isystemPATH, -includeFILE,\n"
+        "                           -MFFILE, -MTTARGET and -MQTARGET also take the value glued on)\n"
         "  -w                       Suppress warnings\n"
         "  -Werror                  Promote warnings to errors (-Wno-error: cancel)\n"
         "  -W<name>                 Enable warning <name> (only PP54 is off by default)\n"
@@ -145,9 +147,9 @@ void display_help_and_exit(int exit_code = 0) {
         "                           for the same <name> the last option wins\n"
         "  -Wundef                  Warn when an undefined identifier in a condition evaluates to 0\n"
         "  -M                       Output Makefile dependency rules\n"
-        "  -MM                      Like -M but exclude system includes\n"
+        "  -MM                      Like -M but exclude system headers (-isystem)\n"
         "  -MD                      Write dependency rules to .d file (keep normal output)\n"
-        "  -MMD                     Like -MD but exclude system includes\n"
+        "  -MMD                     Like -MD but exclude system headers (-isystem)\n"
         "  -MF FILE                 Write dependency rules to file (- = stdout)\n"
         "  -MT TARGET               Set dependency target name (may be repeated)\n"
         "  -MQ TARGET               Like -MT, but Make-escape TARGET\n"
@@ -304,6 +306,17 @@ JieppOptions parse_args(int argc, char* argv[]) {
 
         if (arg.size() >= 2 && arg.compare(0, 2, "-I") == 0) {
             opts.syspaths.push_back(arg.substr(2));
+            ++i; continue;
+        }
+
+        if (arg == "-isystem") {
+            require_value(i, argc, "-isystem");
+            opts.system_paths.push_back(argv[++i]);
+            ++i; continue;
+        }
+
+        if (arg.size() > 8 && arg.starts_with("-isystem")) {
+            opts.system_paths.push_back(arg.substr(8));
             ++i; continue;
         }
 

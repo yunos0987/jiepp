@@ -1594,7 +1594,8 @@ std::vector<Token>& expand(const std::string& filepath,
                            Loader::LoadType load_type,
                            std::vector<Token>& ots,
                            Env& env,
-                           const std::optional<std::string>& shown_as)
+                           const std::optional<std::string>& shown_as,
+                           bool main_input)
 {
     // An empty path names no file, whatever directory it would be joined
     // onto: a plain, non-aborting error (gcc/clang "empty filename"; the
@@ -1605,8 +1606,10 @@ std::vector<Token>& expand(const std::string& filepath,
         return ots;
     }
     bool found_directory = false;
+    bool in_system_dir = false;
     std::string found_as;
-    std::string fullpath = Loader::fullpath(filepath, load_type, env, &found_directory, &found_as);
+    std::string fullpath = Loader::fullpath(filepath, load_type, env, &found_directory, &found_as,
+                                            &in_system_dir);
     if (fullpath.empty()) {
         if (found_directory)
             ISSUE(INCLUDE_TARGET_IS_DIRECTORY, filepath);
@@ -1615,13 +1618,10 @@ std::vector<Token>& expand(const std::string& filepath,
         return ots;
     }
 
-    // {#pragma once}: skip this file if it was already processed
-    if (env.is_pragma_once_seen(fullpath)) return ots;
-
-    if (env.num_of_files() >= env.get_max_include_depth()) {
-        ISSUE(MAX_INCLUDE_DEPTH_EXCEEDED, filepath);
-        return ots;
-    }
+    // A system header is one found under an -isystem directory or included
+    // from a system header, wherever it is found (gcc/clang; how the operand
+    // is written does not matter). The main input never is one.
+    const bool system = !main_input && (in_system_dir || env.current_file_is_system());
 
     // The file's name in line markers, __FILE__, diagnostics and the
     // dependency output is the path it was reached by (found_as), like
@@ -1631,15 +1631,30 @@ std::vector<Token>& expand(const std::string& filepath,
     // not. A caller may name the file itself (shown_as: --disppath for
     // the main input); what the file includes is still based on found_as,
     // where the file really is.
+    // Recorded before the {#pragma once} check, so an include that is
+    // skipped still counts: a header first read from a system header is
+    // listed by -MM when a later, skipped include of it is not from one
+    // (clang; gcc lists a file only if its first include is not).
+    // Recorded once per file and system-ness (FileContext::add_dependency),
+    // so a repeated include costs one lookup; the main input always gets its
+    // own entry (the CLI finds it by index, even if -include read it first).
     const std::string& disppath = shown_as ? *shown_as : found_as;
-    env.add_dependency(fullpath, shown_as ? *shown_as : Util::dependency_path(found_as),
-                       load_type == Loader::LoadType::SINCLUDE);
+    if (env.records_dependencies() && (main_input || !env.has_dependency(fullpath, system)))
+        env.add_dependency(fullpath, shown_as ? *shown_as : Util::dependency_path(found_as), system);
+
+    // {#pragma once}: skip this file if it was already processed
+    if (env.is_pragma_once_seen(fullpath)) return ots;
+
+    if (env.num_of_files() >= env.get_max_include_depth()) {
+        ISSUE(MAX_INCLUDE_DEPTH_EXCEEDED, filepath);
+        return ots;
+    }
 
     // item f: RAII-guarded, so an exception raised while processing this
     // file (or a file it includes) still pops both stacks correctly.
     // Declaration order matters: file_guard is constructed (pushed) first
     // and destructed (popped) last, matching the pre-RAII manual pairing.
-    FileContext::FileScope file_guard(env, fullpath, /*from_disk=*/true, found_as);
+    FileContext::FileScope file_guard(env, fullpath, /*from_disk=*/true, found_as, system);
     Issue::LineGuard line_guard(1, disppath);
 
     ots.push_back(Token::line_pragma(0, disppath, env.is_standard_pragma_style()));

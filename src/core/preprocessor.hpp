@@ -38,12 +38,15 @@ std::vector<Token>& expand(const std::vector<Token>& its,
 // tokens into ots. The file is named, in its line marker, __FILE__,
 // diagnostics and the dependency output, by the path it was reached by
 // (Util::reached_path()); shown_as names it differently (the CLI's
-// --disppath for the main input).
+// --disppath for the main input). A file found under an -isystem directory
+// (Env::add_system_path()) or included from such a file is a system header,
+// left out of -MM/-MMD; main_input (the CLI's main input file) never is one.
 std::vector<Token>& expand(const std::string& filepath,
                            Loader::LoadType load_type,
                            std::vector<Token>& ots,
                            Env& env,
-                           const std::optional<std::string>& shown_as = std::nullopt);
+                           const std::optional<std::string>& shown_as = std::nullopt,
+                           bool main_input = false);
 
 void preprocess(std::istream& input, std::ostream& output, Env& env);
 

@@ -44,7 +44,8 @@ struct JieppOptions {
     std::optional<std::string> output_filepath;
     std::vector<MacroOption> macro_options;   // -D / -U, in command-line order
     std::vector<std::string> include_filepaths;   // -include: files to force-include
-    std::vector<std::string> syspaths;
+    std::vector<std::string> syspaths;        // -I
+    std::vector<std::string> system_paths;    // -isystem: searched after -I; left out by -MM/-MMD
     std::optional<int> max_include_depth;
     std::optional<int> max_expansion_depth;
     std::optional<int> max_expansion_steps;   // --max-expansion-steps: 0 = no limit

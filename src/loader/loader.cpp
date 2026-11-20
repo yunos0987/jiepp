@@ -51,7 +51,10 @@ bool try_resolve(const fs::path& candidate, bool* found_directory, std::string& 
 } // namespace
 
 std::string Loader::fullpath(const std::string& filepath, LoadType load_type, Env& env,
-                              bool* found_directory, std::string* reached_path) {
+                              bool* found_directory, std::string* reached_path,
+                              bool* in_system_dir) {
+    if (in_system_dir)
+        *in_system_dir = false;
     // A9: defense in depth. The filesystem calls below take C strings, so a
     // NUL would silently shorten the path; no file has a NUL in its name.
     // {#include} / {#syspath} reject such a path with PP47 before this, and
@@ -82,11 +85,25 @@ std::string Loader::fullpath(const std::string& filepath, LoadType load_type, En
                     return found_under("");
             }
         }
+        // -I / {#syspath}, then -isystem (gcc/clang). A directory that is
+        // both is searched only at its -isystem position.
         const auto& syspaths = env.syspaths();
+        const auto& shadowed = env.syspath_shadowed();
         for (std::size_t i = 0; i < syspaths.size(); ++i) {
+            if (shadowed[i])
+                continue;
             fs::path candidate = fs::path(syspaths[i]) / filepath;
             if (try_resolve(candidate, found_directory, out, env))
                 return found_under(env.syspath_reached_paths()[i]);
+        }
+        const auto& system_paths = env.system_paths();
+        for (std::size_t i = 0; i < system_paths.size(); ++i) {
+            fs::path candidate = fs::path(system_paths[i]) / filepath;
+            if (try_resolve(candidate, found_directory, out, env)) {
+                if (in_system_dir)
+                    *in_system_dir = true;
+                return found_under(env.system_path_reached_paths()[i]);
+            }
         }
     }
     return "";

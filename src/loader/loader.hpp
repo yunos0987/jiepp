@@ -22,9 +22,15 @@ public:
     // the including file's reached-by directory or under the system path
     // that held it, i.e. the name that opens it from the working
     // directory.
+    // The directories searched are, for INCLUDE, the including file's own
+    // (the working directory when there is none), then for both types the
+    // -I / {#syspath} directories, then the -isystem ones. If in_system_dir
+    // is non-null, it is set to whether the file was found under an
+    // -isystem directory.
     static std::string fullpath(const std::string& filepath, LoadType load_type, Env& env,
                                  bool* found_directory = nullptr,
-                                 std::string* reached_path = nullptr);
+                                 std::string* reached_path = nullptr,
+                                 bool* in_system_dir = nullptr);
 
     // Load tokens from file (with caching and comment stripping per env settings).
     // On a cache hit with comment removal off, the returned pointer aliases the

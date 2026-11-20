@@ -1357,8 +1357,9 @@ TEST_F(JieppCommandTest, MDWithMFOverridesDepFile) {
         << "-MF should not affect target name, got: " << dep_content;
 }
 
-TEST_F(JieppCommandTest, MMDExcludesSyspaths) {
-    // -MMD: system include (syspath) deps should NOT appear in the .d file.
+TEST_F(JieppCommandTest, MMDExcludesIsystemHeaders) {
+    // -MMD: a header found under an -isystem directory does NOT appear in the
+    // .d file (gcc/clang). Until -isystem was added, this test used -I.
     fs::current_path(jiepp_root_dir());
     auto tmpdir = fs::temp_directory_path();
 
@@ -1391,7 +1392,7 @@ TEST_F(JieppCommandTest, MMDExcludesSyspaths) {
     opts.output_filepath = output.generic_string();
     opts.MMD = true;
     opts.dep_mode = DepMode::USER;
-    opts.syspaths = {sysdir.generic_string()};
+    opts.system_paths = {sysdir.generic_string()};
     opts.no_line_markers = true;
 
     ASSERT_EQ(0, jiepp_command(opts));
@@ -1400,7 +1401,7 @@ TEST_F(JieppCommandTest, MMDExcludesSyspaths) {
     std::ifstream df(dep_out, std::ios::binary);
     std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
     EXPECT_NE(std::string::npos, dcontent.find("mmd_user.iec")) << "user dep missing";
-    EXPECT_EQ(std::string::npos, dcontent.find("syshdr.iec"))   << "-MMD included syspath dep";
+    EXPECT_EQ(std::string::npos, dcontent.find("syshdr.iec"))   << "-MMD included -isystem dep";
 }
 
 TEST_F(JieppCommandTest, MDDefaultFalse) {
@@ -1484,19 +1485,21 @@ TEST_F(JieppCommandTest, DepMPAddsEmptyRulePerHeader) {
 }
 
 TEST_F(JieppCommandTest, DepMMExcludesSystemHeadersInEveryOperandForm) {
-    // -MM leaves out every header found through a system path, whichever
-    // operand form names it ('...', "..." or <...>, {#sinclude} or
-    // {#include <...>}); -M lists them, each once, under the system path.
+    // -MM leaves out every header found under an -isystem directory,
+    // whichever operand form names it ('...', "..." or <...>, {#include},
+    // {#sinclude} or {#include <...>}); -M lists them, each once, under the
+    // -isystem path (gcc/clang: `#include "a.h"` found there is left out too).
     MpTree t;
     fs::create_directories(t.dir / "sys");
     t.write("sys/s1.iec", "1\n");
     t.write("sys/s2.iec", "2\n");
     t.write("sys/s3.iec", "3\n");
+    t.write("sys/s4.iec", "4\n");
     t.write("mm_main.iec", "{#include 'mp_a.iec'}{#sinclude 's1.iec'}{#sinclude \"s2.iec\"}"
-                           "{#include <s3.iec>}{#sinclude <s1.iec>}m\n");
+                           "{#include <s3.iec>}{#sinclude <s1.iec>}{#include 's4.iec'}m\n");
     JieppOptions opts;
     opts.input_filepaths = {"mm_main.iec"};
-    opts.syspaths = {"sys"};
+    opts.system_paths = {"sys"};
     opts.dep_mode = DepMode::USER;
     opts.dep_file = "mm.d";
     ASSERT_EQ(0, jiepp_command(opts));
@@ -1506,8 +1509,245 @@ TEST_F(JieppCommandTest, DepMMExcludesSystemHeadersInEveryOperandForm) {
     opts.dep_file = "m.d";
     ASSERT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("mm_main.output: \\\n  mm_main.iec \\\n  mp_a.iec \\\n  sys/s1.iec \\\n"
-              "  sys/s2.iec \\\n  sys/s3.iec\n",
+              "  sys/s2.iec \\\n  sys/s3.iec \\\n  sys/s4.iec\n",
               t.read("m.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, DepMMListsHeadersFoundUnderIAndSyspath) {
+    // -I and {#syspath} directories are not system directories: -MM lists
+    // what is found there, even when written <...> or with {#sinclude}
+    // (gcc/clang: `#include <a.h>` found through -I is listed). Before
+    // -isystem, -MM left out every <...> and {#sinclude} include.
+    MpTree t;
+    fs::create_directories(t.dir / "inc");
+    fs::create_directories(t.dir / "lib");
+    t.write("inc/a.iec", "a\n");
+    t.write("lib/b.iec", "b\n");
+    t.write("mm_main.iec", "{#syspath 'lib'}{#include <a.iec>}{#sinclude 'b.iec'}m\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"mm_main.iec"};
+    opts.syspaths = {"inc"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "mm.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mm_main.output: \\\n  mm_main.iec \\\n  inc/a.iec \\\n  lib/b.iec\n", t.read("mm.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, DepMMSystemHeaderRules) {
+    // Measured with clang 22.1 and gcc 13.3 (-MM, the same files, `#include`
+    // for {#include}); every case below gives the same prerequisites there.
+    MpTree t;
+    fs::create_directories(t.dir / "sys");
+    fs::create_directories(t.dir / "inc");
+    auto mm = [&](JieppOptions opts, const std::string& main) {
+        opts.input_filepaths = {main};
+        opts.dep_mode = DepMode::USER;
+        opts.dep_file = "mm.d";
+        EXPECT_EQ(0, jiepp_command(opts)) << main;
+        return t.read("mm.d");
+    };
+    JieppOptions both;
+    both.syspaths = {"inc"};
+    both.system_paths = {"sys"};
+
+    // A header included from a system header is a system header too,
+    // whether it is found next to it ("t") or through -I (<u>).
+    t.write("sys/s.iec", "{#include 't.iec'}{#include <u.iec>}\n");
+    t.write("sys/t.iec", "T\n");
+    t.write("inc/u.iec", "U\n");
+    t.write("m1.iec", "{#include <s.iec>}\n");
+    EXPECT_EQ("m1.output: \\\n  m1.iec\n", mm(both, "m1.iec"));
+
+    // ... but an include of the same file from a user file is listed, also
+    // after one from a system header, and also when {#pragma once} skips it
+    // (clang; gcc lists it only when its first include is a user one).
+    t.write("m2.iec", "{#include <s.iec>}{#include <u.iec>}\n");
+    EXPECT_EQ("m2.output: \\\n  m2.iec \\\n  inc/u.iec\n", mm(both, "m2.iec"));
+    t.write("inc/u.iec", "{#pragma once}U\n");
+    EXPECT_EQ("m2.output: \\\n  m2.iec \\\n  inc/u.iec\n", mm(both, "m2.iec"));
+
+    // A header found in the including user file's own directory is a user
+    // header, even when that directory is also an -isystem one.
+    t.write("a.iec", "A\n");
+    t.write("b.iec", "B\n");
+    t.write("m3.iec", "{#include 'a.iec'}{#include <b.iec>}\n");
+    JieppOptions dot;
+    dot.system_paths = {"."};
+    EXPECT_EQ("m3.output: \\\n  m3.iec \\\n  a.iec\n", mm(dot, "m3.iec"));
+
+    // A directory given to both -I and -isystem is a system directory,
+    // whichever comes first and however it is spelled.
+    t.write("inc/c.iec", "C\n");
+    t.write("m4.iec", "{#include <c.iec>}\n");
+    const std::vector<std::pair<std::string, std::string>> spellings = {
+        {"inc", "inc"}, {"./inc", "inc"}, {"inc/", "inc"}, {"inc", "./inc"}};
+    for (const auto& [i, s] : spellings) {
+        JieppOptions o;
+        o.syspaths = {i};
+        o.system_paths = {s};
+        EXPECT_EQ("m4.output: \\\n  m4.iec\n", mm(o, "m4.iec")) << i;
+    }
+    // A {#syspath} naming an -isystem directory is the same.
+    t.write("m5.iec", "{#syspath 'inc'}{#include <c.iec>}\n");
+    JieppOptions isys_inc;
+    isys_inc.system_paths = {"inc"};
+    EXPECT_EQ("m5.output: \\\n  m5.iec\n", mm(isys_inc, "m5.iec"));
+
+    // A -include file found under -isystem is a system header; the main
+    // input never is one.
+    t.write("sys/p.iec", "P\n");
+    t.write("m6.iec", "M\n");
+    JieppOptions pre = both;
+    pre.include_filepaths = {"p.iec"};
+    EXPECT_EQ("m6.output: \\\n  m6.iec\n", mm(pre, "m6.iec"));
+    t.write("sys/m7.iec", "M\n");
+    EXPECT_EQ("m7.output: \\\n  sys/m7.iec\n", mm(both, "m7.iec"));
+
+    // -MP: the empty rules leave out the same headers.
+    t.write("q.iec", "Q\n");
+    t.write("m8.iec", "{#include <s.iec>}{#include 'q.iec'}\n");
+    JieppOptions mp = both;
+    mp.MP = true;
+    EXPECT_EQ("m8.output: \\\n  m8.iec \\\n  q.iec\nq.iec:\n", mm(mp, "m8.iec"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, DepMMUserSystemUserNesting) {
+    // A user header includes a system header, which includes a header found
+    // through -I ("v") and one the main input includes later (<w>). Measured
+    // with -MM -MP: clang 22.1 lists main.c u.h inc/w.h (w is listed for the
+    // main input's own include); gcc 13.3 lists main.c u.h. jiepp follows
+    // clang.
+    MpTree t;
+    fs::create_directories(t.dir / "sys");
+    fs::create_directories(t.dir / "inc");
+    t.write("n_main.iec", "{#include 'u.iec'}{#include <w.iec>}\n");
+    t.write("u.iec", "{#include <s.iec>}\n");
+    t.write("sys/s.iec", "{#include 'v.iec'}{#include <w.iec>}\n");
+    t.write("inc/v.iec", "V\n");
+    t.write("inc/w.iec", "W\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"n_main.iec"};
+    opts.syspaths = {"inc"};
+    opts.system_paths = {"sys"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "n.d";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("n_main.output: \\\n  n_main.iec \\\n  u.iec \\\n  inc/w.iec\nu.iec:\ninc/w.iec:\n", t.read("n.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, IsystemSameDirectoryByIdentity) {
+    // The same directory spelled so that the text differs (another letter
+    // case on Windows, a symbolic link elsewhere) is still one directory: the
+    // -I entry is dropped and the file is a system header (clang 22.1 and gcc
+    // 13.3 give main.c only for -MM -IINC -isystem inc).
+    MpTree t;
+    fs::create_directories(t.dir / "inc");
+    t.write("inc/c.iec", "C\n");
+    t.write("id_main.iec", "{#include <c.iec>}\n");
+#ifdef _WIN32
+    const std::string other = "INC";
+#else
+    const std::string other = "inc_link";
+    std::error_code ec;
+    fs::create_directory_symlink("inc", t.dir / other, ec);
+    ASSERT_FALSE(ec) << ec.message();
+#endif
+    JieppOptions opts;
+    opts.input_filepaths = {"id_main.iec"};
+    opts.syspaths = {other};
+    opts.system_paths = {"inc"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "id.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("id_main.output: \\\n  id_main.iec\n", t.read("id.d"));
+    // The other way round: -isystem names it with the other spelling.
+    opts.syspaths = {"inc"};
+    opts.system_paths = {other};
+    opts.dep_file = "id2.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("id_main.output: \\\n  id_main.iec\n", t.read("id2.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, EmptyIAndIsystemAreIgnored) {
+    // -I '' and -isystem '' name no directory (gcc/clang ignore them without
+    // a diagnostic): <b.iec> in the working directory is not found.
+    MpTree t;
+    t.write("b.iec", "B\n");
+    t.write("e_main.iec", "{#include <b.iec>}\n");
+    for (int k = 0; k < 2; ++k) {
+        JieppOptions opts;
+        opts.input_filepaths = {"e_main.iec"};
+        opts.output_filepath = "e.piec";
+        (k == 0 ? opts.syspaths : opts.system_paths) = {""};
+        EXPECT_NE(0, jiepp_command(opts)) << k;
+        EXPECT_EQ(Issue::Code::FILE_NOT_FOUND, code()) << k;
+    }
+    // An empty value next to a real one leaves the real one in place.
+    fs::create_directories(t.dir / "inc");
+    t.write("inc/b.iec", "IB\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"e_main.iec"};
+    opts.output_filepath = "e.piec";
+    opts.no_line_markers = true;
+    opts.syspaths = {"", "inc"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("IB\n", t.read("e.piec"));
+}
+
+TEST_F(JieppCommandTest, RepeatedIncludesAddOneDependencyEach) {
+    // Each (file, system header or not) pair is recorded once, also when
+    // {#pragma once} or a guard skips or re-reads it; -M still lists the
+    // first name.
+    MpTree t;
+    t.write("once.iec", "{#pragma once}O\n");
+    t.write("guard.iec", "{#ifndef G}{#define G}G{#endif}\n");
+    t.write("r_main.iec", "{#include 'once.iec'}{#include 'once.iec'}{#include './once.iec'}"
+                          "{#include 'guard.iec'}{#include 'guard.iec'}\n");
+    Env env = setup();
+    std::vector<Token> ots;
+    expand((t.dir / "r_main.iec").generic_string(), Loader::LoadType::INCLUDE, ots, env);
+    ASSERT_EQ(3u, env.dependencies().size());
+    EXPECT_FALSE(env.dependencies()[1].is_system);
+    EXPECT_NE(std::string::npos, env.dependencies()[1].display_path.find("once.iec"));
+    EXPECT_EQ(std::string::npos, env.dependencies()[1].display_path.find("./once.iec"));
+    EXPECT_NE(std::string::npos, env.dependencies()[2].display_path.find("guard.iec"));
+}
+
+TEST_F(JieppCommandTest, IsystemSearchOrderAndNames) {
+    // -isystem directories are searched after every -I directory, whatever
+    // the order written; a directory also given to -I moves to its -isystem
+    // position. A file found there is named under the path as given, like
+    // -I (line markers, __FILE__). clang 22.1 and gcc 13.3 give I1 for both.
+    MpTree t;
+    fs::create_directories(t.dir / "s1");
+    fs::create_directories(t.dir / "i1");
+    t.write("s1/a.iec", "S1 __FILE__\n");
+    t.write("i1/a.iec", "I1 __FILE__\n");
+    t.write("o.iec", "{#include <a.iec>}\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"o.iec"};
+    opts.output_filepath = "o.piec";
+    opts.no_line_markers = true;
+    opts.system_paths = {"s1"};
+    opts.syspaths = {"i1"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("I1 'i1/a.iec'\n", t.read("o.piec"));
+    opts.syspaths = {"s1", "i1"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("I1 'i1/a.iec'\n", t.read("o.piec"));
+    opts.syspaths = {};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("S1 's1/a.iec'\n", t.read("o.piec"));
+    t.write("h.iec", "{#if __has_include(<a.iec>)}yes{#endif}\n");
+    opts.input_filepaths = {"h.iec"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("yes\n", t.read("o.piec"));
     EXPECT_TRUE(messages().empty());
 }
 

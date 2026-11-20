@@ -89,6 +89,28 @@ TEST_F(OptionTest, ParseArgsISeparate) {
     EXPECT_EQ(opts.syspaths[0], "/lib");
 }
 
+TEST_F(OptionTest, ParseArgsIsystem) {
+    // -isystem DIR and -isystemDIR (gcc/clang), kept apart from -I and in
+    // the order written.
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("-isystem"), const_cast<char*>("s1"),
+                    const_cast<char*>("-Ii1"), const_cast<char*>("-isystems2")};
+    auto opts = parse_args(5, argv);
+    ASSERT_EQ(opts.system_paths.size(), 2u);
+    EXPECT_EQ(opts.system_paths[0], "s1");
+    EXPECT_EQ(opts.system_paths[1], "s2");
+    ASSERT_EQ(opts.syspaths.size(), 1u);
+    EXPECT_EQ(opts.syspaths[0], "i1");
+}
+
+TEST_F(OptionTest, ParseArgsIsystemMissingValueIsError) {
+    // A trailing -isystem: PP72, like -I (gcc/clang also reject it).
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("t.iec"),
+                    const_cast<char*>("-isystem")};
+    EXPECT_THROW(parse_args(3, argv), Issue::Exception);
+    EXPECT_EQ(Issue::Code::MISSING_OPTION_VALUE, code());
+}
+
 TEST_F(OptionTest, ParseArgsOutputOption) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("-o"), const_cast<char*>("out.iec")};

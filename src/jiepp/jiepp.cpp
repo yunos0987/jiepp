@@ -109,7 +109,9 @@ void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostr
     const std::string main_resolved = has_main ? all[main_index].resolved_path : std::string();
 
     auto add = [&](const FileContext::Dependency& dep) {
-        // Skip system includes if -MM mode
+        // -MM: skip an include of a system header (found under -isystem or
+        // included from one). The same file included again from elsewhere
+        // is listed there (clang).
         if (dep_mode == DepMode::USER && dep.is_system)
             return;
         // Deduplicate by resolved_path (only add first occurrence of each resolved path)
@@ -405,8 +407,17 @@ int jiepp_command(const JieppOptions& opts)
         if (opts.pp_output_pragma_style)
             env.fix_pragma_style(*opts.pp_output_pragma_style);
 
+        // Dependencies are recorded only when they are written.
+        env.set_record_dependencies(opts.dep_mode != DepMode::NONE);
+
+        // An empty -I / -isystem value names no directory and is ignored
+        // without a diagnostic (gcc/clang); it is not the working directory.
         for (const auto& sp : opts.syspaths)
-            env.add_syspath(sp);
+            if (!sp.empty())
+                env.add_syspath(sp);
+        for (const auto& sp : opts.system_paths)
+            if (!sp.empty())
+                env.add_system_path(sp);
 
         // G: -MD/-MMD auto-derive dep file if not explicitly set by -MF,
         // matching the gcc *driver*'s own rule (gcc manual: "If [-o] is
@@ -526,7 +537,8 @@ int jiepp_command(const JieppOptions& opts)
                     // file is found under a system path.
                     expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env,
                            opts.disppath.has_value() ? std::optional<std::string>(dispath)
-                                                     : std::nullopt);
+                                                     : std::nullopt,
+                           /*main_input=*/true);
                 }
             } catch (const Issue::Exception&) {
                 // E4a: a code in jiepp_continue_abort_codes() (or SEVERE)
