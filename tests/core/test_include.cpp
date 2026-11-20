@@ -287,7 +287,14 @@ TEST_F(IncludeTest, CircularInclude) {
     Env env = setup();
     env.set_max_include_depth(8);
     EXPECT_THROW(pp_file(DIR / "circular_a.iec", env), Issue::Exception);
-    EXPECT_EQ("tests/core/test_include/circular_b.iec:1.0: error: PP12: Maximum include depth exceeded; 'circular_a.iec'", message());
+    // The PP12 is in the 8th file, so it follows the 7 include points of
+    // its include stack (SPEC 16), outermost first: a, b, a, ... line 1.
+    std::vector<std::string> expected;
+    for (int k = 0; k < 7; ++k)
+        expected.push_back(std::string("In file included from tests/core/test_include/circular_") +
+                           (k % 2 == 0 ? "a" : "b") + ".iec:1:");
+    expected.push_back("tests/core/test_include/circular_b.iec:1.0: error: PP12: Maximum include depth exceeded; 'circular_a.iec'");
+    EXPECT_EQ(expected, messages());
     EXPECT_TRUE(empty());
 }
 

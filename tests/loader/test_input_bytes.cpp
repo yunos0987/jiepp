@@ -297,12 +297,15 @@ TEST_F(InputBytesTest, IncludesCounted) {
     env.set_max_input_bytes(total - 1);
     EXPECT_EQ(Issue::Code::MAX_INPUT_BYTES_EXCEEDED, run_main(main, env));
     auto lines = messages();
-    ASSERT_EQ(1u, lines.size());
+    ASSERT_EQ(2u, lines.size());
+    // a.inc is in the file it is reported in, so its include point comes
+    // first (SPEC 16).
+    EXPECT_EQ("In file included from " + main.generic_string() + ":1:", lines[0]);
     // a.inc is shown under the directory of the main input, which is given
     // by an absolute path here.
     EXPECT_NE(std::string::npos,
-              lines[0].find("/a.inc:1.0: error: PP67: Maximum input size exceeded; 'limit " +
-                            std::to_string(total - 1) + " bytes;")) << lines[0];
+              lines[1].find("/a.inc:1.0: error: PP67: Maximum input size exceeded; 'limit " +
+                            std::to_string(total - 1) + " bytes;")) << lines[1];
 }
 
 TEST_F(InputBytesTest, RepeatedIncludeCountedOnce) {

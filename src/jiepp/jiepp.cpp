@@ -319,6 +319,8 @@ int jiepp_command(const JieppOptions& opts)
             Issue::suppress_warnings_ = true;
         if (opts.werror)
             Issue::werror_ = true;
+        if (opts.no_include_stack)
+            Issue::show_include_stack_ = false;
         // --error-limit: the CLI's default (1000, or 100 in a sandbox build)
         // applies when the option is absent; the library's default is 0.
         Issue::error_limit_ = opts.error_limit.value_or(DEFAULT_ERROR_LIMIT);
@@ -487,7 +489,10 @@ int jiepp_command(const JieppOptions& opts)
                 // what it includes; gcc/clang).
                 env.set_include_level_base(1);
                 for (const auto& include_filepath : opts.include_filepaths) {
-                    expand(include_filepath, Loader::LoadType::INCLUDE, ots, env);
+                    // Included from the command line (SPEC 16).
+                    expand(include_filepath, Loader::LoadType::INCLUDE, ots, env, std::nullopt,
+                           /*main_input=*/false,
+                           Issue::IncludeOrigin{Issue::IncludeOrigin::Kind::command_line, 0});
                 }
                 env.set_include_level_base(0);
 

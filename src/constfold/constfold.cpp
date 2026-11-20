@@ -23,8 +23,18 @@ extern bool cf_prev_token_ends_operand;
 // MISSING_EXPRESSION, so a case like "1 x" (a complete operand followed by
 // more) is reported as INVALID_EXPRESSION, not MISSING_EXPRESSION.
 extern Issue::Code cf_error_code;
+// The expression quoted by the PP55 report (constfold.y); points at
+// evaluate()'s argument only while it parses.
+extern const std::string* cf_expr_text;
 
 namespace {
+
+struct ExprTextScope {
+    explicit ExprTextScope(const std::string& expr) { cf_expr_text = &expr; }
+    ~ExprTextScope() { cf_expr_text = nullptr; }
+    ExprTextScope(const ExprTextScope&) = delete;
+    ExprTextScope& operator=(const ExprTextScope&) = delete;
+};
 
 cf::ConstValue to_const_value(const CfValue& v) {
     cf::ConstValue out;
@@ -84,6 +94,7 @@ cf::EvalResult evaluate(const std::string& expr) {
     }
 
     YY_BUFFER_STATE buf = cf_scan_expr(expr.data(), expr.size());
+    ExprTextScope expr_text(expr);
     int rc = 0;
     CfValue result;
     try {

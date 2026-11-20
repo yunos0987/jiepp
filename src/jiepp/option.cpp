@@ -174,6 +174,8 @@ void display_help_and_exit(int exit_code = 0) {
         "  -dM                      Dump macro definitions\n"
         "  -dD                      Emit {#define}/{#undef} lines inline\n"
         "  --silent                 Suppress all diagnostic output\n"
+        "  --no-include-stack       Do not print the \"In file included from\" lines before a\n"
+        "                           diagnostic in an included file (one line per diagnostic)\n"
         "  --                       End of options\n"
         "  --help / -h              Show this help\n"
         "  --version                Show version\n"
@@ -509,6 +511,11 @@ JieppOptions parse_args(int argc, char* argv[]) {
 
         if (arg == "--silent") {
             opts.silent = true;
+            ++i; continue;
+        }
+
+        if (key == "--no-include-stack") {
+            opts.no_include_stack = true;
             ++i; continue;
         }
 

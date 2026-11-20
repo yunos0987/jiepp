@@ -41,12 +41,23 @@ std::vector<Token>& expand(const std::vector<Token>& its,
 // --disppath for the main input). A file found under an -isystem directory
 // (Env::add_system_path()) or included from such a file is a system header,
 // left out of -MM/-MMD; main_input (the CLI's main input file) never is one.
+// origin says where the file is included from, for the "In file included
+// from" lines before a diagnostic in it (SPEC 16): an {#include}/
+// {#sinclude} (directive, with the line of the path) or -include
+// (command_line). The default, none, is a top-level file -- the main input,
+// or a file a library caller reads directly -- which gets no such line; the
+// files it includes are shown as included from it ("In file included from
+// top.iec:2:"). A file that the string input of preprocess()/
+// preprocess_text() includes is shown as included from that input, by the
+// name its own diagnostics have ("In file included from <unknown
+// location>:2:").
 std::vector<Token>& expand(const std::string& filepath,
                            Loader::LoadType load_type,
                            std::vector<Token>& ots,
                            Env& env,
                            const std::optional<std::string>& shown_as = std::nullopt,
-                           bool main_input = false);
+                           bool main_input = false,
+                           const Issue::IncludeOrigin& origin = {});
 
 void preprocess(std::istream& input, std::ostream& output, Env& env);
 

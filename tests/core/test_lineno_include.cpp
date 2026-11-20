@@ -5,11 +5,15 @@
 namespace {
 void normalize_diags(std::vector<std::string>& diags) {
     constexpr const char* kIncludePrefix = "tests/core/test_lineno/";
+    // An "In file included from" line (SPEC 16) keeps its lead-in; only the
+    // directory of its file name is dropped, as for a diagnostic.
+    constexpr std::string_view kIncludedFrom = "In file included from ";
     for (auto& diag : diags) {
         std::replace(diag.begin(), diag.end(), '\\', '/');
-        const auto prefix_pos = diag.find(kIncludePrefix);
+        const std::size_t start = diag.starts_with(kIncludedFrom) ? kIncludedFrom.size() : 0;
+        const auto prefix_pos = diag.find(kIncludePrefix, start);
         if (prefix_pos != std::string::npos) {
-            diag.erase(0, prefix_pos + std::char_traits<char>::length(kIncludePrefix));
+            diag.erase(start, prefix_pos - start + std::char_traits<char>::length(kIncludePrefix));
         }
         while (!diag.empty() && diag.back() == ' ') {
             diag.pop_back();
@@ -25,6 +29,7 @@ TEST_F(LinenoTest, Include) {
             "a-b.iec",
             {
                 "a-b.iec:1.0: info: PP93: ''",
+                "In file included from a-b.iec:2:",
                 "b.error.iec:1.0: info: PP93: ''",
                 "b.error.iec:2.0: error: PP91: 'error'",
             },
@@ -34,9 +39,11 @@ TEST_F(LinenoTest, Include) {
             "a-b.error.iec",
             {
                 "a-b.error.iec:1.0: info: PP93: ''",
+                "In file included from a-b.error.iec:2:",
                 "b.iec:1.0: info: PP93: ''",
                 "b.iec:2.0: info: PP93: ''",
                 "a-b.error.iec:3.0: info: PP93: ''",
+                "In file included from a-b.error.iec:4:",
                 "b.iec:1.0: info: PP93: ''",
                 "b.iec:2.0: info: PP93: ''",
                 "a-b.error.iec:5.0: info: PP93: ''",
@@ -48,12 +55,19 @@ TEST_F(LinenoTest, Include) {
             "a-b-c.iec",
             {
                 "a-b-c.iec:1.0: info: PP93: ''",
+                "In file included from a-b-c.iec:2:",
                 "b-c.error.iec:1.0: info: PP93: ''",
+                "In file included from a-b-c.iec:2:",
+                "In file included from b-c.error.iec:2:",
                 "c.iec:1.0: info: PP93: ''",
                 "c.iec:2.0: info: PP93: ''",
+                "In file included from a-b-c.iec:2:",
                 "b-c.error.iec:3.0: info: PP93: ''",
+                "In file included from a-b-c.iec:2:",
+                "In file included from b-c.error.iec:4:",
                 "c.iec:1.0: info: PP93: ''",
                 "c.iec:2.0: info: PP93: ''",
+                "In file included from a-b-c.iec:2:",
                 "b-c.error.iec:5.0: info: PP93: ''",
                 "b-c.error.iec:6.0: error: PP91: 'error'",
             },
@@ -63,7 +77,10 @@ TEST_F(LinenoTest, Include) {
             "a-b-c.error.iec",
             {
                 "a-b-c.error.iec:1.0: info: PP93: ''",
+                "In file included from a-b-c.error.iec:2:",
                 "b-c.iec:1.0: info: PP93: ''",
+                "In file included from a-b-c.error.iec:2:",
+                "In file included from b-c.iec:2:",
                 "c.error.iec:1.0: info: PP93: ''",
                 "c.error.iec:2.0: error: PP91: 'error'",
             },

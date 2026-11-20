@@ -206,17 +206,26 @@ public:
         return out;
     }
 
+    // "In file included from FILE:LINE:" (SPEC 16): printed before a
+    // diagnostic in an included file, but not a diagnostic itself, so
+    // codes() and codenames() skip it; messages() keeps every line.
+    static bool is_include_stack_line(const std::string& line) {
+        return line.rfind("In file included from ", 0) == 0;
+    }
+
     std::vector<Issue::Code> codes() {
         std::vector<Issue::Code> cs;
         for (const auto& line : messages())
-            cs.push_back(PlainTextMessage::parse_code(line));
+            if (!is_include_stack_line(line))
+                cs.push_back(PlainTextMessage::parse_code(line));
         return cs;
     }
 
     std::vector<std::string> codenames() {
         std::vector<std::string> cns;
         for (const auto& line : messages())
-            cns.push_back(std::string(Issue::codename(PlainTextMessage::parse_code(line))));
+            if (!is_include_stack_line(line))
+                cns.push_back(std::string(Issue::codename(PlainTextMessage::parse_code(line))));
         return cns;
     }
 

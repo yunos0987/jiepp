@@ -26,15 +26,15 @@ TEST_F(ShiftTest, ShrInt) {
     EXPECT_TRUE(empty());
 }
 
-// overflow / edge cases
+// overflow / edge cases: a count outside 0..63 is PP55 in both directions
+// (clang: "integer overflow in preprocessor expression"), and the value is
+// still the one SPEC 6.3 defines.
 TEST_F(ShiftTest, OverShift) {
-    EXPECT_NE(0LL, eval_const_expr("1 << 64 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("1 << 100 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("1 >> 64 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("1 >> 100 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("1 << -1 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("1 >> -1 = 0"));
-    EXPECT_TRUE(empty());
+    for (const char* expr : {"1 << 64 = 0", "1 << 100 = 0", "1 >> 64 = 0",
+                             "1 >> 100 = 0", "1 << -1 = 0", "1 >> -1 = 0"}) {
+        EXPECT_NE(0LL, eval_const_expr(expr)) << expr;
+        EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code()) << expr;
+    }
 }
 
 // bitstring left shift
@@ -82,26 +82,27 @@ TEST_F(ShiftTest, Precedence) {
 // is not usable in {#if} yet.
 
 TEST_F(ShiftTest, ClangOutOfRangeInt) {
-    EXPECT_NE(0LL, eval_const_expr("-8 >> 1 = -4"));
-    EXPECT_NE(0LL, eval_const_expr("-1 >> 63 = -1"));
-    EXPECT_NE(0LL, eval_const_expr("-1 >> 64 = -1"));
-    EXPECT_NE(0LL, eval_const_expr("-1 >> 100 = -1"));
-    EXPECT_NE(0LL, eval_const_expr("8 >> 64 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("1 << 63 = (-9223372036854775807-1)"));
-    EXPECT_NE(0LL, eval_const_expr("1 << 64 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("-1 << 64 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("-1 << 1 = -2"));
-    EXPECT_NE(0LL, eval_const_expr("16 >> -2 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("1 << -1 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("-16 << -2 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("-1 >> -1 = -1"));
-    EXPECT_NE(0LL, eval_const_expr("-1 << -1 = 0"));
-    EXPECT_NE(0LL, eval_const_expr("(-9223372036854775807-1) >> 70 = -1"));
-    EXPECT_NE(0LL, eval_const_expr("3 << 62 < 0"));
-    EXPECT_NE(0LL, eval_const_expr("-1 << (-9223372036854775807-1) = 0"));
-    EXPECT_NE(0LL, eval_const_expr(
-        "(-9223372036854775807-1) >> (-9223372036854775807-1) = -1"));
-    EXPECT_TRUE(empty());
+    // In range, and no bit but copies of the sign bit shifted out: no PP55.
+    for (const char* expr : {"-8 >> 1 = -4", "-1 >> 63 = -1", "-1 << 1 = -2",
+                             "-1 << 63 = (-9223372036854775807-1)",
+                             "-4 << 61 = (-9223372036854775807-1)",
+                             "1 << 62 = 4611686018427387904"}) {
+        EXPECT_NE(0LL, eval_const_expr(expr)) << expr;
+        EXPECT_TRUE(empty()) << expr;
+    }
+    // A count outside 0..63 (either direction), or a '<<' whose result is
+    // not v * 2^n: PP55 once, like clang, with the value above.
+    for (const char* expr : {"-1 >> 64 = -1", "-1 >> 100 = -1", "8 >> 64 = 0",
+                             "1 << 63 = (-9223372036854775807-1)", "1 << 64 = 0",
+                             "-1 << 64 = 0", "16 >> -2 = 0", "1 << -1 = 0",
+                             "-16 << -2 = 0", "-1 >> -1 = -1", "-1 << -1 = 0",
+                             "(-9223372036854775807-1) >> 70 = -1", "3 << 62 < 0",
+                             "2 << 63 = 0", "-5 << 62 = -4611686018427387904",
+                             "-1 << (-9223372036854775807-1) = 0",
+                             "(-9223372036854775807-1) >> (-9223372036854775807-1) = -1"}) {
+        EXPECT_NE(0LL, eval_const_expr(expr)) << expr;
+        EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code()) << expr;
+    }
 }
 
 // ---- D: Bitstring out-of-range shifts pin the unchanged, width-consistent
@@ -149,9 +150,11 @@ TEST_F(ShiftTest, ShiftCountBoolAndFloatAreTypeErrors) {
 TEST_F(ShiftTest, ShiftCountIntAndBitstringStillAccepted) {
     EXPECT_NE(0LL, eval_const_expr("(1 << BYTE#2) = 4"));
     EXPECT_NE(0LL, eval_const_expr("(BYTE#16#80 >> BYTE#7) = BYTE#1"));
-    // The bit pattern is read as -1, which is out of range: << gives 0.
-    EXPECT_NE(0LL, eval_const_expr("(1 << LWORD#16#FFFFFFFFFFFFFFFF) = 0"));
     EXPECT_TRUE(empty());
+    // The bit pattern is read as -1, which is out of range: << gives 0, and
+    // PP55 like any other Int shift by a count outside 0..63.
+    EXPECT_NE(0LL, eval_const_expr("(1 << LWORD#16#FFFFFFFFFFFFFFFF) = 0"));
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 // The type error does not depend on the value, so it is also reported in an

@@ -1595,7 +1595,8 @@ std::vector<Token>& expand(const std::string& filepath,
                            std::vector<Token>& ots,
                            Env& env,
                            const std::optional<std::string>& shown_as,
-                           bool main_input)
+                           bool main_input,
+                           const Issue::IncludeOrigin& origin)
 {
     // An empty path names no file, whatever directory it would be joined
     // onto: a plain, non-aborting error (gcc/clang "empty filename"; the
@@ -1656,6 +1657,10 @@ std::vector<Token>& expand(const std::string& filepath,
     // and destructed (popped) last, matching the pre-RAII manual pairing.
     FileContext::FileScope file_guard(env, fullpath, /*from_disk=*/true, found_as, system);
     Issue::LineGuard line_guard(1, disppath);
+    // The "In file included from" lines of a diagnostic in this file (SPEC
+    // 16): only a file with an include point (an {#include}/{#sinclude} or
+    // -include) gets one; a top-level file does not.
+    Issue::IncludeScope include_scope(origin);
 
     ots.push_back(Token::line_pragma(0, disppath, env.is_standard_pragma_style()));
     ots.push_back(Token::newline());

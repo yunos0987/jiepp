@@ -884,4 +884,34 @@ TEST_F(SandboxIsystemTest, IsystemIsAcceptedLikeI) {
     fs::remove_all(dir);
 }
 
+// ---- "In file included from" (SPEC 16): the same rule in a sandbox build,
+// where only an -include file can be included ----
+
+class SandboxIncludeStackTest : public JieppTest {};
+
+TEST_F(SandboxIncludeStackTest, CommandLineIncludeGetsItsLine) {
+    const fs::path dir = fs::temp_directory_path() / "jiepp_sandbox_include_stack";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    write_file(dir / "pre.iec", "{#warning pre}\n");
+    write_file(dir / "main.iec", "{#warning main}\n{#include 'x.iec'}\n");
+    {
+        CwdGuard cwd(dir);
+        JieppOptions opts;
+        opts.input_filepaths = {"main.iec"};
+        opts.output_filepath = "out.piec";
+        opts.include_filepaths = {"pre.iec"};
+        EXPECT_NE(0, jiepp_command(opts));
+        EXPECT_EQ((std::vector<std::string>{
+                      "In file included from <command line>:",
+                      "pre.iec:1.0: warning: PP92: 'pre'",
+                      "main.iec:1.0: warning: PP92: 'main'",
+                      "main.iec:2.0: error: PP62: Directive is restricted in sandbox mode; 'include'",
+                  }),
+                  messages());
+    }
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
 #endif  // JIEPP_SANDBOX

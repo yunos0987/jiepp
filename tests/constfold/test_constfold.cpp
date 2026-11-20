@@ -351,9 +351,9 @@ TEST_F(ConstfoldTest, LintMinMagDoubleMinusWraps) {
     // jiepp lexes "--" as two CF_MINUS tokens (no "--" rule in constfold.l):
     // the inner "-9223372036854775808" is INT64_MIN via CF_MINUS
     // CF_INT_MIN_MAG, and the outer '-' negates it, which wraps back to
-    // INT64_MIN (two's-complement) with no diagnostic.
+    // INT64_MIN (two's-complement). 2^63 is not an Int: PP55 (SPEC 6.3).
     EXPECT_NE(0LL, eval_const_expr("--9223372036854775808 = -9223372036854775807 - 1"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 TEST_F(ConstfoldTest, LintMinMagAfterUnaryPlusOrNotOverflows) {
@@ -377,9 +377,10 @@ TEST_F(ConstfoldTest, LintMinMagAfterBinaryMinusOverflows) {
 TEST_F(ConstfoldTest, LintMinMagAfterUnaryMinusThenBinaryMinusWraps) {
     // "1 - -9223372036854775808": the second '-' is the direct (unary)
     // operand of the literal, giving INT64_MIN; "1 - INT64_MIN" then wraps
-    // (two's-complement) with no diagnostic.
+    // (two's-complement), reported as PP55 (SPEC 6.3). The literal itself
+    // has no diagnostic.
     EXPECT_NE(0LL, eval_const_expr("1 - -9223372036854775808 = -9223372036854775807"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 TEST_F(ConstfoldTest, LintMinMagAfterTypeKeywordMinusOverflows) {

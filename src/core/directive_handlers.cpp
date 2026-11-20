@@ -61,7 +61,18 @@ using jiepp::preprocessor_detail::skip_blanks;
 struct IncludePath {
     std::string path;
     bool angle = false;
+    // The line the path is written on (SPEC 16: the include point, like
+    // clang's location of the file name token): the line of its first token
+    // -- for a path made by a macro, that of the macro name, or of the ')' of
+    // a function-macro call -- when that is a later line of a multi-line
+    // directive (Token::src_line), else the directive's line.
+    LineNo line = 0;
 };
+
+// The line of token `t` of an operand (see IncludePath::line).
+LineNo operand_token_line(const Token& t) {
+    return t.has_src_line ? static_cast<LineNo>(t.src_line) : Issue::lineno();
+}
 
 std::optional<IncludePath> read_include_operand(const std::string& raw_arg, const char* directive,
                                                 Env& env) {
@@ -79,9 +90,11 @@ std::optional<IncludePath> read_include_operand(const std::string& raw_arg, cons
     if (i < ts.size() && (ts[i].type == Token::STRING || ts[i].type == Token::WSTRING)) {
         if (!is_terminated_literal(ts[i]))
             return std::nullopt;
+        r.line = operand_token_line(ts[i]);
         r.path = decode_path_literal(ts[i].text);
         after.assign(ts.begin() + static_cast<std::ptrdiff_t>(i) + 1, ts.end());
     } else if (i < ts.size() && ts[i].type == Token::ANY && ts[i].text == "<") {
+        r.line = operand_token_line(ts[i]);
         std::vector<Token> work(ts.rbegin(), ts.rend() - static_cast<std::ptrdiff_t>(i) - 1);
         std::vector<Token> read;
         if (!read_header_name(work, r.path, read))
@@ -95,6 +108,7 @@ std::optional<IncludePath> read_include_operand(const std::string& raw_arg, cons
             return std::nullopt;
         r.angle = p.kind == ExpandedPath::Kind::angle;
         r.path = r.angle ? std::move(p.text) : decode_path_literal(p.text);
+        r.line = operand_token_line(expanded[skip_blanks(expanded, 0)]);
         rest = p.end;
     }
     if (!after.empty())
@@ -844,7 +858,9 @@ void handle_include(const std::string& raw_arg,
         env.count_include();
 
         Loader::LoadType loadtype = (syspath_only || syspath_only_path) ? Loader::LoadType::SINCLUDE : Loader::LoadType::INCLUDE;
-        expand(include_path, loadtype, ots, env);
+        // Included from this directive, at the line of the path (SPEC 16).
+        expand(include_path, loadtype, ots, env, std::nullopt, /*main_input=*/false,
+               Issue::IncludeOrigin{Issue::IncludeOrigin::Kind::directive, p->line});
         return;
     }
     // raw_arg is decoded, so re-escape it before it reaches the

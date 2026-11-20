@@ -89,3 +89,13 @@ void PlainTextMessage::message(std::ostream& output, Issue::Severity severity, I
     output << "@" << loc_.file_name() << ':' << loc_.line();
 #endif
 }
+
+void PlainTextMessage::included_from(std::ostream& output, const std::string& file,
+                                     std::optional<LineNo> lineno) {
+    // clang's form: "In file included from FILE:LINE:", no column; the
+    // command line has no line (gcc's "<command-line>:" form).
+    output << "In file included from " << file;
+    if (lineno)
+        output << ':' << *lineno;
+    output << ':';
+}

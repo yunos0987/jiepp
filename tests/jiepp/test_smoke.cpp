@@ -1224,7 +1224,13 @@ TEST_F(SmokeTest, IncludeFanOutStopsAtDefaultCount) {
     EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
     EXPECT_EQ(count_lines_with(r.err, ": PP66: Maximum include count exceeded"), 1u)
         << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    // The PP66 is in a nested inclusion, so its include stack (SPEC 16)
+    // comes first: every other line is an "In file included from" line.
+    EXPECT_EQ(static_cast<std::size_t>(std::count(r.err.begin(), r.err.end(), '\n')) -
+                  count_lines_with(r.err, "In file included from "),
+              1u) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.err.find("In file included from ", r.err.find(": PP66:")), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
     EXPECT_NE(r.err.find("limit 10000; use --max-include-count N to raise it (0 = no limit)"),
               std::string::npos) << "stderr: " << r.err.substr(0, 2000);
 }
@@ -1322,7 +1328,10 @@ TEST_F(SmokeTest, RelexDiagnosticInIncludedFileAtPragmaLine) {
         << "stderr: " << r.err;
     EXPECT_NE(r.err.find("o.iec:3.0: error: PP20: Unclosed comment; '(* top '"), std::string::npos)
         << "stderr: " << r.err;
-    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 2) << "stderr: " << r.err;
+    // The included file's diagnostic follows its include point (SPEC 16).
+    EXPECT_EQ(plain_stderr(r.err).find("In file included from " + input.generic_string() + ":2:\n"), 0u)
+        << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 3) << "stderr: " << r.err;
 }
 #endif
 

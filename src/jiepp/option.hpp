@@ -64,6 +64,7 @@ struct JieppOptions {
     bool MMD = false;               // -MMD: dep side-effect + normal output (USER deps only)
     bool MP = false;                // -MP: an empty rule per prerequisite except the main input
     bool silent = false;
+    bool no_include_stack = false;   // --no-include-stack: no "In file included from" lines
     bool suppress_warnings = false;  // -w: suppress warning output
     bool werror = false;             // -Werror / -Wno-error: promote warnings to errors (last one wins)
     std::vector<WarningOption> warnings;   // -W<name> / -Wno-<name> / -Werror=<name> / -Wno-error=<name>, in order

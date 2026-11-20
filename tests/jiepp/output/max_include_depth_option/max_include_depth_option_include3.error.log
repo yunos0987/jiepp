@@ -1,1 +1,3 @@
+In file included from tests/jiepp/input/max_include_depth_option/max_include_depth_option_include3.error.iec:1:
+In file included from tests/jiepp/input/max_include_depth_option/max_include_depth_option_include2.iec:1:
 tests/jiepp/input/max_include_depth_option/max_include_depth_option_include1.iec:1.0: error: PP12: Maximum include depth exceeded; 'max_include_depth_option_include0.iec'
