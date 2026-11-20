@@ -269,7 +269,14 @@ TEST_F(UtilTest, reached_path) {
     EXPECT_EQ("C:/abs/a.iec", Util::reached_path("tests/in", "C:/abs/a.iec"));
     EXPECT_EQ("C:/s.iec", Util::reached_path("C:/", "s.iec"));
     EXPECT_EQ("tests/in/x/a.iec", Util::reached_path("tests\\in", "x\\a.iec"));
+    // A bare drive is not joined with '/': the file stays drive-relative.
+    EXPECT_EQ("C:a.iec", Util::reached_path("C:", "a.iec"));
+    EXPECT_EQ("C:", Util::reached_dir("C:main.iec"));
+    EXPECT_EQ("C:a.iec", Util::reached_path(Util::reached_dir("C:main.iec"), "a.iec"));
 #else
+    // Elsewhere "C:" is an ordinary directory name.
+    EXPECT_EQ("C:/a.iec", Util::reached_path("C:", "a.iec"));
+    EXPECT_EQ("", Util::reached_dir("C:main.iec"));
     // Elsewhere a backslash is an ordinary file-name character.
     EXPECT_EQ("tests/in/x\\a.iec", Util::reached_path("tests/in", "x\\a.iec"));
 #endif

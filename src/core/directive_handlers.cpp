@@ -336,7 +336,7 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     }
     if (ts[0].type != Token::ANY || !iec3_is_identifier(ts[0].text)) {
         ISSUE(INVALID_DEFINE_SYNTAX,
-              "macro name must be an identifier: " + Util::escape_line_breaks(raw_arg));
+              "macro name must be an identifier: " + Util::diag_clip(Util::escape_line_breaks(raw_arg)));
         warn_rest();
         return false;
     }
@@ -420,13 +420,13 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
         auto list_error = [&](const std::string& what) {
             warn_until(i + 1);
             ISSUE(INVALID_DEFINE_SYNTAX,
-                  what + " in macro parameter list: " + Util::escape_line_breaks(raw_arg));
+                  what + " in macro parameter list: " + Util::diag_clip(Util::escape_line_breaks(raw_arg)));
             warn_rest();
         };
         // '...' not last (PP33), found at ts[i]; same order as list_error.
         auto placement_error = [&]() {
             warn_until(i + 1);
-            ISSUE(INVALID_VARIADIC_PLACEMENT, Util::escape_line_breaks(raw_arg));
+            ISSUE(INVALID_VARIADIC_PLACEMENT, Util::diag_clip(Util::escape_line_breaks(raw_arg)));
             warn_rest();
         };
         ++i; // '('
@@ -820,7 +820,7 @@ void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ot
     // raw_arg is decoded, so re-escape it before it reaches the
     // diagnostic, so a $n/$r escape in the source does not split the
     // message onto multiple lines (same reasoning as {#define} above).
-    ISSUE(INVALID_PATH, Util::escape_line_breaks(raw_arg));
+    ISSUE(INVALID_PATH, Util::diag_clip(Util::escape_line_breaks(raw_arg)));
 }
 
 void handle_include(const std::string& raw_arg,
@@ -846,7 +846,7 @@ void handle_include(const std::string& raw_arg,
     // raw_arg is decoded, so re-escape it before it reaches the
     // diagnostic, so a $n/$r escape in the source does not split the
     // message onto multiple lines (same reasoning as {#define} above).
-    ISSUE(INVALID_PATH, Util::escape_line_breaks(raw_arg));
+    ISSUE(INVALID_PATH, Util::diag_clip(Util::escape_line_breaks(raw_arg)));
 }
 
 void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
@@ -858,6 +858,8 @@ void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
     // is printed as one. NewlineInStringAndMessageDirectives checks both.
     // A quote in the message text is not scanned for PP29, like clang's
     // #error/#warning (gcc does scan it).
+    // (A directive with no closing '}' arrives here already cut to its first
+    // line: dispatch_directive().)
     report_message(expand_operand_text(raw_arg, env, /*report_unterminated=*/false), code);
 }
 

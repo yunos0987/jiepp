@@ -38,6 +38,14 @@ std::string Util::diag_excerpt(std::string_view s, std::size_t max_bytes) {
     return r;
 }
 
+std::string Util::diag_clip(std::string_view s, std::size_t max_bytes) {
+    const std::string_view head = utf8_head(s, max_bytes);
+    std::string r(head);
+    if (head.size() < s.size())
+        r += "...";
+    return r;
+}
+
 std::string Util::format_date(const std::tm& tm) {
     char buf[48];
     std::snprintf(buf, sizeof(buf), "%s %2d %d", name_of(MONTH_NAMES, 12, tm.tm_mon), tm.tm_mday,

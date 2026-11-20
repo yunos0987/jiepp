@@ -109,6 +109,10 @@ struct Token {
     // reuses the padding before `text`; excluded from operator== like the
     // other bookkeeping flags.
     bool        relexed_pragma = false;
+    // True for a DIRECTIVE token with no closing '}': the lexer ran it to the
+    // end of the input (PP23) and added the '}'. Reuses the padding before
+    // `text`; excluded from operator== like the other bookkeeping flags.
+    bool        unclosed_directive = false;
     // True for a PRAGMA token whose rewritten text (expand_pragma_token())
     // came from a pass that already reported PP29 for an unterminated literal
     // or PP20 for an unclosed comment in its body: a later rescan of that

@@ -366,6 +366,7 @@ Token read_pragma_body(const std::string& text,
     // expand.cpp), which reports PP45/PP46 for an unrecognized name.
     Token t = Token::create(is_directive ? Token::DIRECTIVE : Token::PRAGMA, std::move(full_text));
     t.line_map = std::move(line_map);
+    t.unclosed_directive = is_directive && !closed;
     return t;
 }
 

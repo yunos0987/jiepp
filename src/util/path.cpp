@@ -112,7 +112,13 @@ std::string Util::reached_path(std::string_view dir, std::string_view name)
     std::string d = with_slashes(dir);
     // Join with one '/', unless dir already ends with one ("lib/" and
     // "lib//" are kept as they are written).
-    if (!d.ends_with('/'))
+    bool bare_drive = false;
+#ifdef _WIN32
+    // A bare drive ("C:") is not joined with '/': "C:a.iec" stays relative to
+    // drive C's directory, as fs::path("C:") / "a.iec" gives.
+    bare_drive = d.size() == 2 && d[1] == ':' && std::isalpha(static_cast<unsigned char>(d[0]));
+#endif
+    if (!bare_drive && !d.ends_with('/'))
         d += '/';
     return d + n;
 }

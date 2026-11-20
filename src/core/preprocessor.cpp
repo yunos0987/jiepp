@@ -5,6 +5,7 @@
 
 #include "../loader/lexer.hpp"
 #include "../loader/loader.hpp"
+#include "../util/text.hpp"
 
 #include <memory>
 #include <optional>
@@ -89,10 +90,13 @@ void report_unterminated_literal(Token& t) {
     t.unterminated = false;
     const std::size_t below = t.line_map ? t.line_map->line_of(0) : 0;
     t.line_map.reset();
-    // Opening quote to the end of the literal's first line: a "$"+newline
-    // continuation would otherwise put a line break in the diagnostic.
+    // Opening quote to the end of the literal's first line, and no more than
+    // diag_clip() quotes: a "$"+newline continuation would otherwise put a
+    // line break in the diagnostic, and a literal in a directive with no
+    // closing '}' runs to the end of the input.
     at_lines_below(below, [&] {
-        ISSUE(UNTERMINATED_STRING_LITERAL, t.text.substr(0, t.text.find_first_of("\r\n")));
+        ISSUE(UNTERMINATED_STRING_LITERAL,
+              Util::diag_clip(std::string_view(t.text).substr(0, t.text.find_first_of("\r\n"))));
     });
 }
 

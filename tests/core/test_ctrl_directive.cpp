@@ -91,6 +91,49 @@ TEST_F(CtrlDirectiveTest, IfSyntaxError) {
     EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, code());
 }
 
+// The message of a closed {#error}/{#warning} is quoted whole, however long
+// (clang and gcc do not cut an #error message); only a directive with no
+// closing '}' is cut (the test below).
+TEST_F(CtrlDirectiveTest, LongMessageOfClosedDirectiveIsNotCut) {
+    Issue::ContinueMode guard({});
+    const std::string a(2000, 'a');
+    {
+        SCOPED_TRACE("no $n");
+        pp("{#error " + a + "}");
+        const auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_NE(std::string::npos, msgs[0].find(a)) << msgs[0].size();
+    }
+    {
+        SCOPED_TRACE("with $n");
+        pp("{#warning " + std::string(1000, 'a') + "$n" + std::string(1000, 'b') + "}");
+        const auto msgs = messages();
+        ASSERT_EQ(2u, msgs.size());
+        EXPECT_NE(std::string::npos, msgs[0].find(std::string(1000, 'a'))) << msgs[0].size();
+        EXPECT_NE(std::string::npos, msgs[1].find(std::string(1000, 'b'))) << msgs[1].size();
+    }
+}
+
+// A directive with no closing '}' still runs to the end of the input (as a C
+// directive without a newline does), but no diagnostic quotes the rest of the
+// file: each one stays on one short line, however long the input is.
+TEST_F(CtrlDirectiveTest, UnclosedDirectiveDiagnosticsAreShort) {
+    std::string body;
+    for (int i = 0; i < 3000; ++i)
+        body += "x" + std::to_string(i) + " := " + std::to_string(i) + ";\n";
+    const char* const heads[] = {"{#if 1\n", "{#error abc\n", "{#define G(a\n", "{#include 'zz\n"};
+    for (const char* head : heads) {
+        SCOPED_TRACE(head);
+        Issue::ContinueMode guard({});
+        pp(std::string(head) + body);
+        const auto msgs = messages();
+        ASSERT_GE(msgs.size(), 2u);
+        EXPECT_EQ(Issue::Code::INVALID_PP_SYNTAX, PlainTextMessage::parse_code(msgs[0])) << msgs[0];
+        for (const auto& m : msgs)
+            EXPECT_LT(m.size(), 1000u) << m.substr(0, 200);
+    }
+}
+
 // C1: a malformed {#if}/{#elif} expression must raise exactly one
 // diagnostic, not the bison grammar's own "syntax error" (from
 // cf::CfParser::error(), constfold.y) followed by eval_const_expr()'s own

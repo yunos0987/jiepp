@@ -83,19 +83,25 @@ TEST_F(MacroTest, DateAndTimeComeFromTheStartTime) {
     EXPECT_TRUE(empty());
 }
 
-// Every __TIME__ of a run is the same, however long the run takes (the clock
-// is read once, when the Env is made).
+// The clock is read once, when the Env is made: an Env whose start time is in
+// the past keeps giving that time however often it is preprocessed, never the
+// current time (SPECIFICATION 12.2). A clock read at each expansion would give
+// today's date here.
 TEST_F(MacroTest, TimeIsTheSameThroughoutARun) {
     Env env = setup();
+    env.set_start_time(local_time_t(2001, 2, 3, 4, 5, 6));
+    const std::string expected = "'Feb  3 2001' '04:05:06'\n";
     std::string input;
     for (int i = 0; i < 2000; ++i)
-        input += "__TIME__ __DATE__\n";
-    const std::string out = pp(input, env);
-    const std::size_t eol = out.find('\n');
-    ASSERT_NE(std::string::npos, eol);
-    const std::string line = out.substr(0, eol + 1);
-    for (std::size_t at = 0; at < out.size(); at += line.size())
-        ASSERT_EQ(line, out.substr(at, line.size())) << at;
+        input += "__DATE__ __TIME__\n";
+    for (int round = 0; round < 2; ++round) {
+        const std::string out = pp(input, env);
+        ASSERT_EQ(expected.size() * 2000, out.size()) << round;
+        for (std::size_t at = 0; at < out.size(); at += expected.size())
+            ASSERT_EQ(expected, out.substr(at, expected.size())) << round << ' ' << at;
+    }
+    // The start time is not the clock's time now.
+    EXPECT_NE(env.start_time(), std::time(nullptr));
 }
 
 #ifndef JIEPP_SANDBOX

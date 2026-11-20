@@ -25,6 +25,12 @@ std::string format_timestamp(const std::tm& tm);
 // than quoting the rest of the file.
 std::string diag_excerpt(std::string_view s, std::size_t max_bytes = 64);
 
+// The same cut for text that is already one line (a directive operand after
+// escape_line_breaks(), or a message): at most max_bytes of it, cut at a UTF-8
+// character boundary, with "..." when anything was left out. Line breaks do
+// not end it, so it does not hide what follows a $n escape.
+std::string diag_clip(std::string_view s, std::size_t max_bytes = 64);
+
 std::string_view ltrim_view(std::string_view s);
 std::string_view rtrim_view(std::string_view s);
 std::string_view trim_view(std::string_view s);

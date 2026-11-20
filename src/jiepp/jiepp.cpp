@@ -306,9 +306,9 @@ int jiepp_command(const JieppOptions& opts)
         };
 
         // U4: --silent/-w/-Werror must be in effect before -D/-U are
-        // processed below (setup()'s predefine_macros loop and
-        // apply_undef_option() can both raise diagnostics -- a malformed
-        // -D/-U name, a redefinition warning, ...), not only for the main
+        // processed below (apply_define_option() and apply_undef_option()
+        // can both raise diagnostics -- an invalid -D/-U name, a
+        // redefinition warning, ...), not only for the main
         // input's own expansion. Previously these three were set after the
         // -D/-U block, so e.g. `--silent -D=1` still printed its PP73.
         if (opts.silent)
@@ -456,8 +456,9 @@ int jiepp_command(const JieppOptions& opts)
         // the -include/top-level-expansion phase below, not the whole
         // function: everything before this point (the multiple-input-files
         // check above, -D/-U, env fixups, the stdin+-MD/-MMD-without--MF
-        // check just above) is CLI-shaped misuse that should keep aborting
-        // unconditionally, the way it always has; everything after it (E4b's
+        // check just above) is CLI-shaped misuse that still aborts (except
+        // -D/-U, which run in their own continue mode above: only a code in
+        // the abort set or SEVERE stops them); everything after it (E4b's
         // -o/dep-file open, write and close, the stdout checks) raises only
         // PP10, already in the abort set regardless of continue_mode_, so
         // where this guard's scope ends
@@ -722,7 +723,8 @@ int jiepp_command(const JieppOptions& opts)
         return 0;
     } catch (const Issue::Exception&) {
         // Reached only by exceptions from *before* the E4a -include/expand
-        // guard above (e.g. a malformed -D/-U, an env-fixup failure, or the
+        // guard above (e.g. PP73 for -D=1, a SEVERE or abort-set code raised
+        // while -D/-U are applied, an env-fixup failure, or the
         // stdin+-MD/-MMD-without--MF check): the E4a and E4b catches above
         // handle every Issue::Exception raised inside their own try blocks.
         // `ots` is still empty, so there is nothing to print, and neither

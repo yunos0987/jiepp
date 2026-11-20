@@ -112,7 +112,7 @@ cf::EvalResult evaluate(const std::string& expr) {
         // cf::CfParser::error() chose (cf_error_code) instead of
         // unconditionally MISSING_EXPRESSION.
         cf_note_failure(cf_error_code);
-        Issue::happen(cf_error_code, Util::escape_line_breaks(expr));
+        Issue::happen(cf_error_code, Util::diag_clip(Util::escape_line_breaks(expr)));
         r.failure = cf_failure_code;
         return r;
     }

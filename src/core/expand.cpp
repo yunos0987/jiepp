@@ -96,6 +96,14 @@ void dispatch_directive(const Token& t,
         ISSUE(INVALID_ESCAPE_SEQUENCE, *invalid_escape);
     };
 
+    // The message of {#error}/{#warning}/{#info}/{#severe}: the whole text
+    // as written, except for a directive with no closing '}', whose text runs
+    // to the end of the input and is not a message anyone meant (its first
+    // line, at most 64 bytes, is quoted: Util::diag_excerpt()).
+    auto message_arg = [&]() -> std::string {
+        return t.unclosed_directive ? Util::diag_excerpt(raw_arg) : raw_arg;
+    };
+
     bool active = ctrl_is_active(ctrl);
 
     if (kind == -1) {
@@ -342,16 +350,16 @@ void dispatch_directive(const Token& t,
 #endif
         break;
     case DirectiveToken::ERROR:
-        jiepp::preprocessor_detail::handle_message(raw_arg, env, Issue::Code::ERROR_MESSAGE);
+        jiepp::preprocessor_detail::handle_message(message_arg(), env, Issue::Code::ERROR_MESSAGE);
         break;
     case DirectiveToken::WARNING:
-        jiepp::preprocessor_detail::handle_message(raw_arg, env, Issue::Code::WARNING_MESSAGE);
+        jiepp::preprocessor_detail::handle_message(message_arg(), env, Issue::Code::WARNING_MESSAGE);
         break;
     case DirectiveToken::INFO:
-        jiepp::preprocessor_detail::handle_message(raw_arg, env, Issue::Code::INFO_MESSAGE);
+        jiepp::preprocessor_detail::handle_message(message_arg(), env, Issue::Code::INFO_MESSAGE);
         break;
     case DirectiveToken::SEVERE:
-        jiepp::preprocessor_detail::handle_message(raw_arg, env, Issue::Code::SEVERE_MESSAGE);
+        jiepp::preprocessor_detail::handle_message(message_arg(), env, Issue::Code::SEVERE_MESSAGE);
         break;
     case DirectiveToken::IGNORE:
 #ifdef JIEPP_SANDBOX
