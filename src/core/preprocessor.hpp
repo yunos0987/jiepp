@@ -26,11 +26,17 @@ std::vector<Token>& expand(const std::vector<Token>& its,
                            std::vector<Token>& ots,
                            Env& env);
 
+// Includes a file: resolves filepath (Loader::fullpath()), then expands its
+// tokens into ots. disppath is the name shown in the line marker and in
+// diagnostics. The dependency output lists the file by the path it was
+// reached by; disppath_names_dependency makes it list disppath instead
+// (the CLI's --disppath for the main input).
 std::vector<Token>& expand(const std::string& filepath,
                            Loader::LoadType load_type,
                            std::vector<Token>& ots,
                            Env& env,
-                           const std::string& disppath);
+                           const std::string& disppath,
+                           bool disppath_names_dependency = false);
 
 void preprocess(std::istream& input, std::ostream& output, Env& env);
 

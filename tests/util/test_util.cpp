@@ -250,3 +250,49 @@ TEST_F(UtilTest, EscapeControlCharsPropertyNoForbiddenBytes) {
         }
     }
 }
+
+// The path a file was reached by (dependency output): name under dir, "."
+// components dropped, ".." kept, an absolute name alone.
+TEST_F(UtilTest, reached_path) {
+    EXPECT_EQ("a.iec", Util::reached_path("", "a.iec"));
+    EXPECT_EQ("a.iec", Util::reached_path("", "./a.iec"));
+    EXPECT_EQ("tests/in/a.iec", Util::reached_path("tests/in", "a.iec"));
+    EXPECT_EQ("tests/in/a.iec", Util::reached_path("tests/in", "./a.iec"));
+    EXPECT_EQ("tests/in/a.iec", Util::reached_path("./tests/./in/", "a.iec"));
+    EXPECT_EQ("sub/inc/../inc/b.iec", Util::reached_path("sub/inc", "../inc/b.iec"));
+    EXPECT_EQ("../a.iec", Util::reached_path("", "../a.iec"));
+    EXPECT_EQ("lib", Util::reached_path("", "./lib"));
+    EXPECT_EQ("lib", Util::reached_path("", "lib/."));
+    EXPECT_EQ(".", Util::reached_path("", "."));
+    EXPECT_EQ(".", Util::reached_path(".", "."));
+    EXPECT_EQ("/abs/a.iec", Util::reached_path("tests/in", "/abs/a.iec"));
+    EXPECT_EQ("/a.iec", Util::reached_path("/", "a.iec"));
+    // A dropped "." takes the empty components after it along: never a
+    // rooted path out of a relative one.
+    EXPECT_EQ("a.iec", Util::reached_path("", ".//a.iec"));
+    EXPECT_EQ("lib/s.iec", Util::reached_path(".//lib", "s.iec"));
+    EXPECT_EQ("a/b", Util::reached_path("a/.//", "b"));
+    EXPECT_EQ("/", Util::reached_path("", "/."));
+#ifdef _WIN32
+    // UNC and device prefixes are left alone (elsewhere a leading "//" is
+    // one "/" to std::filesystem, so there is no such prefix to keep).
+    EXPECT_EQ("//./pipe/x", Util::reached_path("", "//./pipe/x"));
+    EXPECT_EQ("//server/share/./a", Util::reached_path("", "//server/share/./a"));
+    // A drive's root directory keeps its separator.
+    EXPECT_EQ("C:/", Util::reached_path("", "C:/."));
+    EXPECT_EQ("C:/s.iec", Util::reached_path(Util::reached_path("", "C:/."), "s.iec"));
+    EXPECT_EQ("C:/abs/a.iec", Util::reached_path("tests/in", "C:/abs/a.iec"));
+    EXPECT_EQ("tests/in/x/a.iec", Util::reached_path("tests\\in", "x\\a.iec"));
+#else
+    // Elsewhere a backslash is an ordinary file-name character.
+    EXPECT_EQ("tests/in/x\\a.iec", Util::reached_path("tests/in", "x\\a.iec"));
+#endif
+}
+
+TEST_F(UtilTest, reached_dir) {
+    EXPECT_EQ("", Util::reached_dir(""));
+    EXPECT_EQ("", Util::reached_dir("main.iec"));
+    EXPECT_EQ("", Util::reached_dir("<stdin>"));
+    EXPECT_EQ("tests/in", Util::reached_dir("tests/in/main.iec"));
+    EXPECT_EQ("sub/inc/../inc", Util::reached_dir("sub/inc/../inc/b.iec"));
+}

@@ -17,8 +17,14 @@ public:
     // If found_directory is non-null, it is set to true the first time a
     // candidate exists but is not a regular file (e.g. a directory); the
     // search continues over remaining candidates regardless.
+    // If reached_path is non-null and the file is found, it receives the
+    // path the file was reached by (Util::reached_path()): filepath under
+    // the including file's reached-by directory or under the system path
+    // that held it, i.e. the name that opens it from the working
+    // directory, for the dependency output.
     static std::string fullpath(const std::string& filepath, LoadType load_type, Env& env,
-                                 bool* found_directory = nullptr);
+                                 bool* found_directory = nullptr,
+                                 std::string* reached_path = nullptr);
 
     // Load tokens from file (with caching and comment stripping per env settings).
     // On a cache hit with comment removal off, the returned pointer aliases the

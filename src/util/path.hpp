@@ -23,6 +23,21 @@ bool narrow_paths_are_utf8();
 // absolute_path()'s purely lexical normalisation.
 std::string canonical_path(std::string_view path_text);
 
+// The path a file was reached by, for the dependency output (-M ...):
+// `name` as written, under the directory `dir` it was found in (the
+// including file's own reached-by path minus its file name, or a system
+// path as given), like gcc/clang. Both are joined with '/', an absolute
+// `name` stands alone, and "." components are dropped ("lib/./a" is
+// "lib/a"); ".." is kept, since removing it lexically would name another
+// file when the directory before it is a symbolic link. A result that
+// starts with "//" (UNC or device prefix) is returned as joined.
+// e.g. ("tests/in", "./a.iec") -> "tests/in/a.iec"; ("", "a.iec") -> "a.iec"
+std::string reached_path(std::string_view dir, std::string_view name);
+
+// The directory part of a reached-by path ("" when it has none).
+// e.g. "tests/in/main.iec" -> "tests/in"; "main.iec" -> ""
+std::string reached_dir(std::string_view path);
+
 // Identity of a file on disk, independent of how its path is spelled: (volume
 // serial number, file index) on Windows, (st_dev, st_ino) on POSIX. Two paths
 // that name the same file (different case, "..", an 8.3 short name, a symlink

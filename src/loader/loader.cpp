@@ -51,7 +51,7 @@ bool try_resolve(const fs::path& candidate, bool* found_directory, std::string& 
 } // namespace
 
 std::string Loader::fullpath(const std::string& filepath, LoadType load_type, Env& env,
-                              bool* found_directory) {
+                              bool* found_directory, std::string* reached_path) {
     // A9: defense in depth. The filesystem calls below take C strings, so a
     // NUL would silently shorten the path; no file has a NUL in its name.
     // {#include} / {#syspath} reject such a path with PP47 before this, and
@@ -60,9 +60,14 @@ std::string Loader::fullpath(const std::string& filepath, LoadType load_type, En
         return "";
     fs::path p(filepath);
     std::string out;
+    auto found_under = [&](std::string_view dir) {
+        if (reached_path)
+            *reached_path = Util::reached_path(dir, filepath);
+        return out;
+    };
     if (p.is_absolute()) {
         if (try_resolve(p, found_directory, out, env))
-            return out;
+            return found_under("");
     } else {
         if (load_type == LoadType::INCLUDE) {
             const std::string& cur_file = env.current_file();
@@ -70,17 +75,18 @@ std::string Loader::fullpath(const std::string& filepath, LoadType load_type, En
                 fs::path base_dirpath = fs::path(cur_file).parent_path();
                 fs::path candidate = base_dirpath / filepath;
                 if (try_resolve(candidate, found_directory, out, env))
-                    return out;
+                    return found_under(Util::reached_dir(env.current_reached_path()));
             } else {
                 fs::path candidate = fs::current_path() / p;
                 if (try_resolve(candidate, found_directory, out, env))
-                    return out;
+                    return found_under("");
             }
         }
-        for (const auto& sp : env.syspaths()) {
-            fs::path candidate = fs::path(sp) / filepath;
+        const auto& syspaths = env.syspaths();
+        for (std::size_t i = 0; i < syspaths.size(); ++i) {
+            fs::path candidate = fs::path(syspaths[i]) / filepath;
             if (try_resolve(candidate, found_directory, out, env))
-                return out;
+                return found_under(env.syspath_reached_paths()[i]);
         }
     }
     return "";

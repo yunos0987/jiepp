@@ -7,6 +7,7 @@
 #include "../loader/lexer.hpp"
 #include "../loader/directive_parser.hpp"
 #include "../macro/macro.hpp"
+#include "../util/path.hpp"
 #include "../util/text.hpp"
 #include "../util/iec_61131-3.hpp"
 
@@ -702,7 +703,11 @@ void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ot
     // filesystem calls, so it is an invalid path, like a malformed operand.
     if (p && p->path.find('\0') == std::string::npos) {
         const std::string& syspath = p->path;
-        env.add_syspath(resolve_syspath_base(syspath, env));
+        // The directory as a dependency path names it: under the reached-by
+        // directory of the file holding this directive (the same base the
+        // lookup uses), not made absolute.
+        env.add_syspath(resolve_syspath_base(syspath, env),
+                        Util::reached_path(Util::reached_dir(env.current_reached_path()), syspath));
         ots.push_back(Token::pragma("syspath", Util::encode_syspath_path(syspath), env.is_standard_pragma_style()));
         return;
     }

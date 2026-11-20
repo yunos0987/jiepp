@@ -1,5 +1,6 @@
 #include "path.hpp"
 
+#include <algorithm>
 #include <filesystem>
 
 #ifdef _WIN32
@@ -78,4 +79,50 @@ bool Util::file_id(std::string_view path_text, FileId& out) {
     return make_file_id(static_cast<unsigned long long>(st.st_dev),
                         static_cast<unsigned long long>(st.st_ino), out);
 #endif
+}
+
+// e.g. ("tests/in", "./a.iec") -> "tests/in/a.iec"
+std::string Util::reached_path(std::string_view dir, std::string_view name)
+{
+    const fs::path n{std::string(name)};
+    const std::string joined = (dir.empty() || n.is_absolute())
+        ? n.generic_string()
+        : (fs::path{std::string(dir)} / n).generic_string();
+    // A path starting with "//" (UNC, or the "//./" and "//?/" device
+    // prefixes, where "." is not a directory) stays as written.
+    if (joined.starts_with("//"))
+        return joined;
+    // Drop "." components, and the empty components right after a dropped
+    // one (".//a" is "a", not the rooted "/a"); every other component,
+    // ".." included, stays as written.
+    std::string r;
+    r.reserve(joined.size());
+    bool after_dropped_dot = false;
+    std::size_t i = 0;
+    while (i <= joined.size()) {
+        const std::size_t slash = std::min(joined.find('/', i), joined.size());
+        const std::string_view part(joined.data() + i, slash - i);
+        if (part == "." || (after_dropped_dot && part.empty())) {
+            after_dropped_dot = true;
+        } else {
+            after_dropped_dot = false;
+            r += part;
+            if (slash < joined.size())
+                r += '/';
+        }
+        i = slash + 1;
+    }
+    if (r.empty())
+        return ".";
+    // "a/." leaves "a/": the directory itself, without the separator --
+    // unless that separator is the root directory ("/.", "C:/.").
+    if (r.back() == '/' && !joined.ends_with('/') && !fs::path(r).relative_path().empty())
+        r.pop_back();
+    return r;
+}
+
+// e.g. "tests/in/main.iec" -> "tests/in"
+std::string Util::reached_dir(std::string_view path)
+{
+    return fs::path{std::string(path)}.parent_path().generic_string();
 }

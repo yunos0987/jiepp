@@ -490,7 +490,8 @@ int jiepp_command(const JieppOptions& opts)
                     // -MP leaves the main input out of the empty rules: it is
                     // the dependency expand() records first for this file.
                     main_dep_index = env.dependencies().size();
-                    expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env, dispath);
+                    expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env, dispath,
+                           /*disppath_names_dependency=*/opts.disppath.has_value());
                 }
             } catch (const Issue::Exception&) {
                 // E4a: a code in jiepp_continue_abort_codes() (or SEVERE)

@@ -1381,10 +1381,12 @@ std::vector<Token>& expand(const std::string& filepath,
                            Loader::LoadType load_type,
                            std::vector<Token>& ots,
                            Env& env,
-                           const std::string& disppath)
+                           const std::string& disppath,
+                           bool disppath_names_dependency)
 {
     bool found_directory = false;
-    std::string fullpath = Loader::fullpath(filepath, load_type, env, &found_directory);
+    std::string found_as;
+    std::string fullpath = Loader::fullpath(filepath, load_type, env, &found_directory, &found_as);
     if (fullpath.empty()) {
         if (found_directory) {
             // An empty filename resolves to the directory it is joined onto
@@ -1406,14 +1408,22 @@ std::vector<Token>& expand(const std::string& filepath,
         return ots;
     }
 
-    // Record dependency for -M / -MM output
-    env.add_dependency(fullpath, disppath, load_type == Loader::LoadType::SINCLUDE);
+    // Record dependency for -M / -MM output, by the path the file was
+    // reached by (found_as), like gcc/clang: a build tool must be able to
+    // open it from the working directory, which the operand as written
+    // ('a.iec' next to the including file, or under a system path) does
+    // not allow. Only when the caller asks for it (--disppath for the main
+    // input) is disppath listed instead; what the file includes is still
+    // based on found_as, where the file really is. Line markers and
+    // diagnostics keep disppath.
+    env.add_dependency(fullpath, disppath_names_dependency ? disppath : found_as,
+                       load_type == Loader::LoadType::SINCLUDE);
 
     // item f: RAII-guarded, so an exception raised while processing this
     // file (or a file it includes) still pops both stacks correctly.
     // Declaration order matters: file_guard is constructed (pushed) first
     // and destructed (popped) last, matching the pre-RAII manual pairing.
-    FileContext::FileScope file_guard(env, fullpath);
+    FileContext::FileScope file_guard(env, fullpath, /*from_disk=*/true, found_as);
     Issue::LineGuard line_guard(1, disppath);
 
     ots.push_back(Token::line_pragma(0, disppath, env.is_standard_pragma_style()));

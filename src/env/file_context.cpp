@@ -8,10 +8,11 @@
 // Include stack
 // ---------------------------------------------------------------------------
 
-void FileContext::push_file(std::string filepath, bool from_disk) {
+void FileContext::push_file(std::string filepath, bool from_disk, std::string reached_path) {
     lineno_stack_.push_back(lineno_);
     const std::string p(Util::absolute_path(filepath));
     file_stack_.push_back(p);
+    reached_stack_.push_back(reached_path.empty() ? std::move(filepath) : std::move(reached_path));
     from_disk_stack_.push_back(from_disk ? 1 : 0);
     lineno_ = 1;
 }
@@ -20,6 +21,7 @@ void FileContext::pop_file() {
     if (!file_stack_.empty() && !lineno_stack_.empty()) {
         file_stack_.pop_back();
         from_disk_stack_.pop_back();
+        reached_stack_.pop_back();
         lineno_ = lineno_stack_.back();
         lineno_stack_.pop_back();
     }
@@ -29,6 +31,11 @@ std::string FileContext::current_file() const {
     if (!file_stack_.empty())
         return file_stack_.back();
     return "";
+}
+
+const std::string& FileContext::current_reached_path() const {
+    static const std::string none;
+    return reached_stack_.empty() ? none : reached_stack_.back();
 }
 
 bool FileContext::current_file_from_disk() const {
@@ -48,13 +55,18 @@ int FileContext::include_level() const {
 // Syspaths
 // ---------------------------------------------------------------------------
 
-void FileContext::add_syspath(std::string syspath) {
+void FileContext::add_syspath(std::string syspath, std::string reached_path) {
     const std::string p(Util::absolute_path(syspath));
     syspaths_.push_back(p);
+    syspath_reached_.push_back(reached_path.empty() ? std::move(syspath) : std::move(reached_path));
 }
 
 const std::vector<std::string>& FileContext::syspaths() const {
     return syspaths_;
+}
+
+const std::vector<std::string>& FileContext::syspath_reached_paths() const {
+    return syspath_reached_;
 }
 
 // ---------------------------------------------------------------------------

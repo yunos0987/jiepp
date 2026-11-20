@@ -72,3 +72,24 @@ TEST_F(FileContextTest, Lineno) {
     env.set_lineno(42);
     EXPECT_EQ(42, env.get_lineno());
 }
+
+// The reached-by path of each open file and of each system path (the bases
+// of dependency paths): what was passed when none is given, popped with the
+// file.
+TEST_F(FileContextTest, ReachedPaths) {
+    Env env;
+    EXPECT_EQ("", env.current_reached_path());
+    env.push_file("sub/main.iec");
+    EXPECT_EQ("sub/main.iec", env.current_reached_path());
+    env.push_file("/abs/inc/a.iec", true, "sub/inc/a.iec");
+    EXPECT_EQ("sub/inc/a.iec", env.current_reached_path());
+    env.pop_file();
+    EXPECT_EQ("sub/main.iec", env.current_reached_path());
+    env.pop_file();
+    EXPECT_EQ("", env.current_reached_path());
+
+    env.add_syspath("lib");
+    env.add_syspath("/abs/sub/lib2", "sub/lib2");
+    ASSERT_EQ(env.syspaths().size(), env.syspath_reached_paths().size());
+    EXPECT_EQ((std::vector<std::string>{"lib", "sub/lib2"}), env.syspath_reached_paths());
+}
