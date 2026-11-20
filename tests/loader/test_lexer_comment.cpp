@@ -46,7 +46,7 @@ TEST_F(LexerCommentTest, BlockCommentErrorAtOpenerLine) {
     EXPECT_EQ("<unknown location>:3.0: error: PP20: Unclosed comment; '/* c$n d$n'", message());
 
     EXPECT_THROW(ts("a\n(*! doc\n x\n"), Issue::Exception);
-    EXPECT_EQ("<unknown location>:2.0: error: PP20: Unclosed comment; '(* doc$n x$n'", message());
+    EXPECT_EQ("<unknown location>:2.0: error: PP20: Unclosed comment; '(*! doc$n x$n'", message());
 }
 
 // ---- line comment ----

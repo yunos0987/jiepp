@@ -15,11 +15,13 @@ struct yy_buffer_state;
 typedef struct yy_buffer_state *YY_BUFFER_STATE;
 extern YY_BUFFER_STATE cf_scan_expr(const char*, std::size_t);  // constfold.l
 extern void cf_delete_buffer(YY_BUFFER_STATE);
-extern bool cf_expr_complete;  // set by bison grammar when expr is fully reduced
-// C1: code chosen by cf::CfParser::error() (constfold.y) from cf_expr_complete
-// at the moment of the parse error; used below instead of unconditionally
-// raising MISSING_EXPRESSION, so a case like "1 x" (a complete expression
-// followed by more) is reported as INVALID_EXPRESSION, not MISSING_EXPRESSION.
+// Token history kept by yylex() (constfold.y); reset before every parse.
+extern bool cf_last_token_ends_operand;
+extern bool cf_prev_token_ends_operand;
+// C1: code chosen by cf::CfParser::error() (constfold.y) at the moment of
+// the parse error; used below instead of unconditionally raising
+// MISSING_EXPRESSION, so a case like "1 x" (a complete operand followed by
+// more) is reported as INVALID_EXPRESSION, not MISSING_EXPRESSION.
 extern Issue::Code cf_error_code;
 
 namespace {
@@ -83,7 +85,8 @@ cf::EvalResult evaluate(const std::string& expr) {
     int rc = 0;
     CfValue result;
     try {
-        cf_expr_complete = false;
+        cf_last_token_ends_operand = false;
+        cf_prev_token_ends_operand = false;
         cf_error_code = Issue::Code::MISSING_EXPRESSION;
         cf::CfParser parser(result);
         rc = parser.parse();

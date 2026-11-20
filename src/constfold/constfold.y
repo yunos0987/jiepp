@@ -19,14 +19,23 @@
 
 %code {
 CfValue cflval;  // global semantic value shared with flex scanner
-bool cf_expr_complete = false;  // set true when a complete expr is reduced
+// Whether the last token yylex() returned, and the one before it, can end
+// an operand (a literal, an identifier, a bare type keyword, TRUE/FALSE or
+// ')'). Maintained by yylex(), reset by evaluate().
+bool cf_last_token_ends_operand = false;
+bool cf_prev_token_ends_operand = false;
 // C1: the code eval_const_expr() should raise for a parse failure, chosen by
-// error() below from cf_expr_complete at the moment bison detects the
-// error -- INVALID_EXPRESSION if a complete expr had already been reduced
-// (a complete expression was followed by more), MISSING_EXPRESSION
-// otherwise. error() itself no longer raises a diagnostic (see below), so
-// eval_const_expr() is the single place a parse failure is reported, using
-// this code instead of unconditionally reporting MISSING_EXPRESSION.
+// error() below at the moment bison detects the error, from the token
+// before the offending one (the offending token is the lookahead, the last
+// one read). After a token that ends an operand the parser wanted an
+// operator, ')' or the end, so a complete operand is followed by something
+// else: INVALID_EXPRESSION ("1 x", "(1 x)", "(1"). After an operator, '('
+// or at the start it wanted an operand that is not there:
+// MISSING_EXPRESSION ("1 +", "(1) +", "()"), which is what gcc ("operator
+// '+' has no right operand") and clang ("expected value in expression")
+// report whether or not a parenthesised operand came earlier. error()
+// itself raises no diagnostic (see below), so eval_const_expr() is the
+// single place a parse failure is reported, using this code.
 Issue::Code cf_error_code = Issue::Code::MISSING_EXPRESSION;
 // See cf_note_failure() (constfold_internal.hpp) and eval_const_value().
 Issue::Code cf_failure_code = Issue::Code::SUCCESS;
@@ -57,6 +66,22 @@ extern int cflex(void);
 
 static int yylex(cf::CfParser::semantic_type* yylval) {
     int tok = cflex();
+    cf_prev_token_ends_operand = cf_last_token_ends_operand;
+    switch (tok) {
+    case cf::CfParser::token::CF_INT:
+    case cf::CfParser::token::CF_FLOAT:
+    case cf::CfParser::token::CF_INT_MIN_MAG:
+    case cf::CfParser::token::CF_IDENT:
+    case cf::CfParser::token::CF_TYPE_KW:
+    case cf::CfParser::token::CF_TRUE:
+    case cf::CfParser::token::CF_FALSE:
+    case cf::CfParser::token::CF_RPAREN:
+        cf_last_token_ends_operand = true;
+        break;
+    default:
+        cf_last_token_ends_operand = false;
+        break;
+    }
     switch (tok) {
     case cf::CfParser::token::CF_INT:
     case cf::CfParser::token::CF_FLOAT:
@@ -233,8 +258,8 @@ void cf::CfParser::error(const std::string& msg) {
     // {#elif} condition twice. eval_const_expr() is now the single place
     // that raises, using the code chosen here.
     (void)msg;
-    cf_error_code = cf_expr_complete ? Issue::Code::INVALID_EXPRESSION
-                                      : Issue::Code::MISSING_EXPRESSION;
+    cf_error_code = cf_prev_token_ends_operand ? Issue::Code::INVALID_EXPRESSION
+                                               : Issue::Code::MISSING_EXPRESSION;
 }
 }
 
@@ -269,7 +294,7 @@ void cf::CfParser::error(const std::string& msg) {
 start: expr { result = $1; }
      ;
 
-expr: or_expr { cf_expr_complete = true; $$ = $1; }
+expr: or_expr { $$ = $1; }
     ;
 
 or_expr:

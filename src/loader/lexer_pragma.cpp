@@ -77,8 +77,10 @@ Token read_pragma_body(const std::string& text,
     // followed by '#', this is a directive-shaped body with intervening
     // whitespace/newlines: treat it as an ordinary pragma (PP28, raised later
     // at expansion) and rewind so the run is preserved verbatim in the body.
-    // Otherwise fall back to the legacy behaviour of only skipping plain
-    // whitespace (not newlines) before deciding.
+    // Otherwise drop the plain whitespace (not newlines) right after '{',
+    // as jiecc's pragma rule does ("{ x}" is the pragma "{x}", SPEC 2
+    // "Ordinary Pragma Normalization"); a '#' can only be found at once
+    // here, since any blank before it took the branch above.
     std::size_t look = pos;
     while (look < len && (is_ws_char(text[look]) || is_nl_char(text[look])))
         ++look;

@@ -14,6 +14,11 @@ Token read_block_comment(const std::string& text, std::size_t& pos,
     body.reserve(128);
     body += opener1;
     body += '*';
+    // A document comment's '!' belongs to the opener: the caller has
+    // consumed it, and both the token and an unclosed-comment diagnostic
+    // (PP20) show the comment as written.
+    if (type == Token::DOCUMENT)
+        body += '!';
     int lines_in_comment = 0;
 
     while (pos < text.size()) {

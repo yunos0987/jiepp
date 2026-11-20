@@ -22,9 +22,7 @@ void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
     if (pos + 2 < n && text[pos + 2] == '!') {
         // Doc comment: (*! or /*!
         pos += 3;
-        auto tok = read_block_comment(text, pos, lineno, opener, Token::DOCUMENT, opts);
-        tok.text.insert(2, 1, '!');
-        result.push_back(std::move(tok));
+        result.push_back(read_block_comment(text, pos, lineno, opener, Token::DOCUMENT, opts));
     } else {
         std::size_t look = pos + 2;
         while (look < n && is_ws_char(text[look])) ++look;

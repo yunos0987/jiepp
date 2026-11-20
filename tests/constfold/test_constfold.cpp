@@ -90,6 +90,27 @@ TEST_F(ConstfoldTest, ExprExactErrorCases) {
     EXPECT_TRUE(empty());
 }
 
+// ---- PP51 / PP52 for a syntax error ----
+
+// PP51 when an operand is missing (the offending token comes after an
+// operator, after '(' or at the start), PP52 when something follows a
+// complete operand; gcc/clang give "1 +" and "(1) +" the same diagnostic. A
+// parenthesised operand earlier in the expression used to turn every later
+// PP51 into PP52.
+TEST_F(ConstfoldTest, MissingOperandIsPP51WhateverCameBefore) {
+    Issue::Blocking guard({});
+    for (const char* expr : {"1 +", "(1) +", "(1) *", "(1) &&", "(1) = = 1", "(1) + (", "((1)) -",
+                             "()", "(", "1 + )", "BYTE#", "(1) + BYTE#", "+", "1 = = 1"}) {
+        eval_const_expr(expr);
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, code()) << expr;
+    }
+    for (const char* expr : {"1 x", "(1) x", "(1 x)", "(1", "(1) (2)", "1 2", "1 )", "TRUE 1",
+                             "BYTE 1", "x y", "1 ! = 2", "(1 +2 3)"}) {
+        eval_const_expr(expr);
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()) << expr;
+    }
+}
+
 // ---- Base-N literal validation ----
 
 TEST_F(ConstfoldTest, BaseNInvalidBase) {
