@@ -84,7 +84,6 @@ public:
             raise_input_bytes_exceeded();
     }
     void          set_max_input_bytes(int n) { max_input_bytes_ = n; }
-    int           get_max_input_bytes() const { return max_input_bytes_; }
     std::uint64_t input_bytes() const { return input_bytes_; }
     void          reset_input_bytes() { input_bytes_ = 0; }
 

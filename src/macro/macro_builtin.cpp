@@ -6,7 +6,6 @@
 #include "../env/env.hpp"
 #include "../env/issue.hpp"
 #include "../util/iec_61131-3.hpp"
-#include "../core/preprocessor_internal.hpp"
 
 #include <chrono>
 #include <cstdint>

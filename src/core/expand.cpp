@@ -14,9 +14,7 @@
 #include "../util/stack_guard.hpp"
 #include "../util/text.hpp"
 
-#include <algorithm>
 #include <optional>
-#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>

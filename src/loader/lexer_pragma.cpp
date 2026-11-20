@@ -3,7 +3,6 @@
 
 #include <cctype>
 #include <cstddef>
-#include <optional>
 #include <regex>
 
 namespace jiepp::detail {

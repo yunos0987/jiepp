@@ -7,6 +7,7 @@
 #include "../loader/lexer.hpp"
 #include "../loader/loader.hpp"
 
+#include <memory>
 #include <optional>
 #include <set>
 #include <sstream>

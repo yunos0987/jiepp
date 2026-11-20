@@ -6,7 +6,6 @@
 #include "preprocessor_internal.hpp"
 
 #include "../constfold/constfold.hpp"
-#include "../loader/loader.hpp"
 #include "../loader/directive_parser.hpp"
 #include "../loader/lexer.hpp"
 #include "../macro/macro.hpp"

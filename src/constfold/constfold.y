@@ -12,9 +12,7 @@
 
 %code top {
 #include "env/issue.hpp"
-#include <cmath>
 #include <cstdint>
-#include <stdexcept>
 }
 
 %code {

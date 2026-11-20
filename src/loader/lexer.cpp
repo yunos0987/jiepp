@@ -1,7 +1,6 @@
 #include "lexer.hpp"
 #include "lexer_helpers.hpp"
 
-#include <iterator>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -222,12 +221,6 @@ std::vector<Token> tokenize(const std::string& text, LineNo lineno, LexOptions o
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
-std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, LineNo lineno) {
-    // kludge
-    std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-    return iec3_tokens_from_string(text, remove_comments, lineno);
-}
 
 namespace {
 

@@ -5,17 +5,11 @@
 #include <vector>
 #include "token.hpp"
 
-// Tokenize input stream → Token vector
-// lineno: starting line number (1-based)
-// Reads the whole stream without any size limit and without reporting read
-// errors. The preprocessor's own read paths (Loader::tokens, jiepp's stdin,
-// preprocess()) do not use it: they read through Loader::read_file() /
+// Tokenize text string (source text: diagnostics at the text's own lines,
+// counted from lineno, 1-based). report_nested_brace: as for iec3_relex()
+// below. Callers read the text through Loader::read_file() /
 // Loader::read_stream(), which count bytes for --max-input-bytes (PP67) and
 // report read errors (PP10).
-std::vector<Token> iec3_tokens(std::istream& input, bool remove_comments, LineNo lineno = 1);
-
-// Tokenize text string (source text: diagnostics at the text's own lines,
-// counted from lineno). report_nested_brace: as for iec3_relex() below.
 std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, LineNo lineno = 1,
                                            bool report_nested_brace = true);
 

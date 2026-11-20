@@ -5,7 +5,7 @@
 #include "../env/lineno.hpp"
 #include "../env/param_constants.hpp"
 #include "../loader/lexer.hpp"
-#include "../loader/directive_parser.hpp" //kludge
+#include "../loader/directive_parser.hpp"
 #include "../macro/macro.hpp"
 #include "../util/text.hpp"
 #include "../util/iec_61131-3.hpp"
@@ -15,6 +15,7 @@
 #include <climits>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>

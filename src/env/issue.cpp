@@ -1,13 +1,9 @@
 #include "issue.hpp"
 
-#include <algorithm>
-#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <set>
-#include <sstream>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 #include "issue_message.hpp"

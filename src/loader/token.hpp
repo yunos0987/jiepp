@@ -2,8 +2,6 @@
 #include "../env/lineno.hpp"
 #include "hideset.hpp"
 
-#include <memory>
-#include <set>
 #include <string>
 #include <string_view>
 #include <vector>

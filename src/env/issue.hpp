@@ -2,7 +2,6 @@
 #include "lineno.hpp"
 
 #include <exception>
-#include <functional>
 #include <optional>
 #include <ostream>
 #include <set>
