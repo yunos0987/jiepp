@@ -9,18 +9,7 @@
 // to the behaviour table of the implementation plan.
 // =====================================================================
 
-class BuiltinDiagTest : public JieppTest {
-protected:
-    // Each diagnostic line without its location prefix, e.g. "PP91: 'boom'".
-    std::vector<std::string> diags() {
-        std::vector<std::string> out;
-        for (const auto& m : messages()) {
-            auto p = m.find(": PP");
-            out.push_back(p == std::string::npos ? m : m.substr(p + 2));
-        }
-        return out;
-    }
-};
+class BuiltinDiagTest : public JieppTest {};
 
 using Strings = std::vector<std::string>;
 

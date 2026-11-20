@@ -1,6 +1,4 @@
-#include "test_helper.hpp"
-#include "jiepp/jiepp.hpp"
-#include "jiepp/option.hpp"
+#include "jiepp_command_test_helper.hpp"
 
 // jiepp command-line output of __arg_lhs / __arg_rhs / __arg_dir
 // (SPECIFICATION.md 12.13) inside {ld}...{end}, the way rungiec splits FB
@@ -9,30 +7,11 @@
 namespace {
 class ArgSplitCommandTest : public JieppTest {};
 
-struct RunResult {
-    int rc;
-    std::string out;
-};
+using RunResult = JieppCommandResult;
 
 RunResult run_jiepp_on(const std::string& content, JieppOptions opts,
                        const std::string& name = "arg_split_cmd.iec") {
-    const fs::path dir = fs::temp_directory_path();
-    CwdGuard cwd(dir);
-    {
-        std::ofstream f(dir / name, std::ios::binary);
-        f << content;
-    }
-    const fs::path out = dir / (name + ".piec");
-    opts.input_filepaths = {name};
-    opts.output_filepath = out.generic_string();
-    RunResult r;
-    r.rc = jiepp_command(opts);
-    std::ifstream i(out, std::ios::binary);
-    r.out.assign(std::istreambuf_iterator<char>(i), std::istreambuf_iterator<char>());
-    std::error_code ec;
-    fs::remove(dir / name, ec);
-    fs::remove(out, ec);
-    return r;
+    return run_jiepp_command_on(content, std::move(opts), name);
 }
 
 const std::string kInput =

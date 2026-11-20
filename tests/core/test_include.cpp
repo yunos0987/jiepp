@@ -599,8 +599,8 @@ protected:
         JieppTest::SetUp();
         dir_ = fs::temp_directory_path() / "jiepp_include_count_test";
         fs::create_directories(dir_);
-        write(dir_ / "inc.iec", "X\n");
-        write(dir_ / "once.iec", "{#pragma once}\nO\n");
+        write_file(dir_ / "inc.iec", "X\n");
+        write_file(dir_ / "once.iec", "{#pragma once}\nO\n");
         inc_  = "{#include '" + (dir_ / "inc.iec").generic_string() + "'}\n";
         once_ = "{#include '" + (dir_ / "once.iec").generic_string() + "'}\n";
     }
@@ -608,10 +608,6 @@ protected:
         std::error_code ec;
         fs::remove_all(dir_, ec);
         JieppTest::TearDown();
-    }
-    static void write(const fs::path& p, const std::string& s) {
-        std::ofstream f(p, std::ios::binary);
-        f << s;
     }
     static std::string repeat(const std::string& s, int n) {
         std::string r;

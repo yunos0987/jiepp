@@ -27,20 +27,15 @@ protected:
         fs::create_directories(dir_ / "sub");
         // The file includes itself by its real name: a second pass over it
         // prints another "X;" unless the first pass was recognised.
-        write(dir_ / "x.iec", "{#pragma once}\nX;\n{#include 'x.iec'}\n");
+        write_file(dir_ / "x.iec", "{#pragma once}\nX;\n{#include 'x.iec'}\n");
         // A plain header and a main file that includes it twice by name.
-        write(dir_ / "h.iec", "{#pragma once}\nH;\n");
+        write_file(dir_ / "h.iec", "{#pragma once}\nH;\n");
     }
 
     void TearDown() override {
         std::error_code ec;
         fs::remove_all(dir_, ec);
         JieppTest::TearDown();
-    }
-
-    static void write(const fs::path& p, const std::string& text) {
-        std::ofstream f(p, std::ios::binary);
-        f << text;
     }
 
     static std::size_t count(const std::string& s, const std::string& needle) {
@@ -71,7 +66,7 @@ TEST_F(PragmaOnceIdentityTest, RootThroughDotDotSpelling) {
 }
 
 TEST_F(PragmaOnceIdentityTest, IncludedThroughDotDotSpelling) {
-    write(dir_ / "m.iec", "{#include 'h.iec'}\n{#include 'sub/../h.iec'}\n{#include './h.iec'}\n");
+    write_file(dir_ / "m.iec", "{#include 'h.iec'}\n{#include 'sub/../h.iec'}\n{#include './h.iec'}\n");
     EXPECT_EQ(1u, count(pp_file(dir_ / "m.iec"), "H;"));
     EXPECT_TRUE(empty());
 }
@@ -90,7 +85,7 @@ TEST_F(PragmaOnceIdentityTest, IncludedThroughHardLink) {
     fs::create_hard_link(dir_ / "h.iec", dir_ / "hlink.iec", ec);
     if (ec)
         GTEST_SKIP() << "hard links are not available: " << ec.message();
-    write(dir_ / "m.iec", "{#include 'h.iec'}\n{#include 'hlink.iec'}\n");
+    write_file(dir_ / "m.iec", "{#include 'h.iec'}\n{#include 'hlink.iec'}\n");
     EXPECT_EQ(1u, count(pp_file(dir_ / "m.iec"), "H;"));
     EXPECT_TRUE(empty());
 }
@@ -136,7 +131,7 @@ TEST_F(PragmaOnceIdentityTest, IncludedThroughSymlink) {
     fs::create_symlink(dir_ / "h.iec", dir_ / "hsym.iec", ec);
     if (ec)
         GTEST_SKIP() << "symlinks are not available: " << ec.message();
-    write(dir_ / "m.iec", "{#include 'h.iec'}\n{#include 'hsym.iec'}\n");
+    write_file(dir_ / "m.iec", "{#include 'h.iec'}\n{#include 'hsym.iec'}\n");
     EXPECT_EQ(1u, count(pp_file(dir_ / "m.iec"), "H;"));
     EXPECT_TRUE(empty());
 }

@@ -1,11 +1,6 @@
 #include "test_helper.hpp"
 #include <algorithm>
 
-static std::string strip(std::string s) {
-    s.erase(std::remove(s.begin(), s.end(), ' '), s.end());
-    return s;
-}
-
 class DefinedTest : public JieppTest {};
 
 // Fact: defined checks macro existence, not value; comparison is case-sensitive

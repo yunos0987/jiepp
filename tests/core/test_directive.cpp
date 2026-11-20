@@ -1453,3 +1453,18 @@ TEST_F(DirectiveTest, WstringQuotesUseFourDigitHex) {
                   "<unknown location>:1.0: warning: PP29: Missing terminating quote character; '\'s'"}),
               messages());
 }
+
+// {#D} and {#I} are the short names of {#define} and {#syspath} (SPEC 2
+// "Directive Name Aliases"); only the upper-case letters are names.
+TEST_F(DirectiveTest, ShortNamesDAndI) {
+    EXPECT_EQ("1 2,3", pp("{#D X 1}{#D F(a, r...) r}X F(0,2,3)"));
+    EXPECT_EQ(pp("{#syspath 'lib'}"), pp("{#I 'lib'}"));
+    EXPECT_NE(std::string::npos, pp("{#I 'lib'}").find("syspath:'lib'"));
+    EXPECT_TRUE(empty());
+
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("X", pp("{#d X 1}X"));
+    EXPECT_EQ((std::vector<Issue::Code>{Issue::Code::UNKNOWN_DIRECTIVE}), codes());
+    (void)pp("{#i 'lib'}");
+    EXPECT_EQ((std::vector<Issue::Code>{Issue::Code::UNKNOWN_DIRECTIVE}), codes());
+}

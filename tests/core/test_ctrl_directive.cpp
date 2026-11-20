@@ -2,11 +2,6 @@
 #include <algorithm>
 #include <vector>
 
-static std::string strip(std::string s) {
-    s.erase(std::remove(s.begin(), s.end(), ' '), s.end());
-    return s;
-}
-
 // ---- #if ----
 
 // NOTE: boolean literals are case-sensitive in this implementation.

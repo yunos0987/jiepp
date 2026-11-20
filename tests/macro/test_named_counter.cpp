@@ -9,18 +9,7 @@
 // refer to the behaviour table of the implementation plan.
 // =====================================================================
 
-class NamedCounterTest : public JieppTest {
-protected:
-    // Each diagnostic line without its location prefix, e.g. "PP39: ...".
-    std::vector<std::string> diags() {
-        std::vector<std::string> out;
-        for (const auto& m : messages()) {
-            auto p = m.find(": PP");
-            out.push_back(p == std::string::npos ? m : m.substr(p + 2));
-        }
-        return out;
-    }
-};
+class NamedCounterTest : public JieppTest {};
 
 using Strings = std::vector<std::string>;
 using Codes = std::vector<Issue::Code>;

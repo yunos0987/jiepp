@@ -2,11 +2,6 @@
 #include <algorithm>
 #include <vector>
 
-static std::string strip(std::string s) {
-    s.erase(std::remove(s.begin(), s.end(), ' '), s.end());
-    return s;
-}
-
 class CtrlSyntaxTest : public JieppTest {};
 
 // Fact: if/elif/else/endif selects the first true branch

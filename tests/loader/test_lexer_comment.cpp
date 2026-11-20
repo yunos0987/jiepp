@@ -1,22 +1,4 @@
-#include "test_helper.hpp"
-
-#include "loader/lexer.hpp"
-
-// ---- helpers ----
-
-static std::vector<Token> ts(const std::string& text, bool remove_comments = false) {
-    return iec3_tokens_from_string(text, remove_comments);
-}
-
-static Token make(int type, const std::string& text, int line = 0) {
-    return Token::create(type, text, line);
-}
-
-static void expect_tokens(const std::vector<Token>& expected,
-                          const std::string& text,
-                          bool remove_comments = false) {
-    EXPECT_EQ(expected, ts(text, remove_comments));
-}
+#include "lexer_test_helper.hpp"
 
 // ---- comment errors ----
 

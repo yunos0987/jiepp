@@ -12,18 +12,7 @@
 // by a plain __VA_ARGS__) changes the results checked here.
 // =====================================================================
 
-class NosplitTest : public JieppTest {
-protected:
-    // Each diagnostic line without its location prefix, e.g. "PP34: ...".
-    std::vector<std::string> diags() {
-        std::vector<std::string> out;
-        for (const auto& m : messages()) {
-            auto p = m.find(": PP");
-            out.push_back(p == std::string::npos ? m : m.substr(p + 2));
-        }
-        return out;
-    }
-};
+class NosplitTest : public JieppTest {};
 
 // The RobustnessTest* name matches the sandbox test presets' filter
 // ^(Sandbox|RobustnessTest), so these run in sandbox builds too.

@@ -1,16 +1,4 @@
-#include "test_helper.hpp"
-
-#include "loader/lexer.hpp"
-
-// ---- helpers ----
-
-static std::vector<Token> ts(const std::string& text, bool remove_comments = false) {
-    return iec3_tokens_from_string(text, remove_comments);
-}
-
-static Token make(int type, const std::string& text, int line = 0) {
-    return Token::create(type, text, line);
-}
+#include "lexer_test_helper.hpp"
 
 // ---- remove_comments ----
 

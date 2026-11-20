@@ -56,16 +56,7 @@ const char* const kNeedsParen =
 const char* const kBadStringize =
     "<unknown location>:1.0: error: PP31: Invalid stringizing (@)";
 
-// The PP80 warning for a __VA_OPT__ token in the definition of macro `name`.
-std::string vow(const std::string& name) {
-    return "<unknown location>:1.0: warning: PP80: __VA_OPT__ outside a variadic macro; '" +
-           name + "'";
-}
-
-// `n` PP80 warnings for macro `name`.
-std::vector<std::string> vows(const std::string& name, int n) {
-    return std::vector<std::string>(static_cast<std::size_t>(n), vow(name));
-}
+// vow() / vows() (test_helper.hpp) give the PP80 warning(s) for a macro.
 
 // a followed by b.
 std::vector<std::string> cat(std::vector<std::string> a, const std::vector<std::string>& b) {

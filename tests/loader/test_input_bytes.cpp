@@ -254,18 +254,13 @@ protected:
         std::error_code ec;
         fs::remove_all(dir_, ec);
         fs::create_directories(dir_);
-        write(dir_ / "a.inc", A_TEXT);
+        write_file(dir_ / "a.inc", A_TEXT);
     }
 
     void TearDown() override {
         std::error_code ec;
         fs::remove_all(dir_, ec);
         JieppTest::TearDown();
-    }
-
-    static void write(const fs::path& p, const std::string& text) {
-        std::ofstream f(p, std::ios::binary);
-        f << text;
     }
 
     // preprocess() of the file `main` (pushed as the current file, so a
@@ -289,7 +284,7 @@ protected:
 TEST_F(InputBytesTest, IncludesCounted) {
     const std::string main_text = "{#include 'a.inc'}\n";
     fs::path main = dir_ / "main.iec";
-    write(main, main_text);
+    write_file(main, main_text);
     const int total = static_cast<int>(main_text.size() + A);
 
     {
@@ -310,7 +305,7 @@ TEST_F(InputBytesTest, IncludesCounted) {
 TEST_F(InputBytesTest, RepeatedIncludeCountedOnce) {
     const std::string main_text = "{#include 'a.inc'}\n{#include 'a.inc'}\n";
     fs::path main = dir_ / "main2.iec";
-    write(main, main_text);
+    write_file(main, main_text);
 
     Env env = setup();
     env.set_max_input_bytes(static_cast<int>(main_text.size() + A));
@@ -323,7 +318,7 @@ TEST_F(InputBytesTest, RepeatedIncludeCountedOnce) {
 TEST_F(InputBytesTest, CachedFileFromEarlierCallNotCounted) {
     const std::string main_text = "{#include 'a.inc'}\n";
     fs::path main = dir_ / "main3.iec";
-    write(main, main_text);
+    write_file(main, main_text);
 
     Env env = setup();
     EXPECT_EQ(std::nullopt, run_main(main, env));
@@ -335,7 +330,7 @@ TEST_F(InputBytesTest, CachedFileFromEarlierCallNotCounted) {
 TEST_F(InputBytesTest, HasIncludeNotCounted) {
     const std::string main_text = "{#if __has_include('a.inc')}x{#endif}\n";
     fs::path main = dir_ / "main4.iec";
-    write(main, main_text);
+    write_file(main, main_text);
 
     Env env = setup();
     env.set_max_input_bytes(static_cast<int>(main_text.size()));

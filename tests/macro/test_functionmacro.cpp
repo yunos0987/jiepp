@@ -1,10 +1,4 @@
-#include "test_helper.hpp"
-
-#include "loader/lexer.hpp"
-
-static std::vector<Token> ts(const std::string& text) {
-    return iec3_tokens_from_string(text, false);
-}
+#include "loader/lexer_test_helper.hpp"
 
 // ---- function macro: simple ----
 
@@ -1030,7 +1024,9 @@ TEST_F(FuncMacroTest, NestedArgumentEdgeLineCommentDropsItsNewline) {
 // The same, when the comment is the whole argument of a nested call that
 // takes no arguments: the whitespace-only argument is dropped (Z() has zero
 // arguments), and the comment's line is compensated before it goes. This
-// used to index the cleared argument list.
+// used to index the cleared argument list: undefined behaviour, which only
+// a checked standard library (the Debug presets) reliably turns into a
+// failure, so the Debug ctest is what guards it.
 TEST_F(FuncMacroTest, NestedZeroArgumentCallWithEdgeLineComment) {
     const std::string def = "{#define ID(x) x}\n{#define Z() z}\n{#define V(...) v}\n";
     EXPECT_EQ(pp(def + "ID(Z(\n))|\n__LINE__"), pp(def + "ID(Z( // c\n))|\n__LINE__"));

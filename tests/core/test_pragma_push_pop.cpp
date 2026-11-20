@@ -85,19 +85,14 @@ protected:
         JieppTest::TearDown();
     }
 
-    static void write(const fs::path& p, const std::string& text) {
-        std::ofstream f(p, std::ios::binary);
-        f << text;
-    }
-
     fs::path dir_;
 };
 
 } // namespace
 
 TEST_F(PragmaPushPopIncludeTest, PushInIncludedFilePopInIncluder) {
-    write(dir_ / "h.iec", "{#pragma push_macro('X')}{#undef X}{#define X 2}");
-    write(dir_ / "m.iec", "{#define X 1}{#include 'h.iec'}A=X;{#pragma pop_macro('X')}B=X;");
+    write_file(dir_ / "h.iec", "{#pragma push_macro('X')}{#undef X}{#define X 2}");
+    write_file(dir_ / "m.iec", "{#define X 1}{#include 'h.iec'}A=X;{#pragma pop_macro('X')}B=X;");
     const std::string out = pp_file(dir_ / "m.iec");
     EXPECT_NE(std::string::npos, out.find("A=2;")) << out;
     EXPECT_NE(std::string::npos, out.find("B=1;")) << out;

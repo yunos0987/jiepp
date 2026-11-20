@@ -1,8 +1,11 @@
 #pragma once
+#include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -74,6 +77,55 @@ private:
     std::streambuf* saved_;
 };
 
+// ---- text and file helpers ----
+
+// `s` without its space characters (' ' only; newlines and tabs stay).
+inline std::string strip(std::string s) {
+    s.erase(std::remove(s.begin(), s.end(), ' '), s.end());
+    return s;
+}
+
+// The bytes of file `p` (binary mode: no newline translation).
+inline std::string read_file(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return {std::istreambuf_iterator<char>(f), {}};
+}
+
+// Creates or overwrites file `p` with `content` (binary mode).
+inline void write_file(const fs::path& p, const std::string& content) {
+    std::ofstream f(p, std::ios::binary);
+    f << content;
+}
+
+// ---- expected-message builders ----
+//
+// The exact message text in PlainTextMessage::message()'s
+// "<unknown location>:L.0: ..." form used by pp()/pp_file() when no real
+// file has been pushed.
+
+// The PP29 warning at line `line` for context `ctx`.
+inline std::string w29(int line, const std::string& ctx) {
+    return "<unknown location>:" + std::to_string(line) +
+           ".0: warning: PP29: Missing terminating quote character; '" + ctx + "'";
+}
+
+// The PP49 warning at line `line` for context `ctx`.
+inline std::string w49(int line, const std::string& ctx) {
+    return "<unknown location>:" + std::to_string(line) +
+           ".0: warning: PP49: Extra tokens at end of directive; '" + ctx + "'";
+}
+
+// The PP80 warning for a __VA_OPT__ token in the definition of macro `name`.
+inline std::string vow(const std::string& name) {
+    return "<unknown location>:1.0: warning: PP80: __VA_OPT__ outside a variadic macro; '" +
+           name + "'";
+}
+
+// `n` PP80 warnings for macro `name`.
+inline std::vector<std::string> vows(const std::string& name, int n) {
+    return std::vector<std::string>(static_cast<std::size_t>(n), vow(name));
+}
+
 // ---- preprocess helpers ----
 
 inline std::string pp(std::istream& input, Env& env) {
@@ -142,6 +194,16 @@ public:
         while (std::getline(i, line))
             ms.push_back(PlainTextMessage::strip_source_location(line));
         return ms;
+    }
+
+    // Each diagnostic line without its location prefix, e.g. "PP91: 'boom'".
+    std::vector<std::string> diags() {
+        std::vector<std::string> out;
+        for (const auto& m : messages()) {
+            auto p = m.find(": PP");
+            out.push_back(p == std::string::npos ? m : m.substr(p + 2));
+        }
+        return out;
     }
 
     std::vector<Issue::Code> codes() {

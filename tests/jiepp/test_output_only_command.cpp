@@ -1,6 +1,4 @@
-#include "test_helper.hpp"
-#include "jiepp/jiepp.hpp"
-#include "jiepp/option.hpp"
+#include "jiepp_command_test_helper.hpp"
 
 // jiepp command-line output for a macro whose body prints a newline ($n):
 // line markers resync the printed lines to the source; -P prints no marker;
@@ -11,22 +9,9 @@ class OutputOnlyLinesCommandTest : public JieppTest {};
 
 std::string run_jiepp_on(const std::string& content, JieppOptions opts,
                          const std::string& name = "u6_output_only.iec") {
-    const fs::path dir = fs::temp_directory_path();
-    CwdGuard cwd(dir);
-    {
-        std::ofstream f(dir / name, std::ios::binary);
-        f << content;
-    }
-    const fs::path out = dir / (name + ".piec");
-    opts.input_filepaths = {name};
-    opts.output_filepath = out.generic_string();
-    EXPECT_EQ(0, jiepp_command(opts));
-    std::ifstream i(out, std::ios::binary);
-    std::string r((std::istreambuf_iterator<char>(i)), std::istreambuf_iterator<char>());
-    std::error_code ec;
-    fs::remove(dir / name, ec);
-    fs::remove(out, ec);
-    return r;
+    JieppCommandResult r = run_jiepp_command_on(content, std::move(opts), name);
+    EXPECT_EQ(0, r.rc);
+    return r.out;
 }
 
 const std::string kInput = "{#define Z a$nb}\nZ;\nL2 __LINE__;\n";
