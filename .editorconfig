@@ -3,22 +3,27 @@ root = true
 [*]
 charset = utf-8
 end_of_line = lf
-indent_style = tab
+indent_style = space
 indent_size = 4
 trim_trailing_whitespace = true
 insert_final_newline = true
 
 [*.{yml,yaml}]
-indent_style = space
 indent_size = 2
 
 [*.md]
-indent_style = space
 trim_trailing_whitespace = false
 
-[CMakeLists.txt]
-indent_size = 4
-
 [*.json]
-indent_style = space
 indent_size = 2
+
+# Sample and golden files are byte-exact test data (.gitattributes: -text).
+# Their line endings, trailing whitespace and final newline are part of the
+# test, so editors must leave them alone.
+[*.{iec,piec,jiec}]
+charset = unset
+end_of_line = unset
+indent_style = unset
+indent_size = unset
+trim_trailing_whitespace = false
+insert_final_newline = false

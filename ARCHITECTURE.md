@@ -92,7 +92,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 ### macro/ の内部構成
 
-`Macro` クラス（`macro.hpp/cpp`）はオブジェクト形式・関数形式マクロの定義を表現する（パラメータ一覧・本体トークン列を保持）。`BuiltinFunctionMacro`（`ErrorBuiltin`/`AssertBuiltin`/`CounterBuiltin`/`CounterSetBuiltin`/`NosplitBuiltin`）は関数マクロと同じ形で呼び出すビルトインで、引数を事前展開せず `invoke()` で結果を計算する。`FunctionMacro` から派生させないので、`define_directive_text()`/`-dM` には `__COUNTER__` と同じく出ない。`macro_builtin.cpp` は `__LINE__`/`__FILE__`/`__COUNTER__`/`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__` 等、値が動的に決まる組み込みオブジェクトマクロを実装する。`TimeStampMacro` はファイルシステムにアクセスするため `JIEPP_SANDBOX` ビルドでは空文字列を返すスタブに切り替わる（`BaseFileMacro`/`FileNameMacro` は `__FILE__` と同じ情報しか返さず、ファイルシステムにもアクセスしないため、サンドボックスでも通常ビルドと同じ値を返す）。
+`Macro` クラス（`macro.hpp/cpp`）はオブジェクト形式・関数形式マクロの定義を表現する（パラメータ一覧・本体トークン列を保持）。`BuiltinFunctionMacro`（`ErrorBuiltin`/`AssertBuiltin`/`CounterBuiltin`/`CounterSetBuiltin`/`NosplitBuiltin`/`XmlBuiltin`/`ArgSplitBuiltin`）は関数マクロと同じ形で呼び出すビルトインで、引数を事前展開せず `invoke()` で結果を計算する。`FunctionMacro` から派生させないので、`define_directive_text()`/`-dM` には `__COUNTER__` と同じく出ない。`macro_builtin.cpp` は `__LINE__`/`__FILE__`/`__COUNTER__`/`__TIMESTAMP__`/`__BASE_FILE__`/`__FILE_NAME__` 等、値が動的に決まる組み込みオブジェクトマクロを実装する。`TimeStampMacro` はファイルシステムにアクセスするため `JIEPP_SANDBOX` ビルドでは空文字列を返すスタブに切り替わる（`BaseFileMacro`/`FileNameMacro` は `__FILE__` と同じ情報しか返さず、ファイルシステムにもアクセスしないため、サンドボックスでも通常ビルドと同じ値を返す）。
 
 `FunctionMacro` と `UserDefinedObjectMacro` は、本体に `__VA_OPT__` がある場合に限り、正規化した本体と同じ長さの `VaOptSpan` 表を定義時に 1 回だけ作る（`compute_va_opt_spans()`、本体の長さに比例する時間）。各要素は自分の位置からの相対オフセットで、次の空白以外のトークン（`next`）、`__VA_OPT__` の `(` に対応する `)`（`close`、形が崩れていれば 0）、その中の入れ子の `__VA_OPT__` の数（`nested`。`)` が閉じていなければ本体の末尾まで数える。`(` がなければ 0）を持つ。相対オフセットなので、外側の `__VA_OPT__` の中身には表の同じ部分範囲をそのまま使える。表は本体から導かれる値なので `equal()`（再定義の同一判定）には含めない。`handle_define()` は関数形式マクロを作った直後にこの表を左から順に読み、誤った `__VA_OPT__`（`(` がない、`nested` が 0 でない、`close` が 0）を最初の 1 件だけ `PP37` で報告して定義全体を捨てる（本体を走査し直さない）。再定義の検査はその後なので、拒否された定義は既存の定義を置き換えず `PP35` も出さない。オブジェクト形式マクロは定義時には調べない。`handle_define()` は同じ関数の中で、`__VA_OPT__` のトークンごとの警告 `PP80` も出す。`ts` のうち警告済みの範囲を `warned` で持ち、マクロ名とパラメータリストの `__VA_OPT__`、可変長引数でないマクロとオブジェクト形式マクロの本体の `__VA_OPT__` を警告する。定義が拒否されるときは、clang がエラーの前後に警告する順序に合わせ、エラーを見つけたトークンまでを先に、行の残りを後に警告する（`PP37` では `malformed_va_opt()` が返す、エラーまでに読んだ `__VA_OPT__` の数で境目を決める）。可変長引数マクロの本体は警告しない。
 
@@ -190,7 +190,7 @@ Web サーバーで信頼できない入力を処理する際のコンパイル�
 - ファイルシステムにアクセスする組み込みマクロ `__TIMESTAMP__`（実装は `TimeStampMacro`、`macro/macro_builtin.cpp`）は空文字列を返すスタブに切り替わる。`__BASE_FILE__`/`__FILE_NAME__` は `__FILE__` や診断メッセージと同じパス情報しか返さないため、通常ビルドと同じ値を返す（空にしない）
 - 運用要件（process-per-request 必須の理由・入出力サイズ制限の管理元）は [SPECIFICATION.md §14](SPECIFICATION.md#14-サンドボックスモード--sandbox-mode) の「運用要件」参照
 
-### テスト構成
+## テスト構成
 
 `tests/` 配下は `src/` と同じモジュール構成:
 
@@ -204,7 +204,7 @@ Web サーバーで信頼できない入力を処理する際のコンパイル�
 | `jiepp/` | CLI 入出力・エンドツーエンドテスト |
 | `util/` | `Util` 名前空間（トリム・パス正規化・IEC 文字列エンコード等）のテスト |
 
-共有ヘルパー（`run_e2e()` 等の e2e アサーション補助）は `tests/test_helper.hpp`（専用サブディレクトリなし）。
+共有ヘルパー（`JieppTest` フィクスチャ等のアサーション補助）は `tests/test_helper.hpp`（専用サブディレクトリなし）。e2e の `run_e2e()` は `tests/jiepp/test_jiepp_command.cpp` にある。
 
 - `tests/env/test_robustness.cpp` — 常時有効なロバスト性制限のテスト
 - `tests/core/test_sandbox.cpp` — サンドボックス固有テスト（`#ifdef JIEPP_SANDBOX` で囲まれ、通常ビルドではスキップ）

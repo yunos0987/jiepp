@@ -20,7 +20,7 @@
 
 - `cmake --build --preset <release-preset> --target bench` builds `jiepp`, generates perf test case inputs from `bench/cases/*/*.py`, and runs them, writing a TSV under `build/<preset>/perftest/results/stats.<timestamp>.tsv`.
 - Configure-time cache vars: `JIEPP_PERF_REPEAT` (samples per case, default 10), `JIEPP_PERF_MODE` (`all`|`greedy`|`greedy2`, default `all`), `JIEPP_PERF_RESULTS_DIR` (default `<build>/perftest/results`), `JIEPP_PERF_CASES` (semicolon-separated case names to restrict to, default empty = all cases).
-- `ctest --preset <name> -L perf` runs only `perftest_smoke`, a fast 2-case selfcheck; it is not part of a plain `ctest` run's normal case count and is not part of `ALL`/CI otherwise.
+- `perftest_smoke` is a fast 2-case selfcheck of the harness, registered as an ordinary test with the label `perf` (non-sandbox builds with Python 3 only): a plain `ctest --preset <name>` and CI run it along with the gtest cases, and `ctest --preset <name> -L perf` runs it alone. The `bench` and `perf_make` targets are not part of `ALL` or CI.
 - Benchmarking a Debug build still runs but prints a `WARNING` and is not representative of real performance — always use a Release preset for numbers you intend to report.
 
 ## Code Rules

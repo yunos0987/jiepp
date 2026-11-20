@@ -11,9 +11,3 @@
 # OS
 .DS_Store
 Thumbs.db
-
-# Test output
-/tests/jiepp/input/**/*.piec
-/tests/jiepp/input/**/*.log
-/tests/jiepp/input/**/*.d
-/tests/jiepp/output/**/*.error.piec

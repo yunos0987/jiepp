@@ -8,9 +8,9 @@ param(
 )
 
 # Auto-discover default samples from iec_61131-3/samples/*.iec
-# Excludes files starting with _ (like _header.iec) and .piec preprocessed files
+# Excludes files starting with _ (like _header.iec), which are include fragments
 $DefaultSamples = @(Get-ChildItem -Path "iec_61131-3/samples/*.iec" -File |
-    Where-Object { $_.Name -notlike '_*' -and $_.Name -notlike '*.piec' } |
+    Where-Object { $_.Name -notlike '_*' } |
     ForEach-Object { $_.BaseName } |
     Sort-Object)
 

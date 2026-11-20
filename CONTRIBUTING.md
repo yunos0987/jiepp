@@ -50,7 +50,7 @@ CMake Tools 拡張を使用している場合、CMakePresets.json が自動検�
 
 ## Adding Tests
 
-Tests live in `tests/` and use Google Test. Group related tests in the appropriate subdirectory (`constfold/`, `core/`, `env/`, `jiepp/`, `loader/`, `macro/`, `util/`). The shared e2e/assertion helpers live directly at `tests/test_helper.hpp` (not in its own subdirectory).
+Tests live in `tests/` and use Google Test. Group related tests in the appropriate subdirectory (`constfold/`, `core/`, `env/`, `jiepp/`, `loader/`, `macro/`, `util/`). The shared assertion helpers live directly at `tests/test_helper.hpp` (not in its own subdirectory); the e2e helper `run_e2e()` is in `tests/jiepp/test_jiepp_command.cpp`.
 
 ## Boost.Preprocessor テスト入力の更新 / Updating the Boost Test Corpus
 
@@ -79,7 +79,7 @@ python tools/convert_boost_pp.py --check <dir>/include/boost/preprocessor tests/
 powershell .\tools\pp_iec61131-3_samples.ps1
 
 # 特定のサンプルのみ再生成
-powershell .\tools\pp_iec61131-3_samples.ps1 example
+powershell .\tools\pp_iec61131-3_samples.ps1 define
 ```
 
 **手動での個別再生成:**
@@ -87,7 +87,7 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 リポジトリルートから jiepp を直接実行することもできます：
 
 ```powershell
-.\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/example.iec -o iec_61131-3/samples/example.piec
+.\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/define.iec -o iec_61131-3/samples/define.piec
 ```
 
 `{#syspath 'lib'}` はディレクティブを含むファイル自身のディレクトリ（この場合 `iec_61131-3/samples`）を基準に解決されるため、`{#syspath}` や `{#sinclude}` を使うサンプルでも追加のフラグは不要です。
@@ -112,7 +112,7 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 
 - **make フェーズ**: `perftest.py make` がケース生成器を実行し、ビルドディレクトリ配下（ソースツリー外）にテスト入力ファイル一式を生成します（実行のたびに出力先ディレクトリをクリアしてから生成）。
 - **run フェーズ**: `perftest.py run` が各ケースに対して `jiepp.exe` を `--repeat` 回実行し、実行時間（プロセス起動オーバーヘッドを含む壁時計時間。旧 jiecc の計測方式を踏襲）を TSV に記録します。
-- CMake ターゲット: `perf_make`（ケース生成のみ）と `bench`（`perf_make` + `jiepp` に依存し、生成とベンチ実行の両方を行う）。どちらも `ALL` ビルドには含まれず、CI でも実行されません（`perftest_smoke` という高速な自己診断テストのみ `ctest -L perf` で実行されます）。
+- CMake ターゲット: `perf_make`（ケース生成のみ）と `bench`（`perf_make` + `jiepp` に依存し、生成とベンチ実行の両方を行う）。どちらも `ALL` ビルドには含まれず、CI でも実行されません（`perftest_smoke` という高速な自己診断テストだけは通常のテストとして登録してあり、素の `ctest` と CI で実行されます。`ctest -L perf` でこれだけを実行できます）。
   ```powershell
   cmake --build --preset windows-clang-ninja-release --target bench
   ```
