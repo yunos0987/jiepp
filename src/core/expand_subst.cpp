@@ -467,9 +467,8 @@ std::vector<Token> subst(
     // emitted (S-01); let the vector grow with what is actually produced.
     if (va_opt.empty())
         result.reserve(body.size());
-    // A caller without a table gets one computed here the first time a
-    // __VA_OPT__ operator is met (never in a macro without parameters,
-    // where __VA_OPT__ is an ordinary identifier).
+    // A caller without a table (a built-in replacement) gets one computed
+    // here the first time a __VA_OPT__ token is met.
     std::vector<VaOptSpan> local_va_opt;
     auto ensure_va_opt = [&]() {
         if (va_opt.empty()) {

@@ -50,7 +50,7 @@ CMake Tools 拡張を使用している場合、CMakePresets.json が自動検�
 
 ## Adding Tests
 
-Tests live in `tests/` and use Google Test. Group related tests in the appropriate subdirectory (`constfold/`, `core/`, `env/`, `jiepp/`, `loader/`, `macro/`, `util/`). The shared assertion helpers live directly at `tests/test_helper.hpp` (not in its own subdirectory); the e2e helper `run_e2e()` is in `tests/jiepp/test_jiepp_command.cpp`.
+Tests live in `tests/` and use Google Test. Group related tests in the appropriate subdirectory (`constfold/`, `core/`, `env/`, `jiepp/`, `loader/`, `macro/`, `util/`). The shared assertion helpers live directly at `tests/test_helper.hpp` (not in its own subdirectory); the e2e helper `run_e2e()` is in `tests/jiepp/test_jiepp_command.cpp`. Helpers for one module live in that subdirectory's `*_test_helper.hpp`; add a helper there (or to `tests/test_helper.hpp`) instead of copying it into a second test file.
 
 ## Boost.Preprocessor テスト入力の更新 / Updating the Boost Test Corpus
 

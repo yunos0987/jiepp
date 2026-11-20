@@ -11,6 +11,7 @@ param(
 )
 
 $exitCode = 0
+$tempFile = $null
 Push-Location (Split-Path -Parent $PSScriptRoot)
 try {
     # Auto-discover default samples from iec_61131-3/samples/*.iec
@@ -95,6 +96,8 @@ try {
         }
     }
 } finally {
+    # An interrupted run must not leave a .piec.tmp in the samples directory.
+    if ($tempFile -and (Test-Path $tempFile)) { Remove-Item -Force -Path $tempFile }
     Pop-Location
 }
 exit $exitCode

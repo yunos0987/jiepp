@@ -204,7 +204,7 @@ Web サーバーで信頼できない入力を処理する際のコンパイル�
 | `jiepp/` | CLI 入出力・エンドツーエンドテスト |
 | `util/` | `Util` 名前空間（トリム・パス正規化・IEC 文字列エンコード等）のテスト |
 
-共有ヘルパー（`JieppTest` フィクスチャ等のアサーション補助）は `tests/test_helper.hpp`（専用サブディレクトリなし）。e2e の `run_e2e()` は `tests/jiepp/test_jiepp_command.cpp` にある。
+共有ヘルパー（`JieppTest` フィクスチャ等のアサーション補助）は `tests/test_helper.hpp`（専用サブディレクトリなし）。e2e の `run_e2e()` は `tests/jiepp/test_jiepp_command.cpp` にある。モジュールごとのヘルパーは各サブディレクトリの `*_test_helper.hpp`（`core/lineno_test_helper.hpp`、`constfold/constfold_test_helper.hpp`、`loader/lexer_test_helper.hpp`、`jiepp/jiepp_command_test_helper.hpp`）。
 
 - `tests/env/test_robustness.cpp` — 常時有効なロバスト性制限のテスト
 - `tests/core/test_sandbox.cpp` — サンドボックス固有テスト（`#ifdef JIEPP_SANDBOX` で囲まれ、通常ビルドではスキップ）
