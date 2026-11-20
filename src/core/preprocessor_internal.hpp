@@ -54,7 +54,7 @@ void handle_message(const std::string& raw_arg, Env& env, Issue::Code code);
 // The sandbox control-character strip is applied by Issue::happen(), as for
 // every other diagnostic.
 void report_message(std::string msg, Issue::Code code);
-void handle_ignore(const std::string& raw_arg, Env& env);
+void handle_ignore(const std::string& raw_arg);
 void handle_max_include_depth(const std::string& raw_arg, Env& env);
 void handle_max_expansion_depth(const std::string& raw_arg, Env& env);
 void handle_max_if_nesting(const std::string& raw_arg, Env& env);

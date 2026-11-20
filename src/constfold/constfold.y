@@ -361,10 +361,7 @@ shift_expr:
         } else if (l.kind == ValueKind::Bitstring) {
             $$ = make_bitstring(shift_bits(l.bits, n, true), l.bit_kind);
         } else {
-            CfValue bit = cast_int_literal_to_dword(l);
-            if (bit.kind == ValueKind::Bitstring)
-                $$ = make_bitstring(shift_bits(bit.bits, n, true), bit.bit_kind);
-            else type_error();
+            type_error(); // a Bool or a Float left operand
         }
     }
   | shift_expr CF_SHR add_expr        {
@@ -375,10 +372,7 @@ shift_expr:
         } else if (l.kind == ValueKind::Bitstring) {
             $$ = make_bitstring(shift_bits(l.bits, n, false), l.bit_kind);
         } else {
-            CfValue bit = cast_int_literal_to_dword(l);
-            if (bit.kind == ValueKind::Bitstring)
-                $$ = make_bitstring(shift_bits(bit.bits, n, false), bit.bit_kind);
-            else type_error();
+            type_error(); // a Bool or a Float left operand
         }
     }
   ;
@@ -543,12 +537,17 @@ primary:
   | CF_LPAREN expr CF_RPAREN          { $$ = $2; }
   | CF_TYPE_KW CF_HASH cast_value     {
         const std::string kw = ascii_upper($1.text);
-        if (kw == "BOOL")        $$ = cast_to_bool($3);
-        else if (kw == "BYTE")   $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::BYTE);
-        else if (kw == "WORD")   $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::WORD);
-        else if (kw == "DWORD")  $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::DWORD);
-        else if (kw == "LWORD")  $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::LWORD);
-        else                     $$ = CfValue::int_value(cast_scalar_to_int($3));
+        if (kw == "BOOL") {
+            $$ = cast_to_bool($3);
+        } else {
+            // The scanner (constfold.l) returns CF_TYPE_KW only for BOOL,
+            // BYTE, WORD, DWORD and LWORD.
+            const BitKind kind = kw == "BYTE"    ? BitKind::BYTE
+                                 : kw == "WORD"  ? BitKind::WORD
+                                 : kw == "DWORD" ? BitKind::DWORD
+                                                 : BitKind::LWORD;
+            $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), kind);
+        }
     }
   | CF_TYPE_KW                        { warn_undefined($1.text); $$ = CfValue::int_value(0); }
   ;

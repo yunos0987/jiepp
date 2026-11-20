@@ -14,18 +14,6 @@ bool is_directive_ws(unsigned char c) {
         || c == '\f' || c == '\v';
 }
 
-bool is_hex_digit(unsigned char c) {
-    return std::isxdigit(c) != 0;
-}
-
-unsigned char hex_code(unsigned char c) {
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    return c - 'A' + 10;
-}
-
 std::size_t skip_directive_ws(std::string_view text, std::size_t pos) {
     while (pos < text.size() && is_directive_ws(static_cast<unsigned char>(text[pos]))) {
         ++pos;
@@ -231,10 +219,10 @@ std::string decode_directive_text(std::string_view t, bool* has_invalid, DecodeT
             i += 2;
             continue;
         }
-        if (is_hex_digit(nc) && i + 2 < t.size()
-            && is_hex_digit(static_cast<unsigned char>(t[i + 2]))) {
-            put(static_cast<char>((hex_code(nc) << 4)
-                                  | hex_code(static_cast<unsigned char>(t[i + 2]))), false);
+        if (is_directive_hex_digit(nc) && i + 2 < t.size()
+            && is_directive_hex_digit(static_cast<unsigned char>(t[i + 2]))) {
+            put(static_cast<char>((directive_hex_value(nc) << 4)
+                                  | directive_hex_value(static_cast<unsigned char>(t[i + 2]))), false);
             i += 3;
             continue;
         }
@@ -328,8 +316,8 @@ std::pair<std::string, std::string> parse_directive(std::string_view text,
                 break;
             }
             if (pos + 2 < inner.size()
-                && is_hex_digit(static_cast<unsigned char>(inner[pos + 1]))
-                && is_hex_digit(static_cast<unsigned char>(inner[pos + 2]))) {
+                && is_directive_hex_digit(static_cast<unsigned char>(inner[pos + 1]))
+                && is_directive_hex_digit(static_cast<unsigned char>(inner[pos + 2]))) {
                 pos += 3;
             } else {
                 pos += 2;

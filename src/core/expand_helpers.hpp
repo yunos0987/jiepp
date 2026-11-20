@@ -29,10 +29,6 @@ struct CtrlState {
 bool ctrl_is_active(const std::vector<CtrlState>& stack);
 bool ctrl_parent_active(const std::vector<CtrlState>& stack);
 
-// operand_error, when non-null, receives whether the condition's evaluation
-// hit a 'defined' operand/paren error (C3): eval_cond() uses this to treat
-// the whole condition as false without ever calling eval_const_expr on it.
-std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_error = nullptr);
 bool eval_cond(const std::string& raw_cond, Env& env);
 
 // C2: {#ifdef NAME}/{#ifndef NAME}, like clang's HandleIfdefDirective. NAME
@@ -96,12 +92,7 @@ CondValue eval_cond_value_tokens(std::vector<Token> ts, Env& env);
 
 // ── Prosser's algorithm support (expand_subst.cpp) ─────────────────
 // Corresponds to cpp.algo.md: §hsadd, §glue, §Support functions, §subst.
-
-// §hsadd — add HS to every token in ts
-std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts);
-
-// §glue — paste last of left side with first of right side
-void glue_tokens(std::vector<Token>& src, std::vector<Token>& item);
+// §hsadd and §glue are internal to expand_subst.cpp.
 
 // Leading/trailing whitespace-or-comment presence of one actual argument in
 // the macro call's own source, used to reproduce clang's comma spacing when
@@ -143,7 +134,6 @@ std::vector<Token> select_arg(int idx,
 // actual token: it runs the same join as select_arg() (one definition of the
 // separator rule) and stops at the first token produced (S-01).
 bool va_args_empty(int idx, const std::vector<std::vector<Token>>& actuals, bool is_va);
-int argc_from(int idx, const std::vector<std::vector<Token>>& actuals);
 
 // ── §subst — argument-expansion memoisation (task_slug arg-expand-once, D1/D2) ──
 //
@@ -185,7 +175,6 @@ struct ArgExpansionMemo {
 // space; a run at either end is dropped; every other token is appended
 // verbatim (no quoting/escaping -- the caller encodes the result).
 std::string stringize_text(const std::vector<Token>& ts);
-Token stringize_tokens(const std::vector<Token>& ts);
 
 // §subst — substitute args, handle stringize and paste
 // actual_ws: per-actual-argument leading/trailing whitespace flags, built by

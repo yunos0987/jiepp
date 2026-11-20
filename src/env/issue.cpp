@@ -359,8 +359,8 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         return;
     }
 
-    // SEVERE always throws; promoted warnings throw if ERROR is in blockings;
-    // other codes throw if in blockings
+    // SEVERE and a warning promoted to ERROR always throw (promotion does not
+    // consult blockings_); other codes throw if in blockings
     if (is_severe(code) \
         || promoted \
         || is_blocked(code))

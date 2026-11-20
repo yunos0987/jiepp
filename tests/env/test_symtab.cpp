@@ -14,7 +14,7 @@ TEST_F(SymtabTest, DefaultConstruct) {
 TEST_F(SymtabTest, Define) {
     Env env;
     auto macro = std::make_unique<UserDefinedObjectMacro>(std::vector<Token>{});
-    EXPECT_TRUE(env.define("FOO", std::move(macro)));
+    env.define("FOO", std::move(macro));
     EXPECT_TRUE(env.exist("FOO"));
     EXPECT_FALSE(env.exist("BAR"));
 }

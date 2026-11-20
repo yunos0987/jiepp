@@ -24,7 +24,7 @@ public:
     // that loop is permitted to dispatch {#define}/{#undef} on the very
     // same name (F3 classifies both as state-only, hence allowed) before
     // the pointer is used again in subst() (see F14).
-    bool define(std::string name, std::unique_ptr<Macro> macro);
+    void define(std::string name, std::unique_ptr<Macro> macro);
     bool exist(std::string_view name) const;
     Macro* lookup(std::string_view name) const;
     // Undefines `name`. The superseded Macro (if any) is retired, not

@@ -11,6 +11,16 @@
 #include <string>
 #include <utility>
 
+bool flush_stdout() {
+    std::cout.flush();
+    bool ok = !std::cout.fail();
+    if (std::fflush(stdout) != 0)
+        ok = false;
+    if (std::ferror(stdout))
+        ok = false;
+    return ok;
+}
+
 namespace {
 
 // Both helpers below keep the actual conversion (std::stoi) as the *only*
@@ -108,17 +118,10 @@ void add_warning_option(JieppOptions& opts, const std::string& arg,
 }
 
 // A8: --help and --version exit with `exit_code` only when their text got
-// out: std::cout's state after a flush, then fflush(stdout) and
-// ferror(stdout) of the C stream it is synced with. Otherwise exit 1
-// without a diagnostic (clang 22 also exits nonzero without a message).
+// out (flush_stdout()). Otherwise exit 1 without a diagnostic (clang 22 also
+// exits nonzero without a message).
 [[noreturn]] void exit_after_stdout(int exit_code) {
-    std::cout.flush();
-    bool ok = !std::cout.fail();
-    if (std::fflush(stdout) != 0)
-        ok = false;
-    if (std::ferror(stdout))
-        ok = false;
-    std::exit(ok ? exit_code : 1);
+    std::exit(flush_stdout() ? exit_code : 1);
 }
 
 void display_help_and_exit(int exit_code = 0) {

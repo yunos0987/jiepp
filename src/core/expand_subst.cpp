@@ -22,7 +22,8 @@ namespace jiepp::expand_detail {
 
 // ── §hsadd — add to token sequence's hide sets ────────────────────
 
-std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts) {
+// Adds HS to every token in ts.
+static std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts) {
     if (!hs.empty()) {
         // O1b: consecutive tokens in `ts` overwhelmingly share the same
         // starting hide set (e.g. every token of a freshly-substituted macro
@@ -104,7 +105,8 @@ static bool paste_is_valid(const Token& prev, const Token& next) {
     return prev.type == next.type && !is_structural_token(prev.type);
 }
 
-void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
+// Pastes the last token of src with the first token of item.
+static void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
     if (src.empty()) {
         for (auto& t : item)
             src.push_back(std::move(t));
@@ -233,7 +235,7 @@ bool va_args_empty(int idx, const std::vector<std::vector<Token>>& actuals, bool
     return !any;
 }
 
-int argc_from(int idx, const std::vector<std::vector<Token>>& actuals) {
+static int argc_from(int idx, const std::vector<std::vector<Token>>& actuals) {
     return std::max(0, static_cast<int>(actuals.size()) - idx);
 }
 
@@ -284,7 +286,7 @@ std::string stringize_text(const std::vector<Token>& ts) {
     return text;
 }
 
-Token stringize_tokens(const std::vector<Token>& ts) {
+static Token stringize_tokens(const std::vector<Token>& ts) {
     return Token::create(Token::STRING, Util::encode_iec_string(stringize_text(ts), '\''));
 }
 
@@ -465,8 +467,9 @@ std::vector<Token> subst(
     // emitted (S-01); let the vector grow with what is actually produced.
     if (va_opt.empty())
         result.reserve(body.size());
-    // A caller without a table (a built-in replacement) gets one computed
-    // here the first time a __VA_OPT__ token is met.
+    // A caller without a table gets one computed here the first time a
+    // __VA_OPT__ operator is met (never in a macro without parameters,
+    // where __VA_OPT__ is an ordinary identifier).
     std::vector<VaOptSpan> local_va_opt;
     auto ensure_va_opt = [&]() {
         if (va_opt.empty()) {

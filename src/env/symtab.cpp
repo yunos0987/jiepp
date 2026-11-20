@@ -3,7 +3,7 @@
 
 #include <utility>
 
-bool Symtab::define(std::string name, std::unique_ptr<Macro> macro) {
+void Symtab::define(std::string name, std::unique_ptr<Macro> macro) {
     auto it = sym_index_.find(name);
     if (it != sym_index_.end()) {
         // Replace in place to preserve insertion order. Retire (do not
@@ -18,7 +18,6 @@ bool Symtab::define(std::string name, std::unique_ptr<Macro> macro) {
         sym_index_[name] = sym_order_.size();
         sym_order_.push_back({name, std::move(macro)});
     }
-    return true;
 }
 
 bool Symtab::exist(std::string_view name) const {

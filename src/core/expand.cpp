@@ -353,7 +353,7 @@ void dispatch_directive(const Token& t,
 #ifdef JIEPP_SANDBOX
         ISSUE(SANDBOX_RESTRICTED_DIRECTIVE, "ignore");
 #else
-        jiepp::preprocessor_detail::handle_ignore(raw_arg, env);
+        jiepp::preprocessor_detail::handle_ignore(raw_arg);
 #endif
         break;
     case DirectiveToken::MAX_INCLUDE_DEPTH:

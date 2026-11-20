@@ -1,24 +1,13 @@
 #include "lexer_helpers.hpp"
 #include "directive_parser.hpp"
 
-#include <cctype>
+#include <algorithm>
 #include <cstddef>
-#include <regex>
+#include <string_view>
 
 namespace jiepp::detail {
 
 namespace {
-
-bool is_pragma_hex_digit(char c) {
-    return std::isxdigit(static_cast<unsigned char>(c)) != 0;
-}
-
-unsigned char pragma_hex_value(char c) {
-    unsigned char u = static_cast<unsigned char>(c);
-    if (u >= '0' && u <= '9') return static_cast<unsigned char>(u - '0');
-    if (u >= 'a' && u <= 'f') return static_cast<unsigned char>(u - 'a' + 10);
-    return static_cast<unsigned char>(u - 'A' + 10);
-}
 
 // True for a character that read_pragma_body() only appends to the body and
 // feeds to the directive lexical state as is: not the start of an escape, a
@@ -221,7 +210,7 @@ Token read_pragma_body(const std::string& text,
                             lc.feed('$', true, off);
                             lc.feed(nc, true, off + 1);
                         }
-                    } else if (is_pragma_hex_digit(nc)) {
+                    } else if (is_directive_hex_digit(static_cast<unsigned char>(nc))) {
                         pending_hex = static_cast<unsigned char>(nc);
                         pending_hex_off = off;
                     } else if (auto decoded = decode_directive_escape(nc)) {
@@ -339,9 +328,10 @@ Token read_pragma_body(const std::string& text,
         }
 
         if (is_directive) {
-            if (pending_hex >= 0 && is_pragma_hex_digit(c)) {
+            if (pending_hex >= 0 && is_directive_hex_digit(static_cast<unsigned char>(c))) {
                 char decoded = static_cast<char>(
-                    (pragma_hex_value(static_cast<char>(pending_hex)) << 4) | pragma_hex_value(c));
+                    (directive_hex_value(static_cast<unsigned char>(pending_hex)) << 4)
+                    | directive_hex_value(static_cast<unsigned char>(c)));
                 lc.feed(decoded, false, pending_hex_off);
                 pending_hex = -1;
             } else {
@@ -354,17 +344,21 @@ Token read_pragma_body(const std::string& text,
     }
 
     if (!closed) {
-        if (is_directive) {
-            report_lex_issue(lineno, opts, pos, [&] {
-                std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
-                ISSUE(INVALID_PP_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
-            });
-        } else {
-            report_lex_issue(lineno, opts, pos, [&] {
-                std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
-                ISSUE(INVALID_PRAGMA_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
-            });
-        }
+        // PP23 for a directive, PP22 for a pragma, with the text from the
+        // opening '{' to the end of the input; each LF is written "$n" (a CR
+        // is kept as is).
+        report_lex_issue(lineno, opts, pos, [&] {
+            std::string context;
+            for (char ch : std::string_view(text).substr(start_pos - 1, pos - start_pos + 1)) {
+                if (ch == '\n')
+                    context += "$n";
+                else
+                    context += ch;
+            }
+            Issue::happen(is_directive ? Issue::Code::INVALID_PP_SYNTAX
+                                       : Issue::Code::INVALID_PRAGMA_SYNTAX,
+                          std::move(context));
+        });
     }
 
     std::string full_text = "{" + body + "}";
@@ -372,21 +366,9 @@ Token read_pragma_body(const std::string& text,
     if (lines_before != 0 || !breaks.empty())
         line_map = LineMapRef(LineMap{lines_before, std::move(breaks)});
 
-    if (is_directive) {
-        // B1: classifying/diagnosing this directive's key (PP45/PP46 for an
-        // unrecognized name) now happens at dispatch time in
-        // dispatch_directive() (expand.cpp), not here at lex time, so
-        // constructing a DirectiveToken merely to call ready() for its
-        // former diagnostic side effect is no longer needed.
-        Token t;
-        t.type = Token::DIRECTIVE;
-        t.text = std::move(full_text);
-        t.num_of_lines = 0;
-        t.line_map = std::move(line_map);
-        return t;
-    }
-
-    Token t = Token::create(Token::PRAGMA, std::move(full_text));
+    // A directive's key is classified at dispatch time (dispatch_directive(),
+    // expand.cpp), which reports PP45/PP46 for an unrecognized name.
+    Token t = Token::create(is_directive ? Token::DIRECTIVE : Token::PRAGMA, std::move(full_text));
     t.line_map = std::move(line_map);
     return t;
 }

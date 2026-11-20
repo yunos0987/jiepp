@@ -62,3 +62,12 @@ struct JieppOptions {
 std::pair<std::string, std::string> define_macro_option(const std::string& arg);
 
 JieppOptions parse_args(int argc, char* argv[]);
+
+// Flushes stdout and reports whether everything written to it so far got
+// out: std::cout's state (a failed write or a failed flush through its
+// streambuf sets badbit), then the C stdio stream it is synced with
+// (fflush(stdout), ferror(stdout)). std::cout is flushed first so its
+// buffered bytes reach stdout before stdout itself is flushed. stdout is
+// never closed here, so an error that only close(2) at exit reports (NFS)
+// is not seen (SPECIFICATION.md section 16).
+bool flush_stdout();

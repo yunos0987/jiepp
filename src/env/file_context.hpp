@@ -54,9 +54,9 @@ public:
     // ---- Line number (within current file) ----
     // item a: 64-bit storage, 32-bit unsigned wrap (see lineno.hpp) --
     // matches gcc/clang's line counter (after 4294967295 the next line is
-    // 0). set_lineno() is the single place the wrap is applied, so every
-    // caller (advance_lineno(), handle_setline(), push_file()/pop_file())
-    // gets it for free.
+    // 0). set_lineno() applies the wrap for its callers (advance_lineno(),
+    // handle_setline()). push_file()/pop_file() assign lineno_ directly:
+    // they store 1 and a value saved from lineno_, both already in range.
     LineNo get_lineno() const { return lineno_; }
     void   set_lineno(LineNo n) { lineno_ = wrap_lineno(n); }
 

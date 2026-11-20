@@ -39,6 +39,11 @@ std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
                               bool* found_unclosed_comment = nullptr,
                               const LineMap* line_map = nullptr);
 
+// The -nC filter (remove_comments above): replaces every comment token
+// (Token::C) by a newline token of its num_of_lines, or by one space when it
+// has none. Document comments (Token::DOCUMENT) are kept.
+void iec3_remove_comments(std::vector<Token>& tokens);
+
 // True iff `s` is exactly one identifier as tokenize() lexes it:
 // [A-Za-z_][A-Za-z0-9_]* (ASCII only, like IEC 61131-3 identifiers).
 bool iec3_is_identifier(std::string_view s);

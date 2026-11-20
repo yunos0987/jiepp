@@ -41,12 +41,15 @@ void lex_block_opener(char opener, const std::string& text, std::size_t& pos,
     }
 }
 
-std::vector<Token> tokenize(const std::string& text, LineNo lineno, LexOptions opts) {
-    std::vector<Token> r;
-    r.reserve(text.size() / 8);
-
+// Lexes text from offset `start` to its end.
+std::vector<Token> tokenize(const std::string& text, std::size_t start, LineNo lineno,
+                            LexOptions opts) {
     const std::size_t n = text.size();
-    std::size_t p = 0;
+    std::size_t p = start;
+
+    std::vector<Token> r;
+    r.reserve((n - p) / 8);
+
     StringMergeState merge_state;
 
     while (p < n) {
@@ -230,29 +233,27 @@ namespace {
 // are data of the directive/pragma/macro text, not a file's encoding mark.
 std::vector<Token> lex_text(const std::string& input, bool remove_comments, LineNo lineno,
                             LexOptions opts, bool strip_bom) {
-    std::string text = input;
-    // Strip UTF-8 BOM if present
-    if (strip_bom && (text.size() >= 3) &&
-        (static_cast<unsigned char>(text[0]) == 0xEF) &&
-        (static_cast<unsigned char>(text[1]) == 0xBB) &&
-        (static_cast<unsigned char>(text[2]) == 0xBF))
-        text.erase(0, 3);
-    auto tokens = tokenize(text, lineno, opts);
-    if (remove_comments) {
-        for (auto& t : tokens) {
-            if (t.type == Token::C) { // Token::DOCUMENT (/*!  //!  (*!) is preserved
-                if (t.num_of_lines > 0) {
-                    t = Token::newline(t.num_of_lines);
-                } else {
-                    t = Token::create(Token::WS, " ");
-                }
-            }
-        }
-    }
+    // A leading UTF-8 BOM is skipped, not erased: the text is lexed in place
+    // from the byte after it. Only a re-lex uses offsets into the text
+    // (LexOptions::line_map), and it never skips a BOM.
+    const bool has_bom = strip_bom && (input.size() >= 3) &&
+        (static_cast<unsigned char>(input[0]) == 0xEF) &&
+        (static_cast<unsigned char>(input[1]) == 0xBB) &&
+        (static_cast<unsigned char>(input[2]) == 0xBF);
+    auto tokens = tokenize(input, has_bom ? 3 : 0, lineno, opts);
+    if (remove_comments)
+        iec3_remove_comments(tokens);
     return tokens;
 }
 
 } // anonymous namespace
+
+void iec3_remove_comments(std::vector<Token>& tokens) {
+    for (auto& t : tokens) {
+        if (t.type == Token::C) // Token::DOCUMENT (/*!  //!  (*!) is preserved
+            t = (t.num_of_lines > 0) ? Token::newline(t.num_of_lines) : Token::create(Token::WS, " ");
+    }
+}
 
 std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, LineNo lineno,
                                            bool report_nested_brace) {

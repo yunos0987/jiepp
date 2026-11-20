@@ -645,66 +645,48 @@ void handle_setline(const std::string& raw_arg, const std::string& key, Env& env
     std::size_t i = skip_blanks(ts, 0);
     const std::optional<LineNo> parsed = i < ts.size() ? lineno_token_value(ts[i]) : std::nullopt;
     if (parsed) {
+        // Both forms accept 0..4294967295, enforced by lineno_token_value()
+        // above (anything outside it is nullopt).
         const LineNo new_lineno = *parsed;
-        // item a (rev2): both forms now accept the same range,
-        // 0..4294967295, already enforced by lineno_token_value() above
-        // (anything outside it is nullopt, so this branch never sees it).
-        // This replaces the two different ranges
-        // introduced by commit 2cb1cc6 (U1(a): named form 1..2147483647,
-        // marker form 0..2147483646 -- one less than the named form, so a
-        // named directive's emitted N-1 marker was itself always a valid
-        // marker value). wrap_lineno() below now guarantees that instead,
-        // unconditionally, for every effective line number including 0.
-        {
-            // The file name is one literal token, so it may contain spaces.
-            std::string new_fp;
-            i = skip_blanks(ts, i + 1);
-            bool ok = true;
-            if (i < ts.size()) {
-                ok = is_terminated_literal(ts[i]);
-                if (ok) {
-                    new_fp = decode_path_literal(ts[i].text);
-                    i = skip_blanks(ts, i + 1);
-                }
-            }
-            if (ok && i < ts.size())
-                ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, directive_context(key, raw_arg));
+        // The file name is one literal token, so it may contain spaces.
+        std::string new_fp;
+        i = skip_blanks(ts, i + 1);
+        bool ok = true;
+        if (i < ts.size()) {
+            ok = is_terminated_literal(ts[i]);
             if (ok) {
-                // C1/U1(a): a named form sets the line number of the *next*
-                // physical line (gcc semantics) to new_lineno, by advancing
-                // the running counter to one less than new_lineno -- the
-                // nameless marker form's own "counter = new_lineno, next
-                // line = new_lineno + 1" semantics, which stays unchanged.
-                // item a: the counter wraps mod 2^32 (wrap_lineno(), see
-                // lineno.hpp), like gcc/clang, so a named `{#line 0}` is
-                // valid: new_lineno - 1 = -1 wraps to 4294967295, and the
-                // next physical line is 0.
-                const LineNo effective_lineno = wrap_lineno(is_marker_form ? new_lineno : new_lineno - 1);
-                env.set_lineno(effective_lineno);
-#ifdef JIEPP_SANDBOX
-                // Sandbox: ignore filepath argument, keep original filepath
-                {
-                    std::string old_fp = Issue::filepath();
-                    Issue::pop();
-                    Issue::push({effective_lineno, old_fp});
-                    ots.push_back(Token::line_pragma(effective_lineno, std::nullopt, env.is_standard_pragma_style()));
-                    return;
-                }
-#else
-                if (new_fp.empty()) {
-                    std::string old_fp = Issue::filepath();
-                    Issue::pop();
-                    Issue::push({effective_lineno, old_fp});
-                    ots.push_back(Token::line_pragma(effective_lineno, std::nullopt, env.is_standard_pragma_style()));
-                    return;
-                } else {
-                    Issue::pop();
-                    Issue::push({effective_lineno, std::string(new_fp)});
-                    ots.push_back(Token::line_pragma(effective_lineno, new_fp, env.is_standard_pragma_style()));
-                    return;
-                }
-#endif
+                new_fp = decode_path_literal(ts[i].text);
+                i = skip_blanks(ts, i + 1);
             }
+        }
+        if (ok && i < ts.size())
+            ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, directive_context(key, raw_arg));
+        if (ok) {
+            // C1/U1(a): a named form sets the line number of the *next*
+            // physical line (gcc semantics) to new_lineno, by advancing
+            // the running counter to one less than new_lineno; the nameless
+            // marker form sets the counter to new_lineno, so the next line
+            // is new_lineno + 1.
+            // item a: the counter wraps mod 2^32 (wrap_lineno(), see
+            // lineno.hpp), like gcc/clang, so a named `{#line 0}` is
+            // valid: new_lineno - 1 = -1 wraps to 4294967295, and the
+            // next physical line is 0.
+            const LineNo effective_lineno = wrap_lineno(is_marker_form ? new_lineno : new_lineno - 1);
+            env.set_lineno(effective_lineno);
+            // The current file path is kept when the operand has no file
+            // name. Sandbox: the file name is always ignored.
+#ifdef JIEPP_SANDBOX
+            const bool keep_filepath = true;
+#else
+            const bool keep_filepath = new_fp.empty();
+#endif
+            std::string fp = keep_filepath ? Issue::filepath() : new_fp;
+            Issue::pop();
+            Issue::push({effective_lineno, std::move(fp)});
+            ots.push_back(Token::line_pragma(effective_lineno,
+                                             keep_filepath ? std::nullopt : std::optional<std::string_view>(new_fp),
+                                             env.is_standard_pragma_style()));
+            return;
         }
     }
     // raw_arg is decoded, so re-escape it before it reaches the
@@ -779,8 +761,7 @@ void report_message(std::string msg, Issue::Code code) {
     Issue::happen(code, std::move(msg));
 }
 
-void handle_ignore(const std::string& raw_arg, Env& env) {
-    (void)env;
+void handle_ignore(const std::string& raw_arg) {
     // Tokenize the operand (mirroring {#pragma_style}) so a trailing comment
     // is stripped rather than rejected as garbage, and require exactly one
     // non-whitespace token matching "PP" followed by exactly two digits

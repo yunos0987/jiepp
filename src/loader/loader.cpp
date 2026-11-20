@@ -105,9 +105,7 @@ std::shared_ptr<const std::vector<Token>> Loader::tokens(const std::string& path
     // can flip it mid-run), so the cache always stores RAW tokens; materialise a
     // filtered copy here instead of baking the filter into the cached entry.
     auto filtered = std::make_shared<std::vector<Token>>(*cached);
-    for (auto& t : *filtered)
-        if (t.type == Token::C)
-            t = (t.num_of_lines > 0) ? Token::newline(t.num_of_lines) : Token::create(Token::WS, " ");
+    iec3_remove_comments(*filtered);
     return filtered;
 }
 

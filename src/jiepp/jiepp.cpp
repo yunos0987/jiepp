@@ -10,7 +10,6 @@
 #include "../env/issue.hpp"
 
 #include <algorithm>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -171,23 +170,6 @@ void report_output_failure(const std::string& context) {
     }
 }
 
-// Flushes stdout and reports whether everything written to it so far got
-// out: std::cout's state (a failed write or a failed flush through its
-// streambuf sets badbit), then the C stdio stream it is synced with
-// (fflush(stdout), ferror(stdout)). std::cout is flushed first so its
-// buffered bytes reach stdout before stdout itself is flushed. stdout is
-// never closed here, so an error that only close(2) at exit reports (NFS)
-// is not seen (SPECIFICATION.md section 16).
-bool flush_stdout() {
-    std::cout.flush();
-    bool ok = !std::cout.fail();
-    if (std::fflush(stdout) != 0)
-        ok = false;
-    if (std::ferror(stdout))
-        ok = false;
-    return ok;
-}
-
 // Removes an output file this run opened for writing, after a failure. The
 // stream is closed first (its result is ignored: Windows cannot delete an
 // open file, and the failure is already being reported). Only a regular
@@ -222,14 +204,14 @@ int jiepp_command(const JieppOptions& opts)
     bool output_file_opened = false;
     // Path of a separate dependency file (-MF / -MD / -MMD auto-named) that
     // this run has opened for writing, if any (set as soon as the open
-    // succeeds) -- remembered so the catch blocks below can remove it if its
+    // succeeds) -- remembered so the E4b catch below can remove it if its
     // own write/close fails or a *later* step (opening or writing -o,
     // writing stdout) fails: otherwise a truncated .d file, or a
     // correctly-written one naming an output that was never produced (or
     // never updated), would be left behind for a Make-based build to trust
     // incorrectly. See the "remove only what this run wrote" rule documented
     // at the catch site. Declared here, not inside the try, so the catch
-    // blocks can close it before removing the file (remove_if_regular()).
+    // can close it before removing the file (remove_if_regular()).
     std::ofstream dep_output;
     std::string dep_file_opened;
     // A8: set before anything is written to std::cout, so an error path
@@ -590,11 +572,10 @@ int jiepp_command(const JieppOptions& opts)
         // E4b: the dependency-file write and the -o open and write are
         // wrapped in their own try -- gcc has already flushed its
         // preprocessed output before any of these can fail, so a PP10 here
-        // gets the same partial-output treatment as E4/E4a (plus the same
-        // "remove only what this run wrote" cleanup as the outer catch
-        // below, duplicated here rather than shared with it: by the time the
-        // outer catch runs, `ots`/`env` are already out of scope, so it
-        // cannot print anything itself). A8: besides open failures this
+        // gets the same partial-output treatment as E4/E4a, plus the "remove
+        // only what this run wrote" cleanup (see the catch). -o and the
+        // dependency file are opened only inside this try, so this catch is
+        // the only place that removes them. A8: besides open failures this
         // covers a failed write/close of the dependency file or -o and a
         // failed write/flush of stdout.
         try {
@@ -663,9 +644,22 @@ int jiepp_command(const JieppOptions& opts)
             // E4b: -o or the dependency file could not be opened, written or
             // closed, or stdout could not be written (PP10). Remove what this
             // run opened for writing (regular files only, see
-            // remove_if_regular()).
+            // remove_if_regular()). Do not leave a truncated/empty -o target
+            // behind: a Make-based build system must reprocess the file on
+            // the next run, not treat a 0-byte, freshly-mtime'd file as an
+            // up-to-date target.
             if (output_file_opened)
                 remove_if_regular(output_file, *opts.output_filepath);
+            // Likewise the separate dependency file: if it was written
+            // earlier in this same run but a later step (e.g. opening -o)
+            // then failed, the .d file either references an output that was
+            // never (re)produced, or -- if it already existed -- was just
+            // truncated with content that was never paired with a matching
+            // successful output. Either way it is this run's own write, so
+            // it is removed; a dep file from an *earlier*, unrelated run
+            // that this run never touched is left alone, matching gcc's
+            // convention of not scrubbing stale files it did not itself
+            // just write.
             if (!dep_file_opened.empty())
                 remove_if_regular(dep_output, dep_file_opened);
             // A stdout destination still gets the full output when the
@@ -681,28 +675,13 @@ int jiepp_command(const JieppOptions& opts)
         }
         return 0;
     } catch (const Issue::Exception&) {
-        // Do not leave a truncated/empty -o target behind on failure: a
-        // Make-based build system must reprocess the file on the next run,
-        // not treat a 0-byte, freshly-mtime'd file as an up-to-date target.
         // Reached only by exceptions from *before* the E4a -include/expand
         // guard above (e.g. a malformed -D/-U, an env-fixup failure, or the
-        // stdin+-MD/-MMD-without--MF check): `ots` is always still empty
-        // here, unlike the E4a/E4b catches above, so there is nothing to
-        // print. Removal is regular-files-only, as in the E4b catch.
-        if (output_file_opened)
-            remove_if_regular(output_file, *opts.output_filepath);
-        // Likewise, remove only what *this run* wrote: if a separate
-        // dependency file was successfully written earlier in this same run
-        // but a later step (e.g. opening -o) then failed, the .d file now
-        // either references an output that was never (re)produced, or -- if
-        // it already existed -- was just truncated with content that was
-        // never paired with a matching successful output. Either way it is
-        // this run's own write, so it is removed here; a dep file from an
-        // *earlier*, unrelated run that this run never touched is left
-        // alone, matching gcc's convention of not scrubbing stale files it
-        // did not itself just write.
-        if (!dep_file_opened.empty())
-            remove_if_regular(dep_output, dep_file_opened);
+        // stdin+-MD/-MMD-without--MF check): the E4a and E4b catches above
+        // handle every Issue::Exception raised inside their own try blocks.
+        // `ots` is still empty, so there is nothing to print, and neither
+        // -o nor a dependency file has been opened (both are opened only
+        // inside the E4b try), so there is nothing to remove.
         return 1;
     }
 }

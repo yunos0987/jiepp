@@ -1,6 +1,5 @@
 #include "preprocessor.hpp"
 #include "../loader/directive_parser.hpp"
-#include "../env/param_constants.hpp"
 #include "line_compaction.hpp"
 #include "preprocessor_internal.hpp"
 
@@ -38,9 +37,9 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     auto its = iec3_tokens_from_string(text ? *text : std::string(), env.get_remove_comments(),
                                        first_lineno);
     std::vector<Token> ots;
+    expand(its, ots, env);
     // No leading line marker here (unlike the jiepp command line), so tell
     // the compaction which line the stream starts on.
-    expand(its, ots, env);
     jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
                                jiepp::BlankLineMode::Markers, env.is_standard_pragma_style(),
                                first_lineno);
@@ -303,8 +302,6 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
 #define JIEPP_VERSION "0.0.0"
 #endif
     Env env;
-    env.set_max_include_depth(DEFAULT_MAX_INCLUDE_DEPTH);
-    env.set_pragma_style("annotated");
     // Set before -D processing below (U5): -D's body follows the same
     // comment policy as {#define} (handle_define() reads it via
     // env.get_remove_comments()).
@@ -408,7 +405,8 @@ std::string define_directive_text(const std::string& name, const Macro& macro) {
 
 void dump_macros(Env& env, std::ostream& output) {
     for (auto& [name, macro] : env.symbols()) {
-        if (dynamic_cast<DefinedOperator*>(macro)) continue;
+        // Empty for a macro without a {#define} form (a built-in, the
+        // transient 'defined' operator).
         std::string line = jiepp::preprocessor_detail::define_directive_text(name, *macro);
         if (!line.empty())
             output << line << "\n";
