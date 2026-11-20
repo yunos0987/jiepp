@@ -48,6 +48,7 @@
 - `--no-include-stack`（`--no_include_stack` も）を追加した。インクルードしたファイルの中の診断の前の `In file included from` の行（上の「互換性に影響する変更」）を出さない。`--help` にも書いた（SPECIFICATION.md §13、README.md）
 - gcc/clang の `-isystem DIR`（続けて書く `-isystemDIR` も）を追加した。`-I`・`{#syspath}` のディレクトリをすべて探した後に、指定順に探す（`-isystem` を `-I` より前に書いても同じ）。同じディレクトリを `-I`（または `{#syspath}`）にも指定したときは、`-isystem` の位置でだけ探す。ここで見つけたファイルとそこからインクルードしたファイルはシステムヘッダで、`-MM`/`-MMD` が除く。見つけたファイルの名前、`__has_include`、`-include` の探し方は `-I` と同じ。gcc/clang がシステムヘッダの中で出さない警告（`-Wundef`・マクロの再定義など）は、jiepp では出す（意図的な差異）。値がなければ `PP72`。`--help` にも書いた（SPECIFICATION.md §7・§7.11・§13・§17、README.md）
 - 値を取るオプションの値を、続けて書けるようにした: `-oFILE`・`-MFFILE`・`-MTTARGET`・`-MQTARGET`・`-includeFILE`（gcc/clang と同じ。`-DNAME`・`-UNAME`・`-IPATH` と同じ形）。`--help` の文面も合わせた（§13）
+- Windows の `jiepp.exe` にアイコンを付けた（`{#` と、IEC 61131-3 のラダー図の a 接点）。図は `docs/jiepp-icon.svg` で、`tools/make_icon.py` から生成する（CONTRIBUTING.md）。Linux のビルドは変わらない
 - `-MT` を複数回指定でき、書いた順に空白で区切って並べる（`-MT t1 -MT t2` は `t1 t2: …`）ようにした。`-MQ TARGET` を足した。`-MT` と同じだが、値を Make 用にエスケープ（前提条件と同じ規則）して並べる。`-MT` と混ぜて指定でき、書いた順に並ぶ（§13）
 
 ### 不具合の修正 / Bug fixes

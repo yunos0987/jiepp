@@ -21,6 +21,7 @@ shadow_target -text
 # Build / config
 *.cmake text eol=lf
 *.manifest text eol=lf
+*.rc text eol=lf
 *.json text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
@@ -59,6 +60,7 @@ VERSION text eol=lf
 *.dll binary
 *.lib binary
 *.exe binary
+*.ico binary
 *.a binary
 *.so binary
 *.o binary

@@ -66,6 +66,15 @@ python tools/convert_boost_pp.py --check <dir>/include/boost/preprocessor tests/
 
 更新後は Release の ctest で `BoostPreprocessorIntegration` を実行し、出力が変わった場合は「テスト期待値（ゴールデン）の更新」の手順で `tests/jiepp/output/boost.*` を更新します。
 
+## アイコンの更新 / Updating the Icon
+
+`jiepp.exe` のアイコン `src/jiepp/jiepp.ico`（`src/jiepp/jiepp.rc` で Windows のビルドに組み込む）と `docs/jiepp-icon.svg` は、`tools/make_icon.py` の中の図から生成します。手で編集せず、スクリプトの図（16 px は手描きのピクセル図 `PIXELS_16`）を直して再生成してください。Pillow が必要です。
+
+```bash
+python tools/make_icon.py          # 2 つのファイルを書き直す
+python tools/make_icon.py --check  # 生成結果と違えば終了コード 1
+```
+
 ## サンプルの更新 / Updating Samples
 
 `iec_61131-3/samples/` 配下の `.iec` ファイルを変更した場合、`.piec` ファイルを再生成する必要があります。また、ドキュメント内でのサンプル引用と `.piec` 出力が一致することを確認してください。
