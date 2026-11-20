@@ -1,6 +1,6 @@
 # coding: utf-8
 """Perf test case: a function-macro parameter spelled multiple times in the
-body (task_slug arg-expand-once).
+body (the argument is expanded once per invocation).
 
 Before the fix, src/core/expand_subst.cpp's subst() re-expanded a formal
 parameter's actual argument once PER OCCURRENCE of that parameter in the
@@ -20,8 +20,8 @@ isolates that extra, now-eliminated factor of k:
     never memoised (2**14 occurrences of the innermost expansion before
     the fix), independent of n -- an rc == 0 (termination, under
     perftest's fixed --recursion-limit) check more than a timing one,
-    kept shallow enough to still finish (slowly) pre-fix for the
-    old-vs-new baseline comparison in the design's perf gate.
+    kept shallow enough to still finish (slowly) on a build without
+    the memo, so old and new binaries can be compared.
 """
 import io
 

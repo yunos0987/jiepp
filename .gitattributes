@@ -10,18 +10,31 @@
 *.piec -text
 *.jiec -text
 
+# Test goldens and fixtures compared byte for byte (tests/jiepp/output,
+# tests/core/test_include): never convert their line endings.
+*.log -text
+*.d -text
+*.dat -text
+.keep -text
+shadow_target -text
+
 # Build / config
 *.cmake text eol=lf
 *.manifest text eol=lf
 *.json text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.gitmodules text eol=lf
+.editorconfig text eol=lf
 CMakeLists.txt text eol=lf
 Makefile text eol=lf
 
 # Documentation
 *.md text eol=lf
 *.txt text eol=lf
+*.svg text eol=lf
 LICENSE text eol=lf
 VERSION text eol=lf
 

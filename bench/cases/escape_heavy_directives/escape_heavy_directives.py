@@ -3,7 +3,7 @@
 escaped-quote run, each processed (defined) once.
 
 Guards decode_directive_text() (directive_parser.cpp) and read_pragma_body()
-(lexer_pragma.cpp), whose per-character loop this session's commits
+(lexer_pragma.cpp), whose per-character loop the commits
 6513289 (keep an invalid '$' escape literally instead of emptying the whole
 operand), 4eaf950 (let a pending hex digit survive a '$'-newline
 continuation) and 834cfa4 (parse_directive()'s 2-arg overload, gating PP21 to

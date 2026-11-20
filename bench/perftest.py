@@ -317,6 +317,10 @@ def cmd_selfcheck(args) -> int:
     if make_rc != 0:
         return make_rc
 
+    # Check the TSV this run writes, not one an earlier run left behind.
+    for old_tsv in results_dir.glob("stats.*.tsv"):
+        old_tsv.unlink()
+
     run_rc = cmd_run(argparse.Namespace(
         jiepp=args.jiepp,
         cases=str(cases_out),

@@ -17,10 +17,10 @@ trim_trailing_whitespace = false
 [*.json]
 indent_size = 2
 
-# Sample and golden files are byte-exact test data (.gitattributes: -text).
-# Their line endings, trailing whitespace and final newline are part of the
-# test, so editors must leave them alone.
-[*.{iec,piec,jiec}]
+# Sample, golden and fixture files are byte-exact test data (.gitattributes:
+# -text). Their line endings, trailing whitespace and final newline are part
+# of the test, so editors must leave them alone.
+[*.{iec,piec,jiec,log,d,dat}]
 charset = unset
 end_of_line = unset
 indent_style = unset

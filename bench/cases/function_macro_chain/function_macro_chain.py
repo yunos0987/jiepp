@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Perf test case: function-macro expansion chain (task_slug hideset-linear, E3-1).
+"""Perf test case: function-macro expansion chain (hide-set cost per level).
 
 {#define F0(a) F1(a)}...{#define Fn(a) a}F0(x); -- the function-macro
 version of object_macro_chain: each level also rebuilds the (HS(T) n

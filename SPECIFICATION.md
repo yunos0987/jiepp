@@ -181,6 +181,10 @@ x := __LINE__;      (* → x := 3; *)
 | `max_if_nesting` | `max-if-nesting` |
 | `max_blank_lines` | `max-blank-lines` |
 | `pp_output_pragma_style` | `pp-output-pragma-style` |
+| `define` | `D` |
+| `syspath` | `I` |
+
+`{#D}` と `{#I}` は、コマンドラインの `-D`・`-I` と同じ文字にした `{#define}`・`{#syspath}` の短い名前で、動作は正式名と同じ（`{#D X 1}` は `{#define X 1}`、`{#I 'lib'}` は `{#syspath 'lib'}`）。大文字だけで、`{#d}`・`{#i}` は `PP45`。
 
 `{#line}`/`{#set_line}`/`{#set-line}` は名前が異なるだけの同じディレクティブ。名前のない `{#:N}` 形式（プリプロセッサが自動出力する行マーカー）は名前だけでなく意味も異なる別のディレクティブ（詳細は §9・付録 B）。
 
@@ -2025,8 +2029,8 @@ jiepp コマンドは、コマンドラインの 4 形式を後勝ちで畳み�
 | PP48 | `INVALID_PRAGMA_STYLE_OPERAND` | WARNING | Invalid operand for pragma style directive | `{#pp_output_pragma_style}` の不正なオペランド |
 | PP49 | `EXTRA_TOKENS_AT_END_OF_DIRECTIVE` | WARNING | Extra tokens at end of directive | `{#undef}` / `{#ifdef}` / `{#ifndef}` / `{#elifdef}` / `{#elifndef}` / `-U` でマクロ名の後、`{#pragma once}` の `once` の後、`{#else}` / `{#endif}` の後、`{#include}` / `{#sinclude}` / `{#syspath}` のパスの後、`{#line}` のファイルパスの後に余分なトークンがある（§3.5、§5.1、§7、§7.6、§9） |
 | PP50 | `EXPR_TYPE_ERROR` | ERROR | Type error in expression | 式中の型エラー（Bool・Float・Bitstring・Int の許されない組み合わせ、Bitstring の幅の不一致、Float への演算、シフト量の型など。§6.3。ゼロ除算は `PP52`） |
-| PP51 | `MISSING_EXPRESSION` | ERROR | Missing expression | `{#if}` に式がない |
-| PP52 | `INVALID_EXPRESSION` | ERROR | Invalid expression | 不正な式 |
+| PP51 | `MISSING_EXPRESSION` | ERROR | Missing expression | `{#if}` に式がない、または被演算子が足りない（演算子・`(` の後か式の先頭で、被演算子の代わりに別の字句か式の終わりが来た。`1 +`・`(1) +`・`()`。gcc/clang と同じ分け方） |
+| PP52 | `INVALID_EXPRESSION` | ERROR | Invalid expression | 不正な式（完結した被演算子の後に、演算子・`)`・式の終わり以外が続く `1 x`・`(1 x)`、閉じていない `(1`、リテラルの誤り、0 による除算など。§6） |
 | PP53 | `COUNTER_OVERFLOW` | ERROR | Counter value exceeds 2147483647 | `__COUNTER__` または名前付きカウンタ（§12.10）の値が上限を超過（2147483647 で止まる）。補足情報はカウンタ（`__COUNTER__`・`__counter(NAME)`・`__counter_peek(NAME)`） |
 | PP54 | `UNDEFINED_IDENTIFIER` | WARNING | Identifier is not defined, evaluates to 0 | 条件式（`{#if}`・`{#elif}`・`__assert` の条件式・`__counter_set` の値）で、識別子が未定義のため `0` に評価された（§5.3）。**既定で無効**（`-Wundef`）。出力は clang と同じ文面で、補足情報の識別子を先頭に置く（`'FOO' is not defined, evaluates to 0`）。`&&` / `\|\|` の評価されない被演算子の中では出さない（§6.4） |
 | PP60 | `MAX_EXPANSION_DEPTH_EXCEEDED` | ERROR | Maximum expansion depth exceeded | マクロ展開深度上限超過 |
@@ -2239,7 +2243,9 @@ NAME          := [A-Za-z_][A-Za-z0-9_]*
 
 define-body   := NAME ws replacement
                | NAME '(' params ')' ws replacement
+// 最後のパラメータ名の直後の '...' は GNU 拡張の名前付き可変長引数（§3.3）。
 params        := NAME (',' NAME)* (',' '...')?
+               | (NAME ',')* NAME '...'
                | '...'
                | <empty>
 

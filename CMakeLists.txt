@@ -219,10 +219,6 @@ if(GTest_FOUND OR TARGET GTest::gtest)
         add_executable(jiepp_test ${TEST_SOURCES})
         target_compile_options(jiepp_test PRIVATE -Wall -Wextra)
         jiepp_harden_target(jiepp_test)
-        # Disable linker pruning for test registration (MSVC only)
-        if (MSVC)
-            target_link_options(jiepp_test PRIVATE "/OPT:NOREF" "/INCREMENTAL:NO")
-        endif()
         set_target_properties(jiepp_test PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
         )
