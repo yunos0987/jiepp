@@ -99,9 +99,11 @@ void dispatch_directive(const Token& t,
     // The message of {#error}/{#warning}/{#info}/{#severe}: the whole text
     // as written, except for a directive with no closing '}', whose text runs
     // to the end of the input and is not a message anyone meant (its first
-    // line, at most 64 bytes, is quoted: Util::diag_excerpt()).
-    auto message_arg = [&]() -> std::string {
-        return t.unclosed_directive ? Util::diag_excerpt(raw_arg) : raw_arg;
+    // line, at most 64 bytes, is quoted: Util::diag_excerpt()). raw_arg is
+    // a structured binding, which clang before 16 cannot capture, so it is
+    // captured through an init-capture.
+    auto message_arg = [&t, &arg = raw_arg]() -> std::string {
+        return t.unclosed_directive ? Util::diag_excerpt(arg) : arg;
     };
 
     bool active = ctrl_is_active(ctrl);

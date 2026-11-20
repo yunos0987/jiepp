@@ -1788,7 +1788,9 @@ TEST_F(RobustnessTestSmoke, OutputSymlinkToRegularFileRemovedAsLink) {
 namespace {
 
 // The diagnostic lines of `err`, without a CR and without the "@file:line"
-// suffix of a Debug build.
+// suffix of a Debug build. "In file included from" lines (a PP10 for an
+// -include file has "In file included from <command line>:") are not
+// diagnostics and are skipped.
 std::vector<std::string> c11_diag_lines(const std::string& err) {
     std::vector<std::string> lines;
     std::istringstream in(err);
@@ -1796,6 +1798,8 @@ std::vector<std::string> c11_diag_lines(const std::string& err) {
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
+        if (DiagBox::is_include_stack_line(line))
+            continue;
         lines.push_back(PlainTextMessage::strip_source_location(line));
     }
     return lines;
@@ -2088,9 +2092,16 @@ TEST_F(SmokeTest, DependencyTargetsMTAndMQ) {
     EXPECT_EQ(0, r.exit_code) << r.err;
     EXPECT_EQ("t1 t2: \\\n  " + in.generic_string() + "\n", lf_only(r.out));
 
-    r = run("-M -MQ \"a b\\$c#d\" " + a);
+    // The operand is a b$c#d on both platforms: cmd.exe passes $ as is,
+    // while sh expands $c inside double quotes unless it is written \$.
+#ifdef _WIN32
+    const std::string mq = "\"a b$c#d\"";
+#else
+    const std::string mq = "\"a b\\$c#d\"";
+#endif
+    r = run("-M -MQ " + mq + " " + a);
     EXPECT_EQ(0, r.exit_code) << r.err;
-    EXPECT_EQ("a\\ b\\$$c\\#d: \\\n  " + in.generic_string() + "\n", lf_only(r.out));
+    EXPECT_EQ("a\\ b$$c\\#d: \\\n  " + in.generic_string() + "\n", lf_only(r.out));
 
     r = run("-M -MT t1 -MQ \"a b\" -MT t3 " + a);
     EXPECT_EQ(0, r.exit_code) << r.err;

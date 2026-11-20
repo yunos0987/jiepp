@@ -115,9 +115,20 @@ TEST_F(MacroTest, TimeStampPadsTheDay) {
         {local_time_t(2020, 3, 19, 10, 20, 30), "'Thu Mar 19 10:20:30 2020'"},
     };
     for (const auto& [t, expected] : cases) {
+        // Half a second past t, so that the "now"-based clock conversion of
+        // the fallback below and in TimeStampMacro (no std::chrono::clock_cast
+        // in libstdc++ before 13) cannot truncate to the second before.
+        const auto sys_tp =
+            std::chrono::system_clock::from_time_t(t) + std::chrono::milliseconds(500);
+#if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L
+        const auto file_tp = std::chrono::clock_cast<fs::file_time_type::clock>(sys_tp);
+#else
+        const auto file_tp = fs::file_time_type::clock::now() +
+                             std::chrono::duration_cast<fs::file_time_type::duration>(
+                                 sys_tp - std::chrono::system_clock::now());
+#endif
         std::error_code ec;
-        fs::last_write_time(file, std::chrono::clock_cast<fs::file_time_type::clock>(
-                                      std::chrono::system_clock::from_time_t(t)), ec);
+        fs::last_write_time(file, file_tp, ec);
         ASSERT_FALSE(ec) << ec.message();
         Env env = setup();
         env.push_file(file.generic_string());
