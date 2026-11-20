@@ -13,22 +13,22 @@ TEST_F(IncludeTest, BasicInclude) {
     std::string o;
     EXPECT_NO_THROW({o = pp_file(DIR / "include.iec");});
     EXPECT_EQ(R"(0;
-(*{#:0 './a.iec'}*)
+(*{#:0 'tests/core/test_include/./a.iec'}*)
 // a.iec begin
 
 
 1;
-'./a.iec';
+'tests/core/test_include/./a.iec';
 6;
 // a.iec end
 (*{#:2 'tests/core/test_include/include.iec'}*)
 a;
-(*{#:0 './b.iec'}*)
+(*{#:0 'tests/core/test_include/./b.iec'}*)
 // b.iec begin
 
 
 2;
-'./b.iec';
+'tests/core/test_include/./b.iec';
 6;
 // b.iec end
 (*{#:4 'tests/core/test_include/include.iec'}*)
@@ -104,22 +104,22 @@ TEST_F(IncludeTest, IncludeSingle) {
     std::string o;
     EXPECT_NO_THROW({o = pp_file(DIR / "include_single.iec");});
     EXPECT_EQ(R"(0;
-(*{#:0 './a.iec'}*)
+(*{#:0 'tests/core/test_include/./a.iec'}*)
 // a.iec begin
 
 
 1;
-'./a.iec';
+'tests/core/test_include/./a.iec';
 6;
 // a.iec end
 (*{#:2 'tests/core/test_include/include_single.iec'}*)
 a;
-(*{#:0 './b.iec'}*)
+(*{#:0 'tests/core/test_include/./b.iec'}*)
 // b.iec begin
 
 
 2;
-'./b.iec';
+'tests/core/test_include/./b.iec';
 6;
 // b.iec end
 (*{#:4 'tests/core/test_include/include_single.iec'}*)
@@ -134,22 +134,22 @@ TEST_F(IncludeTest, IncludeDouble) {
     std::string o;
     EXPECT_NO_THROW({o = pp_file(DIR / "include_double.iec");});
     EXPECT_EQ(R"(0;
-(*{#:0 './a.iec'}*)
+(*{#:0 'tests/core/test_include/./a.iec'}*)
 // a.iec begin
 
 
 1;
-'./a.iec';
+'tests/core/test_include/./a.iec';
 6;
 // a.iec end
 (*{#:2 'tests/core/test_include/include_double.iec'}*)
 a;
-(*{#:0 './b.iec'}*)
+(*{#:0 'tests/core/test_include/./b.iec'}*)
 // b.iec begin
 
 
 2;
-'./b.iec';
+'tests/core/test_include/./b.iec';
 6;
 // b.iec end
 (*{#:4 'tests/core/test_include/include_double.iec'}*)
@@ -273,7 +273,7 @@ TEST_F(IncludeTest, CircularInclude) {
     Env env = setup();
     env.set_max_include_depth(8);
     EXPECT_THROW(pp_file(DIR / "circular_a.iec", env), Issue::Exception);
-    EXPECT_EQ("circular_b.iec:1.0: error: PP12: Maximum include depth exceeded; 'circular_a.iec'", message());
+    EXPECT_EQ("tests/core/test_include/circular_b.iec:1.0: error: PP12: Maximum include depth exceeded; 'circular_a.iec'", message());
     EXPECT_TRUE(empty());
 }
 

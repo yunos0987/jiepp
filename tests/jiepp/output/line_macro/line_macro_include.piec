@@ -1,22 +1,22 @@
 (*{#:0 'tests/jiepp/input/line_macro/line_macro_include.iec'}*)
-(*{#:0 'a.iec'}*)
+(*{#:0 'tests/jiepp/input/line_macro/a.iec'}*)
 program a0
 2;
 end_program
 
-(*{#:0 'b.iec'}*)
-1;(*{#:0 'c.iec'}*)
+(*{#:0 'tests/jiepp/input/line_macro/b.iec'}*)
+1;(*{#:0 'tests/jiepp/input/line_macro/c.iec'}*)
 
 
 program c
 4;
 end_program
-(*{#:1 'b.iec'}*);1;
+(*{#:1 'tests/jiepp/input/line_macro/b.iec'}*);1;
 
 program b
 4;
 end_program
-(*{#:5 'a.iec'}*)
+(*{#:5 'tests/jiepp/input/line_macro/a.iec'}*)
 
 program a1
 8;

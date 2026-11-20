@@ -298,8 +298,11 @@ TEST_F(InputBytesTest, IncludesCounted) {
     EXPECT_EQ(Issue::Code::MAX_INPUT_BYTES_EXCEEDED, run_main(main, env));
     auto lines = messages();
     ASSERT_EQ(1u, lines.size());
-    EXPECT_EQ(0u, lines[0].rfind("a.inc:1.0: error: PP67: Maximum input size exceeded; 'limit " +
-                                 std::to_string(total - 1) + " bytes;", 0)) << lines[0];
+    // a.inc is shown under the directory of the main input, which is given
+    // by an absolute path here.
+    EXPECT_NE(std::string::npos,
+              lines[0].find("/a.inc:1.0: error: PP67: Maximum input size exceeded; 'limit " +
+                            std::to_string(total - 1) + " bytes;")) << lines[0];
 }
 
 TEST_F(InputBytesTest, RepeatedIncludeCountedOnce) {

@@ -1,6 +1,6 @@
 boost.output: \
   tests/jiepp/input/boost.iec \
-  tests/jiepp/input/boost/preprocessor/library.hpp \
+  tests/jiepp/input/./boost/preprocessor/library.hpp \
   tests/jiepp/input/boost/preprocessor/arithmetic.hpp \
   tests/jiepp/input/boost/preprocessor/arithmetic/add.hpp \
   tests/jiepp/input/boost/preprocessor/config/config.hpp \

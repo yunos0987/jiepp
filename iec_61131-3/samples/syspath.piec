@@ -3,7 +3,7 @@
 (* #sinclude searches system paths only, equivalent to #include <...> *)
 
 (*{syspath:'lib'}*)
-(*{#:0 '_util.iec'}*)
+(*{#:0 'iec_61131-3/samples/lib/_util.iec'}*)
 (* _util.iec — Utility included via syspath *)
 
 

@@ -1,6 +1,7 @@
 #pragma once
 #include "lineno.hpp"
 
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -23,7 +24,7 @@ public:
     void        pop_file();
     std::string current_file() const;
     // The innermost file's reached-by path ("" when no file is open): the
-    // base of the dependency path of what it includes. Unlike
+    // base of the reached-by path of what it includes. Unlike
     // current_file() it is not made absolute.
     const std::string& current_reached_path() const;
     // True when the innermost source was opened from the filesystem.
@@ -56,10 +57,13 @@ public:
     };
 
     // ---- Syspaths ----
-    // reached_path is the directory as a dependency path names it (a -I
+    // reached_path is the directory as a reached-by path names it (a -I
     // path as given, a {#syspath} under its file's reached-by directory);
-    // empty means syspath as given.
-    void                            add_syspath(std::string syspath, std::string reached_path = {});
+    // not given means syspath as given. It may be empty: {#syspath ''} in a
+    // file whose own name has no directory names the working directory,
+    // and a header found there is named by its operand alone.
+    void                            add_syspath(std::string syspath,
+                                                std::optional<std::string> reached_path = std::nullopt);
     const std::vector<std::string>& syspaths() const;
     // Parallel to syspaths().
     const std::vector<std::string>& syspath_reached_paths() const;
@@ -74,9 +78,9 @@ public:
     void   set_lineno(LineNo n) { lineno_ = wrap_lineno(n); }
 
     // ---- Dependency tracking (for -M / -MM) ----
-    // add_dependency: display_path for output (the reached-by path, which
-    // opens the file from the working directory, or the caller's name for
-    // it), resolved_path for deduplication
+    // add_dependency: display_path for output (Util::dependency_path() of
+    // the reached-by path, or the caller's name for the file),
+    // resolved_path for deduplication
     void add_dependency(std::string resolved_path, std::string display_path, bool is_system);
     struct Dependency {
         std::string display_path;   // path to show in output

@@ -703,7 +703,7 @@ void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ot
     // filesystem calls, so it is an invalid path, like a malformed operand.
     if (p && p->path.find('\0') == std::string::npos) {
         const std::string& syspath = p->path;
-        // The directory as a dependency path names it: under the reached-by
+        // The directory as a reached-by path names it: under the reached-by
         // directory of the file holding this directive (the same base the
         // lookup uses), not made absolute.
         env.add_syspath(resolve_syspath_base(syspath, env),
@@ -727,7 +727,6 @@ void handle_include(const std::string& raw_arg,
     if (p && p->path.find('\0') == std::string::npos) {
         const std::string& include_path = p->path;
         const bool syspath_only_path = p->angle;
-        auto disp_path = fs::path(include_path).generic_string();
 
         // PP66: count the executed directive (valid path, about to resolve
         // and include; a {#pragma once} skip is counted too, since the path
@@ -735,7 +734,7 @@ void handle_include(const std::string& raw_arg,
         env.count_include();
 
         Loader::LoadType loadtype = (syspath_only || syspath_only_path) ? Loader::LoadType::SINCLUDE : Loader::LoadType::INCLUDE;
-        expand(include_path, loadtype, ots, env, disp_path);
+        expand(include_path, loadtype, ots, env);
         return;
     }
     // raw_arg is decoded, so re-escape it before it reaches the

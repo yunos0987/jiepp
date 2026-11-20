@@ -55,10 +55,10 @@ int FileContext::include_level() const {
 // Syspaths
 // ---------------------------------------------------------------------------
 
-void FileContext::add_syspath(std::string syspath, std::string reached_path) {
+void FileContext::add_syspath(std::string syspath, std::optional<std::string> reached_path) {
     const std::string p(Util::absolute_path(syspath));
     syspaths_.push_back(p);
-    syspath_reached_.push_back(reached_path.empty() ? std::move(syspath) : std::move(reached_path));
+    syspath_reached_.push_back(reached_path ? std::move(*reached_path) : std::move(syspath));
 }
 
 const std::vector<std::string>& FileContext::syspaths() const {

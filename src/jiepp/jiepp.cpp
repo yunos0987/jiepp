@@ -445,8 +445,7 @@ int jiepp_command(const JieppOptions& opts)
             try {
                 // -include: force-include files before main input
                 for (const auto& include_filepath : opts.include_filepaths) {
-                    auto include_disppath = fs::path(include_filepath).generic_string();
-                    expand(include_filepath, Loader::LoadType::INCLUDE, ots, env, include_disppath);
+                    expand(include_filepath, Loader::LoadType::INCLUDE, ots, env);
                 }
 
                 // H: gcc/clang both display "<stdin>" for the sole input
@@ -490,8 +489,12 @@ int jiepp_command(const JieppOptions& opts)
                     // -MP leaves the main input out of the empty rules: it is
                     // the dependency expand() records first for this file.
                     main_dep_index = env.dependencies().size();
-                    expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env, dispath,
-                           /*disppath_names_dependency=*/opts.disppath.has_value());
+                    // Only --disppath names the file; otherwise it is shown by
+                    // the path it is reached by, which is dispath unless the
+                    // file is found under a system path.
+                    expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env,
+                           opts.disppath.has_value() ? std::optional<std::string>(dispath)
+                                                     : std::nullopt);
                 }
             } catch (const Issue::Exception&) {
                 // E4a: a code in jiepp_continue_abort_codes() (or SEVERE)

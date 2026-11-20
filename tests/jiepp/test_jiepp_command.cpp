@@ -1511,7 +1511,8 @@ TEST_F(JieppCommandTest, DepMMExcludesSystemHeadersInEveryOperandForm) {
 // operand as written under the including file's directory (itself a
 // reached-by path, so it composes through nested includes) or under the
 // system path that held it, so a build tool can open every prerequisite from
-// the working directory. "." components are dropped; ".." is kept.
+// the working directory. Nothing is normalised ("." and ".." stay); only a
+// leading "./" is dropped from a prerequisite.
 TEST_F(JieppCommandTest, DepPathsOpenFromTheWorkingDirectory) {
     MpTree t;
     fs::create_directories(t.dir / "sub" / "inc");
@@ -1529,9 +1530,9 @@ TEST_F(JieppCommandTest, DepPathsOpenFromTheWorkingDirectory) {
     opts.dep_target = "tgt";
     ASSERT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("tgt: \\\n  sub/main.iec \\\n  sub/inc/a.iec \\\n  sub/inc/../inc/b.iec \\\n"
-              "  sub/inc/c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
+              "  sub/inc/./c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
               t.read("x.d"));
-    for (const char* dep : {"sub/main.iec", "sub/inc/a.iec", "sub/inc/../inc/b.iec", "sub/inc/c.iec",
+    for (const char* dep : {"sub/main.iec", "sub/inc/a.iec", "sub/inc/../inc/b.iec", "sub/inc/./c.iec",
                             "sub/lib/s.iec", "sub/lib/t.iec"})
         EXPECT_TRUE(fs::exists(dep)) << dep;
 
@@ -1556,19 +1557,19 @@ TEST_F(JieppCommandTest, DepPathsOpenFromTheWorkingDirectory) {
     opts.include_filepaths.clear();
 
     // --disppath renames the main input only; what it includes is listed
-    // where it really is. "./" in the given path is dropped like any ".".
+    // where it really is. A leading "./" is dropped from a prerequisite.
     opts.input_filepaths = {"./sub/main.iec"};
     opts.syspaths.clear();
     opts.dep_file = "w.d";
     ASSERT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("tgt: \\\n  sub/main.iec \\\n  sub/inc/a.iec \\\n  sub/inc/../inc/b.iec \\\n"
-              "  sub/inc/c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
+              "  sub/inc/./c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
               t.read("w.d"));
     opts.disppath = "shown/x.iec";
     opts.dep_file = "v.d";
     ASSERT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("tgt: \\\n  shown/x.iec \\\n  sub/inc/a.iec \\\n  sub/inc/../inc/b.iec \\\n"
-              "  sub/inc/c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
+              "  sub/inc/./c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
               t.read("v.d"));
     opts.disppath.reset();
 
@@ -1586,6 +1587,80 @@ TEST_F(JieppCommandTest, DepPathsOpenFromTheWorkingDirectory) {
                       "/sub/lib/t.iec\n",
                   t.read("u.d"));
     }
+    EXPECT_TRUE(messages().empty());
+}
+
+// The name of an included file in its line marker and in __FILE__ is the
+// path it was reached by, joined as gcc/clang join it (SPEC 13 "The Name of
+// an Included File"): nothing is normalised, {#line} does not move the base,
+// and --disppath renames the main input only.
+TEST_F(JieppCommandTest, IncludedFileNamesFollowGccClang) {
+    MpTree t;
+    fs::create_directories(t.dir / "sub" / "inc");
+    fs::create_directories(t.dir / "lib");
+    t.write("sub/main.iec", "{#include 'inc/a.iec'}\n{#line 10 'other.iec'}\n{#include 'inc/c.iec'}\n"
+                            "M __FILE__\n{#sinclude 's.iec'}\n");
+    t.write("sub/inc/a.iec", "{#include './c.iec'}\nA __FILE__\n");
+    t.write("sub/inc/c.iec", "C __FILE__ __FILE_NAME__ __BASE_FILE__\n");
+    t.write("lib/s.iec", "S __FILE__\n");
+    auto has = [](const std::string& out, const std::string& what) {
+        return out.find(what) != std::string::npos;
+    };
+
+    JieppOptions opts;
+    opts.input_filepaths = {"sub/main.iec"};
+    opts.syspaths = {"./lib"};
+    opts.output_filepath = "out.piec";
+    ASSERT_EQ(0, jiepp_command(opts));
+    std::string out = t.read("out.piec");
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/main.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/a.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/./c.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "C 'sub/inc/./c.iec' 'c.iec' 'sub/main.iec'")) << out;
+    EXPECT_TRUE(has(out, "A 'sub/inc/a.iec'")) << out;
+    // After {#line 10 'other.iec'}: the including file is shown as other.iec,
+    // but what it includes is still found and named under sub/.
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/c.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "C 'sub/inc/c.iec' 'c.iec' ")) << out;
+    EXPECT_TRUE(has(out, "M 'other.iec'")) << out;
+    EXPECT_TRUE(has(out, " 'other.iec'}*)")) << out;
+    // A header under -I ./lib keeps the path as given.
+    EXPECT_TRUE(has(out, "(*{#:0 './lib/s.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "S './lib/s.iec'")) << out;
+
+    // --disppath: the main input is shown by that name; nested files are
+    // named by where they are.
+    opts.disppath = "shown/x.iec";
+    ASSERT_EQ(0, jiepp_command(opts));
+    out = t.read("out.piec");
+    EXPECT_TRUE(has(out, "(*{#:0 'shown/x.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/a.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "C 'sub/inc/./c.iec' 'c.iec' 'shown/x.iec'")) << out;
+    opts.disppath.reset();
+
+    // {#syspath ''} is the directory of the file holding it. In a file
+    // whose own name has no directory that is the working directory, and a
+    // header found there is named by its operand alone (never by an
+    // absolute path); in ./sub/dir.iec it is ./sub/.
+    t.write("cwd.iec", "{#syspath ''}{#sinclude 'sub/inc/c.iec'}\n");
+    opts.input_filepaths = {"cwd.iec"};
+    opts.syspaths.clear();
+    opts.dep_mode = DepMode::ALL;
+    opts.MD = true;
+    opts.dep_file = "cwd.d";
+    opts.dep_target = "tgt";
+    ASSERT_EQ(0, jiepp_command(opts));
+    out = t.read("out.piec");
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/c.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "C 'sub/inc/c.iec' 'c.iec' 'cwd.iec'")) << out;
+    EXPECT_EQ("tgt: \\\n  cwd.iec \\\n  sub/inc/c.iec\n", t.read("cwd.d"));
+
+    t.write("sub/dir.iec", "{#syspath ''}{#sinclude 'inc/c.iec'}\n");
+    opts.input_filepaths = {"./sub/dir.iec"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    out = t.read("out.piec");
+    EXPECT_TRUE(has(out, "C './sub/inc/c.iec' 'c.iec' './sub/dir.iec'")) << out;
+    EXPECT_EQ("tgt: \\\n  sub/dir.iec \\\n  sub/inc/c.iec\n", t.read("cwd.d"));
     EXPECT_TRUE(messages().empty());
 }
 

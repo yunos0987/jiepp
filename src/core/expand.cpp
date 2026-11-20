@@ -11,6 +11,7 @@
 #include "preprocessor_internal.hpp"
 
 #include "../macro/macro.hpp"
+#include "../util/path.hpp"
 #include "../util/stack_guard.hpp"
 #include "../util/text.hpp"
 
@@ -1381,8 +1382,7 @@ std::vector<Token>& expand(const std::string& filepath,
                            Loader::LoadType load_type,
                            std::vector<Token>& ots,
                            Env& env,
-                           const std::string& disppath,
-                           bool disppath_names_dependency)
+                           const std::optional<std::string>& shown_as)
 {
     bool found_directory = false;
     std::string found_as;
@@ -1408,15 +1408,16 @@ std::vector<Token>& expand(const std::string& filepath,
         return ots;
     }
 
-    // Record dependency for -M / -MM output, by the path the file was
-    // reached by (found_as), like gcc/clang: a build tool must be able to
-    // open it from the working directory, which the operand as written
+    // The file's name in line markers, __FILE__, diagnostics and the
+    // dependency output is the path it was reached by (found_as), like
+    // gcc/clang: the operand under the directory it was found in, which
+    // opens the file from the working directory -- the operand alone
     // ('a.iec' next to the including file, or under a system path) does
-    // not allow. Only when the caller asks for it (--disppath for the main
-    // input) is disppath listed instead; what the file includes is still
-    // based on found_as, where the file really is. Line markers and
-    // diagnostics keep disppath.
-    env.add_dependency(fullpath, disppath_names_dependency ? disppath : found_as,
+    // not. A caller may name the file itself (shown_as: --disppath for
+    // the main input); what the file includes is still based on found_as,
+    // where the file really is.
+    const std::string& disppath = shown_as ? *shown_as : found_as;
+    env.add_dependency(fullpath, shown_as ? *shown_as : Util::dependency_path(found_as),
                        load_type == Loader::LoadType::SINCLUDE);
 
     // item f: RAII-guarded, so an exception raised while processing this

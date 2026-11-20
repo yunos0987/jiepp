@@ -21,7 +21,7 @@ public:
     // path the file was reached by (Util::reached_path()): filepath under
     // the including file's reached-by directory or under the system path
     // that held it, i.e. the name that opens it from the working
-    // directory, for the dependency output.
+    // directory.
     static std::string fullpath(const std::string& filepath, LoadType load_type, Env& env,
                                  bool* found_directory = nullptr,
                                  std::string* reached_path = nullptr);

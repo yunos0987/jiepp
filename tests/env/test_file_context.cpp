@@ -91,5 +91,7 @@ TEST_F(FileContextTest, ReachedPaths) {
     env.add_syspath("lib");
     env.add_syspath("/abs/sub/lib2", "sub/lib2");
     ASSERT_EQ(env.syspaths().size(), env.syspath_reached_paths().size());
-    EXPECT_EQ((std::vector<std::string>{"lib", "sub/lib2"}), env.syspath_reached_paths());
+    // An empty reached-by directory is kept, not replaced by the path.
+    env.add_syspath("/abs/work", "");
+    EXPECT_EQ((std::vector<std::string>{"lib", "sub/lib2", ""}), env.syspath_reached_paths());
 }
