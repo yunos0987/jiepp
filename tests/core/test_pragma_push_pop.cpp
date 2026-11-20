@@ -159,6 +159,26 @@ TEST_F(PragmaPushPopTest, MalformedPopIsPP82AndIgnored) {
     }
 }
 
+// A literal cut short by a line break is PP29 and then a malformed operand:
+// it must not name a macro by its text minus the last character ('XY -> X).
+TEST_F(PragmaPushPopTest, UnterminatedLiteralIsPP82AndIgnored) {
+    Issue::ContinueMode guard({});
+    for (const std::string op : {"push_macro", "pop_macro"}) {
+        SCOPED_TRACE(op);
+        const bool push = op == "push_macro";
+        // A push of X would make the final pop restore 1; a pop of X would
+        // restore 1 before the first X.
+        EXPECT_EQ(push ? "2" : "21",
+                  pp(push ? "{#define X 1}{#pragma push_macro('XY$n)}{#undef X}{#define X 2}"
+                            "{#pragma pop_macro('X')}X"
+                          : "{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}"
+                            "{#pragma pop_macro('XY$n)}X{#pragma pop_macro('X')}X"));
+        EXPECT_EQ((std::vector<Issue::Code>{Issue::Code::UNTERMINATED_STRING_LITERAL,
+                                            Issue::Code::INVALID_PUSH_POP_MACRO}),
+                  codes());
+    }
+}
+
 TEST_F(PragmaPushPopTest, AdjacentLiteralsAreJoinedIntoOneName) {
     // The lexer joins adjacent literals of the same quote (SPEC 2), so
     // ('X' 'Y') names XY, like 'XY' (gcc/clang reject two strings).

@@ -920,8 +920,9 @@ bool push_pop_macro_name(const std::vector<Token>& ts, std::string& name, bool& 
     if (!at_token() || ts[i].type != Token::LP)
         return false;
     ++i;
-    if (!at_token() || (ts[i].type != Token::STRING && ts[i].type != Token::WSTRING) ||
-        ts[i].unterminated)
+    // lex_operand() has reported PP29 and cleared Token::unterminated, so
+    // the literal's own text is what tells whether it is closed.
+    if (!at_token() || !is_terminated_literal(ts[i]))
         return false;
     name = ts[i].text.substr(1, ts[i].text.size() - 2);
     ++i;

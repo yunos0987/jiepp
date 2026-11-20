@@ -147,9 +147,9 @@ void dispatch_directive(const Token& t,
                     report_invalid_escape();
                 bool cond = ifdef_form ? eval_ifdef(raw_arg, ifndef_form, ifdef_name, env)
                                        : eval_cond(raw_arg, env);
-                ctrl.push_back({false, cond ? std::optional<bool>(true) : std::nullopt});
+                ctrl.push_back({cond ? std::optional<bool>(true) : std::nullopt});
             } else {
-                ctrl.push_back({false, false});
+                ctrl.push_back({false});
             }
             break;
         case DirectiveToken::ELIF:
@@ -177,7 +177,7 @@ void dispatch_directive(const Token& t,
                     if (ctrl_parent_active(ctrl))
                         (void)jiepp::preprocessor_detail::lex_operand(raw_arg, true);
                 }
-                // item: assign has_entered/condition individually here
+                // item: assign condition individually here
                 // (instead of replacing the whole CtrlState) so seen_else --
                 // already checked above -- survives into any further
                 // {#elif}/{#else} in this same group; a later {#else} still
@@ -187,10 +187,8 @@ void dispatch_directive(const Token& t,
                 // when the first ELIF_ERROR above does not itself abort
                 // processing, e.g. under Issue::ContinueMode).
                 if (last.condition.has_value() && last.condition.value()) {
-                    last.has_entered = true;
                     last.condition = false;
                 } else if (!last.condition.has_value()) {
-                    last.has_entered = true;
                     if (ctrl_parent_active(ctrl)) {
                         bool cond = ifdef_form
                                         ? eval_ifdef(raw_arg, ifndef_form, ifdef_name, env)
@@ -788,7 +786,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
     // pop_back/push_back are O(1), eliminating the O(N²) erase+insert pattern
     // that previously shifted the entire vector on every macro expansion.
     std::vector<Token> work(its.rbegin(), its.rend());
-    std::vector<CtrlState> ctrl = {{false, true}};
+    std::vector<CtrlState> ctrl = {{true}};
 
     while (!work.empty()) {
         Token t = std::move(work.back());
@@ -1143,6 +1141,33 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                     // and, unlike a terminated wrong-count call, outputs nothing at
                     // all, not even the macro name (clang; gcc differs and keeps the
                     // name, but the project follows clang where they disagree).
+                    // An edge `//` comment of an argument is dropped by the
+                    // flatten below, and with it the newline that ended it.
+                    // When the comment was already line-counted as it was
+                    // collected here, an enclosing call has kept it (see
+                    // Token::flatten) and re-emits that newline itself;
+                    // counting it again would print a stray line break after
+                    // this inner call. A comment that comes straight from the
+                    // source (not yet counted) still compensates the dropped
+                    // line as before. Indexes `params`, so it must run while
+                    // the arguments recorded in counted_line_comments are
+                    // still there (see the zero-args check below).
+                    auto drop_counted_edge_comments = [&] {
+                        for (const auto& c : counted_line_comments) {
+                            const auto& p = params[c.param];
+                            std::size_t lead = 0;
+                            while (lead < p.size() && (p[lead].type & Token::MASK_WS)) ++lead;
+                            std::size_t last = p.size();
+                            while (last > lead && (p[last - 1].type & Token::MASK_WS)) --last;
+                            if (c.pos < lead || c.pos >= last) {
+                                sum_num_of_lines -= p[c.pos].num_of_lines;
+                                if (p[c.pos].output_only_lines)
+                                    sum_output_only -= p[c.pos].num_of_lines;
+                            }
+                        }
+                        counted_line_comments.clear();
+                    };
+
                     bool call_error = false;
                     bool unterminated_call = false;
                     if (!found_rp) {
@@ -1160,6 +1185,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                                 }
                             }
                             if (empty && pmin == 0) {
+                                // The whitespace-only argument goes away, and
+                                // every comment in it is an edge comment. A
+                                // call with zero arguments is never a count
+                                // error here (pmin == 0), so this is the same
+                                // compensation the non-error path does below.
+                                drop_counted_edge_comments();
                                 params.clear();
                             }
                         }
@@ -1246,27 +1277,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                             }
                         }
 
-                        // An edge `//` comment of an argument is dropped by the
-                        // flatten below, and with it the newline that ended it.
-                        // When the comment was already line-counted as it was
-                        // collected here, an enclosing call has kept it (see
-                        // Token::flatten) and re-emits that newline itself;
-                        // counting it again would print a stray line break after
-                        // this inner call. A comment that comes straight from the
-                        // source (not yet counted) still compensates the dropped
-                        // line as before.
-                        for (const auto& c : counted_line_comments) {
-                            const auto& p = params[c.param];
-                            std::size_t lead = 0;
-                            while (lead < p.size() && (p[lead].type & Token::MASK_WS)) ++lead;
-                            std::size_t last = p.size();
-                            while (last > lead && (p[last - 1].type & Token::MASK_WS)) --last;
-                            if (c.pos < lead || c.pos >= last) {
-                                sum_num_of_lines -= p[c.pos].num_of_lines;
-                                if (p[c.pos].output_only_lines)
-                                    sum_output_only -= p[c.pos].num_of_lines;
-                            }
-                        }
+                        drop_counted_edge_comments();
 
                         for (auto& p : params)
                             p = ts_flatten(std::move(p));

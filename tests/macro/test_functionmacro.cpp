@@ -1026,3 +1026,17 @@ TEST_F(FuncMacroTest, NestedArgumentEdgeLineCommentDropsItsNewline) {
     EXPECT_EQ(pp(def + "ID(a\n) b|"), pp(def + "ID(a // c\n) b|"));
     EXPECT_TRUE(empty());
 }
+
+// The same, when the comment is the whole argument of a nested call that
+// takes no arguments: the whitespace-only argument is dropped (Z() has zero
+// arguments), and the comment's line is compensated before it goes. This
+// used to index the cleared argument list.
+TEST_F(FuncMacroTest, NestedZeroArgumentCallWithEdgeLineComment) {
+    const std::string def = "{#define ID(x) x}\n{#define Z() z}\n{#define V(...) v}\n";
+    EXPECT_EQ(pp(def + "ID(Z(\n))|\n__LINE__"), pp(def + "ID(Z( // c\n))|\n__LINE__"));
+    EXPECT_EQ(pp(def + "ID(V(\n))|\n__LINE__"), pp(def + "ID(V( // c\n))|\n__LINE__"));
+    // Same line accounting as a nested call whose one argument is the comment.
+    EXPECT_EQ(pp("{#define ID(x) x}\n{#define Z(a) z}\n\nID(Z( // c\n))|\n__LINE__"),
+              pp(def + "ID(Z( // c\n))|\n__LINE__"));
+    EXPECT_TRUE(empty());
+}

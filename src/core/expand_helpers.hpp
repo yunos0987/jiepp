@@ -22,7 +22,6 @@ namespace jiepp::expand_detail {
 // Not part of Prosser's algorithm; jiepp extension for #if/#elif/#else/#endif.
 
 struct CtrlState {
-    bool has_entered = false;
     std::optional<bool> condition;
     bool seen_else = false;
 };
