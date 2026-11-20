@@ -1,5 +1,6 @@
 #include "path.hpp"
 
+#include <cctype>
 #include <filesystem>
 
 #ifdef _WIN32
@@ -80,13 +81,40 @@ bool Util::file_id(std::string_view path_text, FileId& out) {
 #endif
 }
 
+namespace {
+
+// The path text with '/' as the only separator: a backslash becomes '/' on
+// Windows (where both separate), and nothing changes elsewhere (a backslash
+// is an ordinary file-name character). Nothing else is touched: a run of '/',
+// "." and ".." stay as written, which std::filesystem::path would not keep
+// (libstdc++ joins a run of '/' into one).
+std::string with_slashes(std::string_view text) {
+    std::string s(text);
+#ifdef _WIN32
+    for (char& c : s)
+        if (c == '\\')
+            c = '/';
+#endif
+    return s;
+}
+
+}
+
 // e.g. ("tests/in", "./a.iec") -> "tests/in/./a.iec"
 std::string Util::reached_path(std::string_view dir, std::string_view name)
 {
-    const fs::path n{std::string(name)};
-    if (dir.empty() || n.is_absolute())
-        return n.generic_string();
-    return (fs::path{std::string(dir)} / n).generic_string();
+    std::string n = with_slashes(name);
+    // A name with a root (an absolute path; on Windows also "/x" and "C:x")
+    // stands alone, as it does for path::operator/.
+    const fs::path np{std::string(name)};
+    if (dir.empty() || np.is_absolute() || np.has_root_name() || np.has_root_directory())
+        return n;
+    std::string d = with_slashes(dir);
+    // Join with one '/', unless dir already ends with one ("lib/" and
+    // "lib//" are kept as they are written).
+    if (!d.ends_with('/'))
+        d += '/';
+    return d + n;
 }
 
 // e.g. "././x.iec" -> "x.iec"
@@ -103,5 +131,22 @@ std::string Util::dependency_path(std::string_view reached)
 // e.g. "tests/in/main.iec" -> "tests/in"
 std::string Util::reached_dir(std::string_view path)
 {
-    return fs::path{std::string(path)}.parent_path().generic_string();
+    // Everything before the last '/', as written. A run of '/' is kept whole
+    // ("lib//a.iec" gives "lib//"): reached_path() adds no '/' after a
+    // directory that ends with one, so a file next to it is named "lib//c.iec",
+    // as gcc/clang name it.
+    const std::string p = with_slashes(path);
+    const std::size_t slash = p.rfind('/');
+    if (slash == std::string::npos) {
+#ifdef _WIN32
+        // "C:a.iec" names a file relative to drive C's directory.
+        if (p.size() >= 2 && p[1] == ':' && std::isalpha(static_cast<unsigned char>(p[0])))
+            return p.substr(0, 2);
+#endif
+        return {};
+    }
+    // "/a.iec" is in the root, which is "/" and not "".
+    if (slash == 0)
+        return "/";
+    return p.substr(0, p[slash - 1] == '/' ? slash + 1 : slash);
 }

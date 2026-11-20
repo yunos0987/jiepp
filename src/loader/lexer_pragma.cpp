@@ -1,5 +1,6 @@
 #include "lexer_helpers.hpp"
 #include "directive_parser.hpp"
+#include "../util/text.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -348,16 +349,11 @@ Token read_pragma_body(const std::string& text,
         // opening '{' to the end of the input; each LF is written "$n" (a CR
         // is kept as is).
         report_lex_issue(lineno, opts, pos, [&] {
-            std::string context;
-            for (char ch : std::string_view(text).substr(start_pos - 1, pos - start_pos + 1)) {
-                if (ch == '\n')
-                    context += "$n";
-                else
-                    context += ch;
-            }
+            // From the opening '{' to the end of the input, but only its
+            // first line is quoted (Util::diag_excerpt()).
             Issue::happen(is_directive ? Issue::Code::INVALID_PP_SYNTAX
                                        : Issue::Code::INVALID_PRAGMA_SYNTAX,
-                          std::move(context));
+                          Util::diag_excerpt(std::string_view(text).substr(start_pos - 1, pos - start_pos + 1)));
         });
     }
 

@@ -248,27 +248,42 @@ TEST_F(DirectiveTest, IgnoreRetiredCodeAccepted) {
     EXPECT_TRUE(empty());
 }
 
-TEST_F(DirectiveTest, OperationNotAllowedDefine) {
+// 'defined' is not a macro name: PP30, an error that does not stop the run
+// (it used to be a severe PP02), and nothing is defined.
+TEST_F(DirectiveTest, DefineDefinedIsInvalidMacroName) {
     EXPECT_THROW(pp("{#define defined}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
 }
 
-TEST_F(DirectiveTest, OperationNotAllowedDefineWithBody) {
+TEST_F(DirectiveTest, DefineDefinedWithBodyIsInvalidMacroName) {
     // Not just the bare {#define defined} form: any redefinition of the
     // "defined" operator (object-like with a body, or function-like) must be
     // rejected at the define site, not silently accepted (which would corrupt
     // every later {#if defined(...)} in the file).
     EXPECT_THROW(pp("{#define defined 1}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
     EXPECT_THROW(pp("{#define defined(x) x}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
     // A later {#if defined(...)} must still work using the real operator.
     EXPECT_EQ(";yes;", pp("{#define FOO 1};{#if defined(FOO)}yes;{#endif}"));
 }
 
-TEST_F(DirectiveTest, OperationNotAllowedUndef) {
+TEST_F(DirectiveTest, UndefDefinedIsInvalidMacroName) {
     EXPECT_THROW(pp("{#undef defined}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+}
+
+// gcc/clang report 'defined' as an error and carry on with the rest of the
+// input (the run ends with exit code 1): so does the continue mode of the
+// CLI, and 'defined' keeps its meaning in conditions.
+TEST_F(DirectiveTest, DefineAndUndefDefinedContinueInContinueMode) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("\ndefined\n\ndefined\n;yes;",
+              pp("{#define defined 1}\ndefined\n{#undef defined}\ndefined\n"
+                 "{#define FOO 1};{#if defined(FOO)}yes;{#endif}"));
+    EXPECT_EQ(2, Issue::error_count_);
+    for (Issue::Code c : codes())
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, c);
 }
 
 TEST_F(DirectiveTest, DirectiveInsideMacroArgumentExecutedOnce) {

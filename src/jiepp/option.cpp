@@ -128,11 +128,13 @@ void display_help_and_exit(int exit_code = 0) {
     std::cout <<
         "Usage: jiepp [filepath] [options]\n"
         "Options:\n"
-        "  -o PATH                  Output file\n"
+        "  -o PATH                  Output file (- = stdout)\n"
         "  -D NAME[=VALUE]          Define macro\n"
-        "  -U NAME                  Undefine macro\n"
+        "  -U NAME                  Undefine macro (-D and -U apply in the order written)\n"
         "  -I PATH                  Add syspath\n"
         "  -include FILE            Force-include file before input\n"
+        "                           (-oPATH, -DNAME, -UNAME, -IPATH, -includeFILE, -MFFILE,\n"
+        "                           -MTTARGET and -MQTARGET also take the value glued on)\n"
         "  -w                       Suppress warnings\n"
         "  -Werror                  Promote warnings to errors (-Wno-error: cancel)\n"
         "  -W<name>                 Enable warning <name> (only PP54 is off by default)\n"
@@ -146,8 +148,9 @@ void display_help_and_exit(int exit_code = 0) {
         "  -MM                      Like -M but exclude system includes\n"
         "  -MD                      Write dependency rules to .d file (keep normal output)\n"
         "  -MMD                     Like -MD but exclude system includes\n"
-        "  -MF FILE                 Write dependency rules to file\n"
-        "  -MT TARGET               Set dependency target name\n"
+        "  -MF FILE                 Write dependency rules to file (- = stdout)\n"
+        "  -MT TARGET               Set dependency target name (may be repeated)\n"
+        "  -MQ TARGET               Like -MT, but Make-escape TARGET\n"
         "  -MP                      Add an empty rule for each header (with -M/-MM/-MD/-MMD)\n"
         "  --max-include-depth N    Maximum include depth (default: 100)\n"
         "  --max-expansion-depth N  Maximum expansion depth (default: 256)\n"
@@ -251,6 +254,10 @@ JieppOptions parse_args(int argc, char* argv[]) {
             exit_after_stdout(0);
         }
 
+        // Options with a value take it either as the next argument or glued
+        // to the option (-o out, -oout; -MF d, -MFd; ...), like gcc/clang.
+        // Every option that is matched exactly (-M, -MM, -MD, -MMD, -MP, -w,
+        // ...) is tested before a glued form is, so none is taken for one.
         if (arg == "-o") {
             require_value(i, argc, "-o");
             opts.output_filepath = argv[++i];
@@ -261,7 +268,7 @@ JieppOptions parse_args(int argc, char* argv[]) {
             std::string spec = argv[++i];
             if (spec.empty())
                 ISSUE(MISSING_OPTION_VALUE, "-D");
-            opts.define_macros.push_back(spec);
+            opts.add_define(std::move(spec));
             ++i; continue;
         }
 
@@ -269,7 +276,7 @@ JieppOptions parse_args(int argc, char* argv[]) {
             std::string spec = arg.substr(2);
             if (spec.empty())
                 ISSUE(MISSING_OPTION_VALUE, "-D");
-            opts.define_macros.push_back(spec);
+            opts.add_define(std::move(spec));
             ++i; continue;
         }
 
@@ -277,7 +284,7 @@ JieppOptions parse_args(int argc, char* argv[]) {
             std::string name = argv[++i];
             if (name.empty())
                 ISSUE(MISSING_OPTION_VALUE, "-U");
-            opts.undef_macros.push_back(name);
+            opts.add_undef(std::move(name));
             ++i; continue;
         }
 
@@ -285,7 +292,7 @@ JieppOptions parse_args(int argc, char* argv[]) {
             std::string name = arg.substr(2);
             if (name.empty())
                 ISSUE(MISSING_OPTION_VALUE, "-U");
-            opts.undef_macros.push_back(name);
+            opts.add_undef(std::move(name));
             ++i; continue;
         }
 
@@ -303,6 +310,16 @@ JieppOptions parse_args(int argc, char* argv[]) {
         if (arg == "-include") {
             require_value(i, argc, "-include");
             opts.include_filepaths.push_back(argv[++i]);
+            ++i; continue;
+        }
+
+        if (arg.starts_with("-include")) {
+            opts.include_filepaths.push_back(arg.substr(8));
+            ++i; continue;
+        }
+
+        if (arg.size() > 2 && arg.starts_with("-o")) {
+            opts.output_filepath = arg.substr(2);
             ++i; continue;
         }
 
@@ -379,9 +396,21 @@ JieppOptions parse_args(int argc, char* argv[]) {
             ++i; continue;
         }
 
-        if (arg == "-MT") {
-            require_value(i, argc, "-MT");
-            opts.dep_target = argv[++i];
+        if (arg == "-MT" || arg == "-MQ") {
+            require_value(i, argc, arg);
+            opts.dep_targets.push_back({argv[++i], arg == "-MQ"});
+            ++i; continue;
+        }
+
+        // Glued forms (-MFd.d, -MTtarget, -MQtarget); the exact spellings
+        // above and -M/-MM/-MD/-MMD/-MP are already taken.
+        if (arg.size() > 3 && arg.starts_with("-MF")) {
+            opts.dep_file = arg.substr(3);
+            ++i; continue;
+        }
+
+        if (arg.size() > 3 && (arg.starts_with("-MT") || arg.starts_with("-MQ"))) {
+            opts.dep_targets.push_back({arg.substr(3), arg[2] == 'Q'});
             ++i; continue;
         }
 

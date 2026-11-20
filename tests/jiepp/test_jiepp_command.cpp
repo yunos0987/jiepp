@@ -76,11 +76,11 @@ static void run_e2e(const std::string& testid,
 
     JieppOptions opts;
     opts.input_filepaths = {input_filepath.generic_string()};
-    opts.define_macros = define_macros;
+    opts.add_defines(define_macros);
     opts.syspaths = syspaths;
     opts.output_filepath = actual_out_filepath;
     opts.include_filepaths = include_files;
-    opts.undef_macros = undef_macros;
+    opts.add_undefs(undef_macros);
     opts.suppress_warnings = suppress_warnings;
     opts.werror = werror;
     if (max_include_depth >= 0)
@@ -95,6 +95,9 @@ static void run_e2e(const std::string& testid,
     // file" semantics and preserve every existing golden byte-for-byte.
     opts.MD = true;
     opts.dep_file = actual_dep_filepath;
+    // With -MD and -o the default target is the -o path, which is under the
+    // build tree here; the goldens keep the target of the plain case.
+    opts.dep_targets = {{input_filepath.stem().string() + ".output"}};
 
     int rc = jiepp_command(opts);
     actual_log_file.close();
@@ -152,7 +155,7 @@ TEST_F(JieppCommandTest, DOptionRejectsNonIdentifierName) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"1=2"};
+    opts.add_defines({"1=2"});
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: error: PP30: Invalid define syntax; "
               "'macro name must be an identifier: 1 2'",
@@ -163,7 +166,7 @@ TEST_F(JieppCommandTest, UOptionRejectsNonIdentifierName) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.undef_macros = {"1"};
+    opts.add_undefs({"1"});
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: error: PP30: Invalid define syntax; "
               "'macro name must be an identifier: 1'",
@@ -174,9 +177,9 @@ TEST_F(JieppCommandTest, UOptionRejectsDefined) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.undef_macros = {"defined"};
+    opts.add_undefs({"defined"});
     EXPECT_NE(0, jiepp_command(opts));
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
 }
 
 // U4: --silent must already be in effect for a diagnostic raised while
@@ -186,7 +189,7 @@ TEST_F(JieppCommandTest, SilentSuppressesDOptionDiagnostic) {
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
     opts.silent = true;
-    opts.define_macros = {"=1"};
+    opts.add_defines({"=1"});
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_TRUE(empty());
 }
@@ -196,7 +199,7 @@ TEST_F(JieppCommandTest, SuppressWarningsSuppressesDOptionRedefineWarning) {
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
     opts.suppress_warnings = true;
-    opts.define_macros = {"A=1", "A=2"};
+    opts.add_defines({"A=1", "A=2"});
     EXPECT_EQ(0, jiepp_command(opts));
     EXPECT_TRUE(empty());
 }
@@ -206,7 +209,7 @@ TEST_F(JieppCommandTest, WerrorPromotesDOptionRedefineWarning) {
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
     opts.werror = true;
-    opts.define_macros = {"A=1", "A=2"};
+    opts.add_defines({"A=1", "A=2"});
     EXPECT_NE(0, jiepp_command(opts));
 }
 
@@ -217,7 +220,7 @@ TEST_F(JieppCommandTest, DOptionLexerDiagnosticUsesCliLocation) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A=(* x"};
+    opts.add_defines({"A=(* x"});
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: error: PP20: Unclosed comment; '(* x'", message());
 }
@@ -229,8 +232,8 @@ TEST_F(JieppCommandTest, UOptionExtraTokensWarns) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A=1"};
-    opts.undef_macros = {"A B"};
+    opts.add_defines({"A=1"});
+    opts.add_undefs({"A B"});
     EXPECT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: warning: PP49: Extra tokens at end of directive; '{#undef A B}'", message());
 }
@@ -240,8 +243,8 @@ TEST_F(JieppCommandTest, WerrorPromotesUOptionExtraTokensWarning) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A=1"};
-    opts.undef_macros = {"A B"};
+    opts.add_defines({"A=1"});
+    opts.add_undefs({"A B"});
     opts.werror = true;
     EXPECT_NE(0, jiepp_command(opts));
 }
@@ -251,8 +254,8 @@ TEST_F(JieppCommandTest, SuppressWarningsSuppressesUOptionExtraTokensWarning) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A=1"};
-    opts.undef_macros = {"A B"};
+    opts.add_defines({"A=1"});
+    opts.add_undefs({"A B"});
     opts.suppress_warnings = true;
     EXPECT_EQ(0, jiepp_command(opts));
     EXPECT_TRUE(empty());
@@ -265,7 +268,7 @@ TEST_F(JieppCommandTest, DOptionMissingWhitespaceWarns) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A.B=1"};
+    opts.add_defines({"A.B=1"});
     EXPECT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: warning: PP38: Missing whitespace after the macro name; 'A.B 1'", message());
 }
@@ -1340,16 +1343,17 @@ TEST_F(JieppCommandTest, MDWithMFOverridesDepFile) {
     EXPECT_TRUE(fs::exists(dep_custom)) << "custom dep file not created";
     EXPECT_FALSE(fs::exists(tmpdir / "md_mf.d")) << "auto-named dep file should not exist";
 
-    // Target name must be derived from the input file, not from -MF filename.
+    // With -MD and -o the target is the -o path (clang), never the -MF
+    // filename.
     std::string dep_content;
     {
         std::ifstream f(dep_custom);
         ASSERT_TRUE(f) << "cannot open dep file";
         dep_content.assign(std::istreambuf_iterator<char>(f), {});
     }
-    EXPECT_NE(dep_content.find("md_mf.output:"), std::string::npos)
-        << "target should be derived from input file, got: " << dep_content;
-    EXPECT_EQ(dep_content.find("custom_mf.output:"), std::string::npos)
+    EXPECT_EQ(dep_content.rfind(output.generic_string() + ":", 0), 0u)
+        << "target should be the -o path, got: " << dep_content;
+    EXPECT_EQ(dep_content.find("custom_mf"), std::string::npos)
         << "-MF should not affect target name, got: " << dep_content;
 }
 
@@ -1527,7 +1531,7 @@ TEST_F(JieppCommandTest, DepPathsOpenFromTheWorkingDirectory) {
     opts.input_filepaths = {"sub/main.iec"};
     opts.dep_mode = DepMode::ALL;
     opts.dep_file = "x.d";
-    opts.dep_target = "tgt";
+    opts.dep_targets = {{"tgt"}};
     ASSERT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("tgt: \\\n  sub/main.iec \\\n  sub/inc/a.iec \\\n  sub/inc/../inc/b.iec \\\n"
               "  sub/inc/./c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
@@ -1546,12 +1550,13 @@ TEST_F(JieppCommandTest, DepPathsOpenFromTheWorkingDirectory) {
               t.read("y.d"));
 
     // A file given by the caller is listed by where it was found, too: a
-    // -include file found only under -I, and what it includes.
+    // -include file found only under -I, and what it includes. The main
+    // input comes first (gcc/clang), then the others as they were read.
     t.write("sub/lib/pre.iec", "{#include 't.iec'}p\n");
     opts.include_filepaths = {"pre.iec"};
     opts.dep_file = "z.d";
     ASSERT_EQ(0, jiepp_command(opts));
-    EXPECT_EQ("tgt: \\\n  sub/lib/pre.iec \\\n  sub/lib/t.iec \\\n  top.iec \\\n  sub/lib/s.iec \\\n"
+    EXPECT_EQ("tgt: \\\n  top.iec \\\n  sub/lib/pre.iec \\\n  sub/lib/t.iec \\\n  sub/lib/s.iec \\\n"
               "  sub/inc/c.iec\n",
               t.read("z.d"));
     opts.include_filepaths.clear();
@@ -1648,7 +1653,7 @@ TEST_F(JieppCommandTest, IncludedFileNamesFollowGccClang) {
     opts.dep_mode = DepMode::ALL;
     opts.MD = true;
     opts.dep_file = "cwd.d";
-    opts.dep_target = "tgt";
+    opts.dep_targets = {{"tgt"}};
     ASSERT_EQ(0, jiepp_command(opts));
     out = t.read("out.piec");
     EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/c.iec'}*)")) << out;
@@ -1676,7 +1681,7 @@ TEST_F(JieppCommandTest, DepMPIncludesForceIncludedFile) {
     opts.dep_file = "x.d";
     opts.MP = true;
     ASSERT_EQ(0, jiepp_command(opts));
-    EXPECT_EQ("mp_main.output: \\\n  mp_pre.iec \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\n"
+    EXPECT_EQ("mp_main.output: \\\n  mp_main.iec \\\n  mp_pre.iec \\\n  mp_a.iec \\\n  mp_b.iec\n"
               "mp_pre.iec:\nmp_a.iec:\nmp_b.iec:\n",
               t.read("x.d"));
 }
@@ -1688,7 +1693,7 @@ TEST_F(JieppCommandTest, DepMPWithMTKeepsHeaderNames) {
     opts.input_filepaths = {"mp_main.iec"};
     opts.dep_mode = DepMode::USER;
     opts.dep_file = "x.d";
-    opts.dep_target = "tgt";
+    opts.dep_targets = {{"tgt"}};
     opts.MP = true;
     ASSERT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("tgt: \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\nmp_a.iec:\nmp_b.iec:\n", t.read("x.d"));
@@ -2260,7 +2265,7 @@ TEST_F(JieppCommandTest, DepTargetFromMTIsVerbatim) {
     opts.input_filepaths = {src.generic_string()};
     opts.dep_mode = DepMode::ALL;
     opts.dep_file = dep_out.generic_string();
-    opts.dep_target = "my$target with space";
+    opts.dep_targets = {{"my$target with space"}};
     opts.no_line_markers = true;
 
     ASSERT_EQ(0, jiepp_command(opts));
@@ -3093,7 +3098,7 @@ TEST_F(JieppCommandTest, UOptionOnBuiltinWarns) {
 
     JieppOptions opts;
     opts.input_filepaths = {src.generic_string()};
-    opts.undef_macros = {"__assert"};
+    opts.add_undefs({"__assert"});
 
     int rc = 0;
     std::string out = run_capturing_stdout(opts, rc);
@@ -3118,7 +3123,7 @@ TEST_F(JieppCommandTest, HasBuiltinDetectsDisabledAssertCli) {
 
     JieppOptions opts;
     opts.input_filepaths = {src.generic_string()};
-    opts.define_macros = {"__assert="};
+    opts.add_defines({"__assert="});
 
     int rc = 0;
     std::string out = run_capturing_stdout(opts, rc);
@@ -3146,7 +3151,7 @@ TEST_F(JieppCommandTest, DisableAssertFunctionFormRemovesCallCli) {
     opts.input_filepaths = {src.generic_string()};
 
     int rc = 0;
-    opts.define_macros = {"__assert(...)="};
+    opts.add_defines({"__assert(...)="});
     std::string out = run_capturing_stdout(opts, rc);
     EXPECT_EQ(0, rc);
     EXPECT_EQ(std::string::npos, out.find("(0, m)")) << out;
@@ -3155,7 +3160,8 @@ TEST_F(JieppCommandTest, DisableAssertFunctionFormRemovesCallCli) {
     EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__assert: redefining built-in macro'",
               message());
 
-    opts.define_macros = {"__assert="};
+    opts.macro_options.clear();
+    opts.add_defines({"__assert="});
     out = run_capturing_stdout(opts, rc);
     EXPECT_EQ(0, rc);
     EXPECT_NE(std::string::npos, out.find("(0, m);")) << out;
@@ -3174,7 +3180,7 @@ TEST_F(JieppCommandTest, UOptionOnHasBuiltinWarns) {
 
     JieppOptions opts;
     opts.input_filepaths = {src.generic_string()};
-    opts.undef_macros = {"__has_builtin"};
+    opts.add_undefs({"__has_builtin"});
 
     int rc = 0;
     std::string out = run_capturing_stdout(opts, rc);

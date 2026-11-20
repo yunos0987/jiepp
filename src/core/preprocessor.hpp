@@ -19,6 +19,13 @@
 Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macros = {},
           bool remove_comments = false);
 
+// -D NAME[=VALUE] as setup() processes one (`name_value` is define_macro_option()'s
+// result): {#define NAME VALUE}, so an invalid name or parameter list is the
+// same diagnostic as in a {#define}. Where Issue's continue mode is active
+// (the CLI) a rejected definition is reported and counted, and processing
+// goes on; elsewhere the ERROR throws.
+void apply_define_option(const std::pair<std::string, std::string>& name_value, Env& env);
+
 // -U NAME: same as {#undef NAME} (see handle_undef()'s comment in
 // directive_handlers.cpp for the name validation and 'defined' rejection).
 void apply_undef_option(const std::string& name, Env& env);

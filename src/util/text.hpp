@@ -1,10 +1,29 @@
 #pragma once
 
 #include <cstddef>
+#include <ctime>
 #include <string>
 #include <string_view>
 
 namespace Util {
+
+// The text of __DATE__, __TIME__ and __TIMESTAMP__ for a broken-down local
+// time, as gcc/clang write them (without the quotes): "Mar  9 2020" (the day
+// is padded with a space to 2 characters, so every date has the same length),
+// "01:02:03" and "Mon Mar  9 01:02:03 2020" (asctime() without the newline).
+// Month and weekday names are English whatever the locale (strftime's %b and
+// %a follow it), and the C runtime on Windows has no %e for the padding.
+std::string format_date(const std::tm& tm);
+std::string format_time(const std::tm& tm);
+std::string format_timestamp(const std::tm& tm);
+
+// The text a diagnostic quotes for a construct that can run to the end of the
+// input (an unclosed comment, pragma or directive): its first line only, and
+// at most max_bytes of it (cut at a UTF-8 character boundary). "..." marks the
+// end when anything was left out, whether the rest of the line or the lines
+// that follow (line breaks alone do not count). Like clang, which points at the start of the construct rather
+// than quoting the rest of the file.
+std::string diag_excerpt(std::string_view s, std::size_t max_bytes = 64);
 
 std::string_view ltrim_view(std::string_view s);
 std::string_view rtrim_view(std::string_view s);

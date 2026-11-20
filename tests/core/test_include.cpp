@@ -177,8 +177,10 @@ TEST_F(IncludeTest, IncludeDirectory) {
     EXPECT_TRUE(empty());
 }
 
-// An empty filename resolves to the directory it is joined onto, so it ends in
-// PP14; the context says so instead of being empty.
+// An empty filename names no file: PP47 with the context 'empty filename',
+// whatever directory it would be joined onto (clang/gcc: "empty filename"). It
+// is an ordinary error, so unlike a missing file (PP11) or a directory (PP14)
+// it does not stop the run in the CLI (see SmokeTest).
 static void expect_include_error(JieppTest& t, const std::string& src,
                                  const std::string& expected_tail) {
     Issue::initialize(t.output());
@@ -188,27 +190,39 @@ static void expect_include_error(JieppTest& t, const std::string& src,
     EXPECT_NE(std::string::npos, m.find(expected_tail)) << src << " -> " << m;
 }
 
-TEST_F(IncludeTest, EmptyFilenameQuotedIsPP14WithContext) {
+TEST_F(IncludeTest, EmptyFilenameQuotedIsPP47WithContext) {
     fs::current_path(jiepp_root_dir());
     for (const char* src : {"{#include ''}", "{#include \"\"}"})
-        expect_include_error(*this, src,
-                             "error: PP14: Include target is a directory; 'empty filename'");
+        expect_include_error(*this, src, "error: PP47: Invalid path; 'empty filename'");
 }
 
-TEST_F(IncludeTest, EmptyFilenameViaSyspathIsPP14WithContext) {
+TEST_F(IncludeTest, EmptyFilenameViaSyspathIsPP47WithContext) {
     fs::current_path(jiepp_root_dir());
     for (const char* directive : {"{#include <>}", "{#sinclude ''}", "{#sinclude <>}",
                                   "{#include ''}"})
         expect_include_error(
             *this, std::string("{#syspath 'tests/core/test_include'}") + directive,
-            "error: PP14: Include target is a directory; 'empty filename'");
+            "error: PP47: Invalid path; 'empty filename'");
 }
 
-// Cases that never reached PP14 with an empty context keep their code.
-TEST_F(IncludeTest, EmptyFilenameWithoutSyspathStaysPP11) {
+// With no directory to join it onto it is the same error (it used to be PP11).
+TEST_F(IncludeTest, EmptyFilenameWithoutSyspathIsPP47) {
     fs::current_path(jiepp_root_dir());
     for (const char* directive : {"{#include <>}", "{#sinclude ''}"})
-        expect_include_error(*this, directive, "error: PP11: No such file or directory");
+        expect_include_error(*this, directive, "error: PP47: Invalid path; 'empty filename'");
+}
+
+// In the CLI's continue mode the run goes on after the empty path.
+TEST_F(IncludeTest, EmptyFilenameContinuesInContinueMode) {
+    fs::current_path(jiepp_root_dir());
+    Issue::ContinueMode guard({});
+    // The text after each rejected directive is still processed (a line
+    // marker stands where the include would have returned).
+    const std::string out = pp("a{#include ''}b{#include <>}c");
+    EXPECT_EQ(0u, out.find('a')) << out;
+    EXPECT_NE(std::string::npos, out.find('b')) << out;
+    EXPECT_EQ('c', out.back()) << out;
+    EXPECT_EQ(2, Issue::error_count_);
 }
 
 // __has_include answers 0 for an empty filename (a directory is not a file), with

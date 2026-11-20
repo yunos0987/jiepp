@@ -62,16 +62,16 @@ TEST_F(OptionTest, ParseArgsStdinDash) {
 TEST_F(OptionTest, ParseArgsDJoined) {
     char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-DFOO=1")};
     auto opts = parse_args(2, argv);
-    ASSERT_EQ(opts.define_macros.size(), 1u);
-    EXPECT_EQ(opts.define_macros[0], "FOO=1");
+    ASSERT_EQ(opts.macro_options.size(), 1u);
+    EXPECT_EQ(opts.macro_options[0].arg, "FOO=1");
 }
 
 TEST_F(OptionTest, ParseArgsDSeparate) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("-D"), const_cast<char*>("BAR=2")};
     auto opts = parse_args(3, argv);
-    ASSERT_EQ(opts.define_macros.size(), 1u);
-    EXPECT_EQ(opts.define_macros[0], "BAR=2");
+    ASSERT_EQ(opts.macro_options.size(), 1u);
+    EXPECT_EQ(opts.macro_options[0].arg, "BAR=2");
 }
 
 TEST_F(OptionTest, ParseArgsIJoined) {
@@ -416,8 +416,8 @@ TEST_F(OptionTest, UnderscoreInValuesAndAfterDoubleDashIsKept) {
     EXPECT_EQ("x_y", *opts.disppath);
     ASSERT_EQ(1u, opts.include_filepaths.size());
     EXPECT_EQ("pre_a.iec", opts.include_filepaths[0]);
-    ASSERT_EQ(1u, opts.define_macros.size());
-    EXPECT_EQ("A_B=c_d", opts.define_macros[0]);
+    ASSERT_EQ(1u, opts.macro_options.size());
+    EXPECT_EQ("A_B=c_d", opts.macro_options[0].arg);
     EXPECT_FALSE(opts.remove_comments);
     ASSERT_EQ(2u, opts.input_filepaths.size());
     EXPECT_EQ("--remove_comments", opts.input_filepaths[0]);
@@ -566,16 +566,16 @@ TEST_F(OptionTest, ParseArgsDefineEmptyNameStillInvalidMacroDef) {
 TEST_F(OptionTest, ParseArgsUJoined) {
     char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-UFOO")};
     auto opts = parse_args(2, argv);
-    ASSERT_EQ(opts.undef_macros.size(), 1u);
-    EXPECT_EQ(opts.undef_macros[0], "FOO");
+    ASSERT_EQ(opts.macro_options.size(), 1u);
+    EXPECT_EQ(opts.macro_options[0].arg, "FOO");
 }
 
 TEST_F(OptionTest, ParseArgsUSeparate) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("-U"), const_cast<char*>("BAR")};
     auto opts = parse_args(3, argv);
-    ASSERT_EQ(opts.undef_macros.size(), 1u);
-    EXPECT_EQ(opts.undef_macros[0], "BAR");
+    ASSERT_EQ(opts.macro_options.size(), 1u);
+    EXPECT_EQ(opts.macro_options[0].arg, "BAR");
 }
 
 TEST_F(OptionTest, UndefMissingValueIsError) {
@@ -637,8 +637,8 @@ TEST_F(OptionTest, ParseArgsDoubleDashMultiple) {
                     const_cast<char*>("-bar.iec"),
                     const_cast<char*>("--baz.iec")};
     auto opts = parse_args(5, argv);
-    ASSERT_EQ(opts.define_macros.size(), 1u);
-    EXPECT_EQ(opts.define_macros[0], "FOO");
+    ASSERT_EQ(opts.macro_options.size(), 1u);
+    EXPECT_EQ(opts.macro_options[0].arg, "FOO");
     ASSERT_EQ(opts.input_filepaths.size(), 2u);
     EXPECT_EQ(opts.input_filepaths[0], "-bar.iec");
     EXPECT_EQ(opts.input_filepaths[1], "--baz.iec");
@@ -675,8 +675,81 @@ TEST_F(OptionTest, ParseArgsDepMT) {
     char* argv[] = {const_cast<char*>("jiepp"),
                     const_cast<char*>("-MT"), const_cast<char*>("target.o")};
     auto opts = parse_args(3, argv);
-    ASSERT_TRUE(opts.dep_target.has_value());
-    EXPECT_EQ(*opts.dep_target, "target.o");
+    ASSERT_EQ(opts.dep_targets.size(), 1u);
+    EXPECT_EQ(opts.dep_targets[0].text, "target.o");
+    EXPECT_FALSE(opts.dep_targets[0].escape);
+}
+
+// -D and -U are kept in the order written: -UX -DX=1 defines X.
+TEST_F(OptionTest, ParseArgsMacroOptionsKeepCommandLineOrder) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("-UX"), const_cast<char*>("-D"), const_cast<char*>("X=1"),
+                    const_cast<char*>("-U"), const_cast<char*>("Y"), const_cast<char*>("-DZ")};
+    auto opts = parse_args(7, argv);
+    ASSERT_EQ(4u, opts.macro_options.size());
+    EXPECT_EQ(MacroOption::Kind::UNDEF, opts.macro_options[0].kind);
+    EXPECT_EQ("X", opts.macro_options[0].arg);
+    EXPECT_EQ(MacroOption::Kind::DEFINE, opts.macro_options[1].kind);
+    EXPECT_EQ("X=1", opts.macro_options[1].arg);
+    EXPECT_EQ(MacroOption::Kind::UNDEF, opts.macro_options[2].kind);
+    EXPECT_EQ("Y", opts.macro_options[2].arg);
+    EXPECT_EQ(MacroOption::Kind::DEFINE, opts.macro_options[3].kind);
+    EXPECT_EQ("Z", opts.macro_options[3].arg);
+}
+
+// The value of -o, -MF, -MT, -MQ and -include may be glued to the option.
+TEST_F(OptionTest, ParseArgsGluedValues) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("-oout.iec"), const_cast<char*>("-MFdeps.d"),
+                    const_cast<char*>("-MTt1"), const_cast<char*>("-MQq 2"),
+                    const_cast<char*>("-includeone.iec"), const_cast<char*>("-include"),
+                    const_cast<char*>("two.iec"), const_cast<char*>("main.iec")};
+    auto opts = parse_args(9, argv);
+    ASSERT_TRUE(opts.output_filepath.has_value());
+    EXPECT_EQ("out.iec", *opts.output_filepath);
+    ASSERT_TRUE(opts.dep_file.has_value());
+    EXPECT_EQ("deps.d", *opts.dep_file);
+    ASSERT_EQ(2u, opts.dep_targets.size());
+    EXPECT_EQ("t1", opts.dep_targets[0].text);
+    EXPECT_FALSE(opts.dep_targets[0].escape);
+    EXPECT_EQ("q 2", opts.dep_targets[1].text);
+    EXPECT_TRUE(opts.dep_targets[1].escape);
+    ASSERT_EQ(2u, opts.include_filepaths.size());
+    EXPECT_EQ("one.iec", opts.include_filepaths[0]);
+    EXPECT_EQ("two.iec", opts.include_filepaths[1]);
+    ASSERT_EQ(1u, opts.input_filepaths.size());
+    EXPECT_EQ("main.iec", opts.input_filepaths[0]);
+}
+
+// The options that are matched exactly are not taken for a glued -M... form.
+TEST_F(OptionTest, ParseArgsExactMOptionsAreNotGluedForms) {
+    char* argv[] = {const_cast<char*>("jiepp"), const_cast<char*>("-M"), const_cast<char*>("-MM"),
+                    const_cast<char*>("-MD"), const_cast<char*>("-MMD"), const_cast<char*>("-MP")};
+    auto opts = parse_args(6, argv);
+    EXPECT_TRUE(opts.MD);
+    EXPECT_TRUE(opts.MMD);
+    EXPECT_TRUE(opts.MP);
+    EXPECT_EQ(DepMode::USER, opts.dep_mode);
+    EXPECT_FALSE(opts.dep_file.has_value());
+    EXPECT_TRUE(opts.dep_targets.empty());
+    EXPECT_FALSE(opts.output_filepath.has_value());
+    EXPECT_TRUE(opts.include_filepaths.empty());
+}
+
+// -MT and -MQ may be repeated and mixed; they are kept in order.
+TEST_F(OptionTest, ParseArgsDepTargetsKeepOrder) {
+    char* argv[] = {const_cast<char*>("jiepp"),
+                    const_cast<char*>("-MT"), const_cast<char*>("t1"),
+                    const_cast<char*>("-MQ"), const_cast<char*>("t 2"),
+                    const_cast<char*>("-MT"), const_cast<char*>("t3")};
+    auto opts = parse_args(7, argv);
+    ASSERT_EQ(3u, opts.dep_targets.size());
+    EXPECT_EQ("t1", opts.dep_targets[0].text);
+    EXPECT_FALSE(opts.dep_targets[0].escape);
+    EXPECT_EQ("t 2", opts.dep_targets[1].text);
+    EXPECT_TRUE(opts.dep_targets[1].escape);
+    EXPECT_EQ("t3", opts.dep_targets[2].text);
+    EXPECT_FALSE(opts.dep_targets[2].escape);
 }
 
 TEST_F(OptionTest, ParseArgsMultipleInclude) {

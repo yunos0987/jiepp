@@ -306,7 +306,11 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
 
     std::string name = ts[0].text;
     if (name == "defined") {
-        ISSUE(OPERATION_NOT_ALLOWED, "redefine 'defined'");
+        // Like gcc/clang: an error, the rest of the input is still processed
+        // and nothing is defined. It is PP30, like any other name that cannot
+        // be a macro name (a severe PP02 would stop the run).
+        ISSUE(INVALID_DEFINE_SYNTAX, "defined cannot be used as a macro name");
+        warn_rest();
         return false;
     }
     // A macro named __VA_OPT__ warns for its name token, variadic or not.
@@ -575,7 +579,7 @@ bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_n
         return false;
     }
     if (ts[0].text == "defined") {
-        ISSUE(OPERATION_NOT_ALLOWED, "undef 'defined'");
+        ISSUE(INVALID_DEFINE_SYNTAX, "defined cannot be used as a macro name");
         return false;
     }
     if (ts.size() > 1) {
@@ -954,7 +958,7 @@ bool handle_pragma(const std::string& raw_arg, Env& env, std::string* restored_n
         ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, context);
     // A string that is not an identifier ('1', 'X Y', '') never names a
     // macro, so there is nothing to save or restore (gcc/clang are silent
-    // too). 'defined' cannot be {#define}d or {#undef}ined (PP02), so it is
+    // too). 'defined' cannot be {#define}d or {#undef}ined (PP30), so it is
     // never saved or restored either.
     if (!iec3_is_identifier(name) || name == "defined")
         return false;

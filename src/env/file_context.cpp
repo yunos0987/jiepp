@@ -48,7 +48,7 @@ int FileContext::num_of_files() const {
 
 int FileContext::include_level() const {
     int n = static_cast<int>(file_stack_.size());
-    return n > 0 ? n - 1 : 0;
+    return n > 0 ? n - 1 + include_level_base_ : 0;
 }
 
 // ---------------------------------------------------------------------------

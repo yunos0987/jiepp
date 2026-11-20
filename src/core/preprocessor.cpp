@@ -368,10 +368,14 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     // head such as "F(x)", is validated the same as any {#define} name, and
     // redefining an existing macro (including a builtin one already
     // installed above) with a different body is MACRO_REDEFINED (PP35).
-    for (auto& [k, v] : predefine_macros)
-        jiepp::preprocessor_detail::handle_define(k + " " + v, env);
+    for (const auto& kv : predefine_macros)
+        apply_define_option(kv, env);
 
     return env;
+}
+
+void apply_define_option(const std::pair<std::string, std::string>& name_value, Env& env) {
+    (void)jiepp::preprocessor_detail::handle_define(name_value.first + " " + name_value.second, env);
 }
 
 void apply_undef_option(const std::string& name, Env& env) {

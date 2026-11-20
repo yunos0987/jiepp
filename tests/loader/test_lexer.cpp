@@ -133,7 +133,7 @@ $
 {
     )";
     EXPECT_THROW(ts(s), Issue::Exception);
-    EXPECT_EQ("<unknown location>:52.0: error: PP22: Invalid syntax for pragma; '{$n    '", message());
+    EXPECT_EQ("<unknown location>:52.0: error: PP22: Invalid syntax for pragma; '{...'", message());
     
     std::string s2 = s;
     for (std::size_t pos = 0; (pos = s2.find("$\n", pos)) != std::string::npos;) {
@@ -141,7 +141,7 @@ $
         ++pos;
     }
     EXPECT_THROW(ts(s2), Issue::Exception);
-    EXPECT_EQ("<unknown location>:52.0: error: PP22: Invalid syntax for pragma; '{$n    '", message());
+    EXPECT_EQ("<unknown location>:52.0: error: PP22: Invalid syntax for pragma; '{...'", message());
 }
 
 // ---- nested brackets ----

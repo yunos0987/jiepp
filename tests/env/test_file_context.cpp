@@ -73,6 +73,33 @@ TEST_F(FileContextTest, Lineno) {
     EXPECT_EQ(42, env.get_lineno());
 }
 
+// __INCLUDE_LEVEL__: the depth of the innermost file, 0 for the outermost one
+// and when no file is open. The CLI reads the -include files with a base of 1
+// (included from the command line): 1 for such a file, 2 for what it includes.
+TEST_F(FileContextTest, IncludeLevelBase) {
+    Env env;
+    EXPECT_EQ(0, env.include_level());
+    env.push_file("a.iec");
+    env.push_file("b.iec");
+    EXPECT_EQ(1, env.include_level());
+    env.pop_file();
+    env.pop_file();
+
+    env.set_include_level_base(1);
+    EXPECT_EQ(0, env.include_level());
+    env.push_file("pre.iec");
+    EXPECT_EQ(1, env.include_level());
+    env.push_file("inner.iec");
+    EXPECT_EQ(2, env.include_level());
+    env.pop_file();
+    env.pop_file();
+
+    env.set_include_level_base(0);
+    env.push_file("main.iec");
+    EXPECT_EQ(0, env.include_level());
+    env.pop_file();
+}
+
 // The reached-by path of each open file and of each system path (the bases
 // of dependency paths): what was passed when none is given, popped with the
 // file.

@@ -1,6 +1,7 @@
 #pragma once
 #include "param_constants.hpp"
 #include <cstdint>
+#include <ctime>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -112,6 +113,14 @@ public:
     bool is_dd_mode() const { return dd_mode_; }
     void set_dd_mode(bool b) { dd_mode_ = b; }
 
+    // ---- Start time (__DATE__ / __TIME__) ----
+    // The moment this Env was created: one run (a CLI run, one setup()) has
+    // one date and time however many times __DATE__ / __TIME__ are expanded
+    // (gcc/clang take the time once, when preprocessing starts). A caller
+    // that needs a fixed time (a test) sets it.
+    std::time_t start_time() const { return start_time_; }
+    void        set_start_time(std::time_t t) { start_time_ = t; }
+
     // ---- Token cache (filepath -> tokens) ----
     // Returns a shared, immutable view of the cached RAW tokens (comment
     // removal is applied by the caller, not baked into the cache) so a cache
@@ -172,6 +181,8 @@ private:
     bool        remove_comments_fixed_   = false;
 
     bool        dd_mode_                 = false;
+
+    std::time_t start_time_              = std::time(nullptr);
 
     std::unordered_map<std::string, std::uint32_t> counters_;
 

@@ -27,11 +27,14 @@ std::string canonical_path(std::string_view path_text);
 // `dir` it was found in (the including file's own reached-by path minus
 // its file name, or a system path as given), like gcc/clang. It is the
 // name shown in line markers, __FILE__ and diagnostics, and it opens the
-// file from the working directory. The two are joined with '/' and an
-// absolute `name` stands alone; "." and ".." components stay, as in
-// gcc/clang. The text goes through std::filesystem::path, so on Windows
-// a '\\' becomes '/', and with libstdc++ a run of '/' becomes one.
-// e.g. ("tests/in", "./a.iec") -> "tests/in/./a.iec"; ("", "a.iec") -> "a.iec"
+// file from the working directory. The two are joined with '/' (none is
+// added after a `dir` that ends with one, so "lib/" and "lib//" stay as
+// written) and a name with a root stands alone; "." and ".." components and
+// a run of '/' in either part stay, as in gcc/clang. The text is handled as a
+// string, not as a std::filesystem::path (libstdc++ would join a run of '/'
+// into one); on Windows a backslash becomes '/'.
+// e.g. ("tests/in", "./a.iec") -> "tests/in/./a.iec"; ("", "a.iec") -> "a.iec";
+// ("lib//", "a.iec") -> "lib//a.iec"; ("lib", "x//a.iec") -> "lib/x//a.iec"
 std::string reached_path(std::string_view dir, std::string_view name);
 
 // A reached-by path as a prerequisite of a dependency rule (-M ...): the
@@ -39,8 +42,11 @@ std::string reached_path(std::string_view dir, std::string_view name);
 // e.g. "././x.iec" -> "x.iec"; "./lib/./t.iec" -> "lib/./t.iec"
 std::string dependency_path(std::string_view reached);
 
-// The directory part of a reached-by path ("" when it has none).
-// e.g. "tests/in/main.iec" -> "tests/in"; "./main.iec" -> "."; "main.iec" -> ""
+// The directory part of a reached-by path ("" when it has none): the text
+// before its last '/', with a run of '/' kept whole so that reached_path()
+// joins it back as written.
+// e.g. "tests/in/main.iec" -> "tests/in"; "./main.iec" -> "."; "main.iec" -> "";
+// "lib//a.iec" -> "lib//"
 std::string reached_dir(std::string_view path);
 
 // Identity of a file on disk, independent of how its path is spelled: (volume

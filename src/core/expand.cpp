@@ -1384,19 +1384,22 @@ std::vector<Token>& expand(const std::string& filepath,
                            Env& env,
                            const std::optional<std::string>& shown_as)
 {
+    // An empty path names no file, whatever directory it would be joined
+    // onto: a plain, non-aborting error (gcc/clang "empty filename"; the
+    // input goes on), unlike a path that is missing (PP11) or is a directory
+    // (PP14), which stop the run.
+    if (filepath.empty()) {
+        ISSUE(INVALID_PATH, "empty filename");
+        return ots;
+    }
     bool found_directory = false;
     std::string found_as;
     std::string fullpath = Loader::fullpath(filepath, load_type, env, &found_directory, &found_as);
     if (fullpath.empty()) {
-        if (found_directory) {
-            // An empty filename resolves to the directory it is joined onto
-            // (the including file's directory, or a -I path); say so instead
-            // of printing an empty context.
-            ISSUE(INCLUDE_TARGET_IS_DIRECTORY,
-                  filepath.empty() ? std::string("empty filename") : filepath);
-        } else {
+        if (found_directory)
+            ISSUE(INCLUDE_TARGET_IS_DIRECTORY, filepath);
+        else
             ISSUE(FILE_NOT_FOUND, filepath);
-        }
         return ots;
     }
 

@@ -30,7 +30,13 @@ public:
     // True when the innermost source was opened from the filesystem.
     bool        current_file_from_disk() const;
     int         num_of_files() const;
+    // __INCLUDE_LEVEL__: the nesting depth of the innermost file (0 for the
+    // outermost file) plus the base set below.
     int         include_level() const;
+    // Files read while this is 1 sit one level deeper: the CLI sets it for
+    // the -include files, which gcc/clang treat as included from the command
+    // line (level 1, and 2 for what they include). 0 by default.
+    void        set_include_level_base(int base) { include_level_base_ = base; }
 
     // item f: RAII guard for the include stack -- push_file() on
     // construction, pop_file() on destruction, so a file-processing
@@ -106,6 +112,7 @@ private:
     std::vector<std::string> syspaths_;
     std::vector<std::string> syspath_reached_;  // parallel to syspaths_
     LineNo lineno_ = 1;
+    int include_level_base_ = 0;
     std::vector<Dependency> deps_;
     std::unordered_set<std::string> once_files_;  // files marked with {#pragma once}, by path text
     // The same files by identity (volume, file index), so another spelling of

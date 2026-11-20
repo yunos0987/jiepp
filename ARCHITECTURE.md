@@ -78,7 +78,7 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 
 `preprocessor.hpp/cpp` が主要 API を提供する。
 
-- `setup()` — 組み込みマクロ・型範囲/マスクマクロ・バージョンマクロを登録した `Env` を作る。CLI (`jiepp_command()`) の呼び出しエントリポイント。`predefine_macros`（`-D`）は `preprocessor_detail::handle_define()` を通して `{#define NAME VALUE}` と同じ検証・再定義警告付きで登録する（§3, R4/C4）。`Issue::initialize()`（CLI 専用、`main()` が呼ぶ）を別途呼ばなくても、`setup()` が `Issue::ensure_location_stack()` で `Issue::loc_stack_` の土台エントリを自分で用意するため、`jiepp_lib` を直接リンクするライブラリ利用者は `setup()` + `preprocess()`/`preprocess_text()` だけで安全に呼べる（B1）
+- `setup()` — 組み込みマクロ・型範囲/マスクマクロ・バージョンマクロを登録した `Env` を作る。CLI (`jiepp_command()`) の呼び出しエントリポイント。`predefine_macros`（`-D`）は `apply_define_option()`（`preprocessor_detail::handle_define()`）を通して `{#define NAME VALUE}` と同じ検証・再定義警告付きで登録する（§3, R4/C4）。CLI は `setup()` に `-D` を渡さず、`-D`・`-U` を書いた順に `apply_define_option()`・`apply_undef_option()` で `ContinueMode` の中で適用する。`Env` は作成時の時刻を `Param::start_time()` に持ち、`__DATE__`・`__TIME__` はこれから作る（実行ごとに 1 回）。`Issue::initialize()`（CLI 専用、`main()` が呼ぶ）を別途呼ばなくても、`setup()` が `Issue::ensure_location_stack()` で `Issue::loc_stack_` の土台エントリを自分で用意するため、`jiepp_lib` を直接リンクするライブラリ利用者は `setup()` + `preprocess()`/`preprocess_text()` だけで安全に呼べる（B1）
 - `apply_undef_option()` — `-U NAME` を `preprocessor_detail::handle_undef()` を通して `{#undef NAME}` と同じ検証で処理する（R4/C4）
 - `expand()`（ファイルパス版オーバーロード） — `Loader::fullpath()`/`Loader::tokens()` で対象ファイルを解決・読み込み、トークン版 `expand()` に委譲（利用元は「データフロー」参照）
 - `expand()`（トークン列版オーバーロード） — Prosser のアルゴリズムに基づく展開の主ループ。トークン列を受けマクロ展開・ディレクティブ処理して出力トークン列を返す
@@ -113,9 +113,9 @@ configure/build/test コマンドは [`README.md`](README.md#ビルドとテス�
 `JieppOptions`（`src/jiepp/option.hpp`）は CLI オプションを集約した構造体。主なフィールド（詳細はヘッダ参照）:
 
 - 入出力: `input_filepaths`, `output_filepath`, `disppath`（表示用パス。既定値・stdin 時の挙動は [SPECIFICATION.md §13](SPECIFICATION.md#13-cli-リファレンス--cli-reference)）
-- マクロ: `define_macros`(`-D`), `undef_macros`(`-U`), `include_filepaths`(`-include`), `syspaths`(`-I`)
+- マクロ: `macro_options`(`-D`・`-U` をコマンドラインに書いた順に並べた `std::vector<MacroOption>`。`jiepp_command()` が順に `apply_define_option()`・`apply_undef_option()` へ渡す。`ContinueMode` の中で処理するので、受け付けられない 1 件は報告・集計して残りを続ける。`PP73` になる `-D=1` だけは、どれも処理する前に `define_macro_option()` で中断する), `include_filepaths`(`-include`), `syspaths`(`-I`)
 - 上限値: `max_include_depth`, `max_expansion_depth`, `max_expansion_steps`(`--max-expansion-steps`、展開の仕事量の上限・`PP64`・ディレクティブなし), `max_include_count`(`--max-include-count`、実行した `{#include}`/`{#sinclude}` の回数の上限・`PP66`・ディレクティブなし。`Param::count_include()` を `handle_include()` がパスの読み取り（`read_include_operand()`）と NUL 検査の後、`expand()` の前に 1 回呼ぶ。`{#pragma once}` で飛ばすものも数える。カウンタは `preprocess()` ごとに `reset_include_count()`。CLI は Env 1 個で全体を数え、`-include` と `__has_include` は数えない), `max_input_bytes`(`--max-input-bytes`、読み込む入力の合計バイト数の上限・`PP67`・ディレクティブなし・既定 0 で無制限。`-include` を読む前に `Env::set_max_input_bytes()` へ設定する), `error_limit`(`--error-limit`、エラー件数の上限・`PP65`・ディレクティブなし。`Issue::error_limit_` に設定する), `max_if_nesting`, `max_blank_lines`, `recursion_limit`
-- 依存関係: `dep_mode`(`-M`/`-MM`), `dep_file`(`-MF`), `dep_target`(`-MT`), `MD`/`MMD`(`-MD`/`-MMD`)
+- 依存関係: `dep_mode`(`-M`/`-MM`), `dep_file`(`-MF`), `dep_targets`(`-MT`・`-MQ` を書いた順に並べた `std::vector<DepTarget>`。`-MQ` は `escape` が真), `MD`/`MMD`(`-MD`/`-MMD`)。`-MF -` は標準出力。ルールの前提条件は `write_dep_rules()` が主入力を先頭にして並べる（`env.dependencies()` は読んだ順で、`-include` のファイルが主入力より前にある）
 - 出力形式: `pp_output_pragma_style`, `no_line_markers`(`-P`), `dM`(`-dM`), `dD`(`-dD`), `remove_comments`(`-nC`)
 - 診断: `silent`, `suppress_warnings`(`-w`), `werror`(`-Werror` / `-Wno-error`。後勝ち), `warnings`(`-W<name>` / `-Wno-<name>` / `-Werror=<name>` / `-Wno-error=<name>` をコマンドラインの順に並べた `std::vector<WarningOption>`。`<name>` は WARNING のコードか別名 `undef`。`jiepp_command()` が `-D`/`-U` を処理する前に前から畳み込み、コードごとに有効・無効と昇格を後勝ちで決めて `Issue::enable` / `add_ignoring` / `add_werror` / `remove_werror` を呼ぶ)
 
