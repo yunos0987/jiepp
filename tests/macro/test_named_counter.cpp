@@ -52,7 +52,7 @@ TEST_F(NamedCounterTest, SetChangesValueAndExpandsToNothing) {
 TEST_F(NamedCounterTest, SetValueUsesIfEvaluator) {
     EXPECT_EQ("10", pp("{#define BASE 5}__counter_set(a, BASE * 2)__counter_peek(a)"));
     EXPECT_EQ("1", pp("__counter_set(a, TRUE)__counter_peek(a)"));
-    EXPECT_EQ("015", pp("__counter(b)__counter(b)__counter_set(a, __counter(b) + 3)__counter_peek(a)"));
+    EXPECT_EQ("0 1 5", pp("__counter(b)__counter(b)__counter_set(a, __counter(b) + 3)__counter_peek(a)"));
     EXPECT_EQ("4", pp("__counter_set(a, UNDEFINED_X + 4)__counter_peek(a)"));
     EXPECT_EQ("1", pp("{#define X}__counter_set(a, defined(X))__counter_peek(a)"));
     EXPECT_TRUE(empty());
@@ -116,7 +116,7 @@ TEST_F(NamedCounterTest, NameThroughParameterIsPreExpanded) {
 
 // N6: counter names are their own namespace.
 TEST_F(NamedCounterTest, CounterNamespaceIsSeparateFromMacros) {
-    EXPECT_EQ("0 9 1 n 0n",
+    EXPECT_EQ("0 9 1 n 0 n",
               pp("{#define c 9}__counter(c) c {#undef c}__counter(c) {#ifdef c}y{#else}n{#endif} "
                  "__counter(d){#ifdef d}y{#else}n{#endif}"));
     EXPECT_TRUE(empty());
@@ -149,9 +149,9 @@ TEST_F(NamedCounterTest, OverflowSaturatesWithPP53) {
 
 // N10: disabled group and skipped {#elif}.
 TEST_F(NamedCounterTest, NoEffectInDisabledGroup) {
-    EXPECT_EQ("y1", pp("{#if 0}__counter(a)__counter_set(a, 9){#elif __counter(a)}x{#else}y{#endif}"
+    EXPECT_EQ("y 1", pp("{#if 0}__counter(a)__counter_set(a, 9){#elif __counter(a)}x{#else}y{#endif}"
                        "__counter_peek(a)"));
-    EXPECT_EQ("t0", pp("{#if 1}t{#elif __counter(b)}u{#else}__counter(b){#endif}__counter_peek(b)"));
+    EXPECT_EQ("t 0", pp("{#if 1}t{#elif __counter(b)}u{#else}__counter(b){#endif}__counter_peek(b)"));
     EXPECT_TRUE(empty());
 }
 
@@ -184,7 +184,7 @@ TEST_F(NamedCounterTest, GluedOperandNeedsRelay) {
 
 // N13: once per evaluated condition.
 TEST_F(NamedCounterTest, UsableInIfExpression) {
-    EXPECT_EQ("AB2y", pp("{#if __counter(a) = 0}A{#else}B{#endif}{#if __counter(a) = 0}A{#else}B{#endif}"
+    EXPECT_EQ("AB 2 y", pp("{#if __counter(a) = 0}A{#else}B{#endif}{#if __counter(a) = 0}A{#else}B{#endif}"
                          "__counter_peek(a){#if __counter_peek(a) = 2}y{#endif}"));
     EXPECT_TRUE(empty());
 }
@@ -237,8 +237,9 @@ TEST_F(NamedCounterTest, WatchpointBracketArgumentNotSplit) {
 // Watchpoint: an identical redefinition (different whitespace amount) of a
 // macro using __counter is silent, in source and through -D.
 TEST_F(NamedCounterTest, WatchpointIdenticalRedefinitionSilent) {
-    // The later (equal) definition is the one in effect, spacing included.
-    EXPECT_EQ("k   0", pp("{#define C(n) n __counter(n)}{#define C(n)  n   __counter(n)}C(k)"));
+    // The identical redefinition changes nothing: the first definition stays
+    // in effect, its spacing included (SPEC §3.6).
+    EXPECT_EQ("k 0", pp("{#define C(n) n __counter(n)}{#define C(n)  n   __counter(n)}C(k)"));
     EXPECT_TRUE(empty());
     Env env = setup({{"K", "__counter(k)"}, {"K", "__counter(k)"}, {"X", "1"}, {"X", "1"}});
     EXPECT_TRUE(empty());
@@ -321,7 +322,7 @@ TEST_F(NamedCounterTest, CounterInsideAssertExpr) {
 TEST_F(NamedCounterTest, ValuesSurviveUndefOfBuiltin) {
     Issue::ContinueMode guard({});
     Env env = setup();
-    EXPECT_EQ("0 1__counter(a)", pp("__counter(a) __counter(a){#undef __counter}__counter(a)", env));
+    EXPECT_EQ("0 1 __counter(a)", pp("__counter(a) __counter(a){#undef __counter}__counter(a)", env));
     EXPECT_EQ(Strings({"PP35: Macro redefined; '__counter: undefining built-in macro'"}), diags());
     EXPECT_EQ(2u, env.counter_value("a"));
     EXPECT_EQ("2", pp("__counter_peek(a)", env));

@@ -135,6 +135,20 @@ std::vector<Token> select_arg(int idx,
 // separator rule) and stops at the first token produced (S-01).
 bool va_args_empty(int idx, const std::vector<std::vector<Token>>& actuals, bool is_va);
 
+// SPEC §3.7: called after `input` -- a macro argument, or __NOSPLIT's joined
+// arguments -- has been macro-expanded as a whole into ts[from, end). Every
+// macro expanded in it has finished, as in gcc/clang, where a macro is
+// disabled only while its own replacement is rescanned (C17 6.10.3.4): its
+// name is taken out of the hide sets of those tokens, so the argument
+// rescanned again with the replacement can call it (`EXPAND(R())` with
+// R() = `x DEFER(R_I)()()` and R_I() = `R` gives `x x R_I ()()`). A name
+// stays where the token already had it in the call (the union of the
+// input's hide sets) and on a token left unexpanded because of it (a
+// painted identifier keeps its own name: it is never expanded again,
+// C17 6.10.3.4p2). Prosser's algorithm (cpp.algo.md) kept every name.
+void end_argument_expansion(std::vector<Token>& ts, std::size_t from,
+                            const std::vector<Token>& input);
+
 // ── §subst — argument-expansion memoisation (task_slug arg-expand-once, D1/D2) ──
 //
 // One ArgExpansionMemo is created per function-macro invocation in
@@ -167,6 +181,9 @@ struct ArgExpansionMemo {
     std::vector<int> remaining;         // copy of FunctionMacro::arg_slot_uses()
     std::vector<std::optional<std::vector<Token>>> expanded; // per slot, lazy
     std::vector<std::optional<std::string>> stringized;      // per slot, lazy
+    // Whether __VA_OPT__ takes its content in this invocation (SPEC §3.4),
+    // once decided (expand_subst.cpp's va_opt_active()).
+    std::optional<bool> va_opt_active;
 };
 
 // §Support functions: stringize

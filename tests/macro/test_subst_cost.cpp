@@ -53,9 +53,6 @@ const char* const kNested =
     "<unknown location>:1.0: error: PP37: Invalid __VA_OPT__; 'nested __VA_OPT__ is not allowed'";
 const char* const kNeedsParen =
     "<unknown location>:1.0: error: PP37: Invalid __VA_OPT__; '__VA_OPT__ requires parenthesized argument'";
-const char* const kBadStringize =
-    "<unknown location>:1.0: error: PP31: Invalid stringizing (@)";
-
 // vow() / vows() (test_helper.hpp) give the PP80 warning(s) for a macro.
 
 // a followed by b.
@@ -69,14 +66,14 @@ std::vector<std::string> cat(std::vector<std::string> a, const std::vector<std::
 // ---- __VA_OPT__ emptiness (O(1) va_args_empty() must agree with select_arg()) ----
 
 TEST_F(SubstCostTest, VaOptEmptinessMatrix) {
-    EXPECT_EQ("<>|<>|<>|<+>|<+>|<+>|<+>",
+    EXPECT_EQ("< >|< >|< >|<+>|<+>|<+>|<+>",
               pp("{#define V(...) <__VA_OPT__(+)>}V()|V( )|V((* c *))|V(,)|V(a)|V(,a)|V(a,)"));
     EXPECT_TRUE(empty());
-    EXPECT_EQ("<>|<>|<>|<+>|<+>|<+>|<+>",
+    EXPECT_EQ("< >|< >|< >|<+>|<+>|<+>|<+>",
               pp("{#define N(args...) <__VA_OPT__(+)>}"
                  "N()|N( )|N((* c *))|N(,)|N(a)|N(,a)|N(a,)"));
     EXPECT_TRUE(empty());
-    EXPECT_EQ("<>|<>|<+>|<+>",
+    EXPECT_EQ("< >|< >|<+>|<+>",
               pp("{#define F(x, ...) <__VA_OPT__(+)>}F(1)|F(1,)|F(1,2)|F(1,,)"));
     EXPECT_TRUE(empty());
 }
@@ -474,10 +471,10 @@ TEST_F(SubstCostTest, ObjectMacroVaOptIsAnIdentifier) {
     EXPECT_EQ("@__VA_OPT__ (b", pp("{#define O @__VA_OPT__ (b}O"));
     EXPECT_EQ(vows("O", 1), messages());
 
-    // Only @__VA_OPT__ keeps the '@' silently; `@` before an ordinary
-    // identifier is still PP31.
+    // In an object macro every `@` is an ordinary token, as `#` is in C
+    // (clang 22: `#define O # x` gives `# x`, no diagnostic).
     EXPECT_EQ("@ x", pp("{#define O @ x}O"));
-    EXPECT_EQ((std::vector<std::string>{kBadStringize}), messages());
+    EXPECT_TRUE(messages().empty());
 }
 
 // ---- a repeated @ gives exactly what a single @ gives ----
@@ -580,7 +577,12 @@ TEST_F(SubstCostTest, VaOptEmptiness_TimingGuard) {
     const std::string src = "{#define M(...) " + repeat("__VA_OPT__(y)", kK) + "}M(" +
                             repeat("a,", kN - 1) + "a);";
     auto [out, secs] = timed_pp(src);
-    EXPECT_EQ(std::string(kK, 'y') + ";", out);
+    // Two contents next to each other would read as one identifier: one
+    // space between them (SPEC §3.9).
+    std::string expected = "y";
+    for (int i = 1; i < kK; ++i)
+        expected += " y";
+    EXPECT_EQ(expected + ";", out);
     EXPECT_LT(secs, 3.0) << "k=" << kK << " n=" << kN << " took " << secs << "s";
 }
 

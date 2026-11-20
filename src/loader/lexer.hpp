@@ -1,5 +1,6 @@
 #pragma once
 #include <iosfwd>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,6 +44,41 @@ std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,
 // (Token::C) by a newline token of its num_of_lines, or by one space when it
 // has none. Document comments (Token::DOCUMENT) are kept.
 void iec3_remove_comments(std::vector<Token>& tokens);
+
+// The token-boundary rules of macro expansion (SPEC §3.9, §4.3). These read
+// text the way the source lexer does, without any diagnostic, and count
+// each IEC 61131-3 operator of two characters (:= => <= >= <> ** ..) as one
+// token, although the lexer reads it as two single-character tokens: the
+// output is read by an IEC compiler, which takes it as one token.
+//
+// At a macro-expansion edge: whether `before` (the text that ends at the
+// edge, a few output tokens) and `after` (the text that starts there),
+// written together, read as other tokens than each does alone -- the edge
+// is no longer a token boundary: "a" "b" (one identifier), "1" ".5" (one
+// number), "<" "=" (the operator <=), "/" "/" (a comment) -- while one space
+// at the edge keeps them apart. False for two literals with the same quote,
+// which the lexer merges with or without a space, and for a '#' on either
+// side: the lexer splits an IEC typed literal (16#FF, T#1s, INT#5) at its
+// '#' into several tokens written together, so none is a boundary to keep.
+bool iec3_needs_space(std::string_view before, std::string_view after);
+
+// A cheap necessary condition for iec3_needs_space(): false when the last
+// output token `left` (after `before_left`, the output token before it, or
+// "" when that is whitespace or there is none) followed by text starting
+// with the characters `right` and `right2` ('\0' when unknown or none) can
+// never lex differently, so the texts need not be built and lexed (this
+// runs at every macro-expansion edge).
+bool iec3_may_join(std::string_view before_left, std::string_view left, char right,
+                   char right2);
+
+// The type of the one token that `left` and `right` written together read
+// as -- with the same spelling, so not two literals that the lexer merges
+// into one -- or nullopt when they read as more than one token, as an
+// unterminated literal, or as a comment, pragma or directive. A paste on
+// either side of the '#' of an IEC typed literal (`16 #`, `# FF`, `T #`,
+// `# 1s`; the lexer reads such a literal as several tokens) counts as one
+// token (Token::ANY).
+std::optional<int> iec3_pasted_token_type(std::string_view left, std::string_view right);
 
 // True iff `s` is exactly one identifier as tokenize() lexes it:
 // [A-Za-z_][A-Za-z0-9_]* (ASCII only, like IEC 61131-3 identifiers).

@@ -938,9 +938,9 @@ TEST_F(DirectiveTest, LineCommentRewriteEscapesCommentCloser) {
     // "//!" document comment in a macro body.
     EXPECT_EQ("a /*!doc *| z*/ b;", pp("{#define X a //!doc */ z}X b;"));
     EXPECT_TRUE(empty());
-    // A trailing ordinary '//' comment of a {#define} body is trimmed with
-    // the trailing whitespace, so only "//!" reaches the rewrite there.
-    EXPECT_EQ("a b;", pp("{#define Y a // c */ x}Y b;"));
+    // An ordinary '//' comment ending a {#define} body is kept and rewritten
+    // the same way.
+    EXPECT_EQ("a /* c *| x*/ b;", pp("{#define Y a // c */ x}Y b;"));
     EXPECT_TRUE(empty());
     // "//!" in a {#token} operand.
     EXPECT_EQ("a /*!d *| e*/ b;", pp("{#token a //!d */ e} b;"));
@@ -1410,7 +1410,7 @@ TEST_F(DirectiveTest, IecEscapesInDirectiveStringsKeptAsWritten) {
 TEST_F(DirectiveTest, LineCommentTrackingFollowsRawStrings) {
     EXPECT_EQ("\n'a$'b' +2;", pp("{#define B 'a$'b' // c\n+2}B;"));
     EXPECT_EQ("\n'x$'//y' +2;", pp("{#define B 'x$'//y'\n+2}B;"));
-    EXPECT_EQ("\n'x$ny' +1;", pp("{#define B (* it's *) 'x$ny' // c\n+1}B;"));
+    EXPECT_EQ("\n(* it's *) 'x$ny' +1;", pp("{#define B (* it's *) 'x$ny' // c\n+1}B;"));
     EXPECT_TRUE(empty());
 }
 

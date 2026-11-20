@@ -73,7 +73,8 @@ std::string expand_message(std::size_t first,
     }
     std::string text;
     for (const auto& t : ots)
-        text += t.text;
+        if (!t.is_edge_space())
+            text += t.text;
     if (only_ws) {
         *only_ws = true;
         for (char c : text) {
@@ -268,6 +269,8 @@ std::vector<Token> NosplitBuiltin::invoke(std::vector<std::vector<Token>>& args,
     std::vector<Token> joined = select_arg(0, args, /*is_va=*/true, &ws, VaJoin::plain);
     std::vector<Token> out;
     expand(joined, out, env);
+    // The result is rescanned with the call's replacement, like an argument.
+    end_argument_expansion(out, 0, joined);
     // Same depth rule as the argument collector in expand.cpp: only a comma
     // outside (...)/[...] would separate arguments, so only those change.
     int depth = 0;

@@ -106,6 +106,16 @@ std::vector<Token> ts_trim(std::vector<Token> ts) {
     return ts_ltrim(ts_rtrim(std::move(ts)));
 }
 
+std::vector<Token> ts_trim_spaces(std::vector<Token> ts) {
+    while (!ts.empty() && ts.back().type == Token::WS)
+        ts.pop_back();
+    auto itr = ts.begin();
+    while (itr != ts.end() && itr->type == Token::WS)
+        ++itr;
+    ts.erase(ts.begin(), itr);
+    return ts;
+}
+
 std::vector<Token> ts_flatten(std::vector<Token> ts) {
     ts = ts_trim(std::move(ts));
     for (auto& t : ts)

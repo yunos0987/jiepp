@@ -184,8 +184,9 @@ TEST_F(MacroNameWarningTest, MissingWhitespaceThenRedefinedOrNot) {
 // S5: regression -- comments/newline-escapes/'(' after NAME stay silent.
 TEST_F(MacroNameWarningTest, WhitespaceEquivalentsStaySilent) {
     {
+        // The comment starts the body and is kept (clang -CC: `/* c */1`).
         auto r = pp("{#define A(* c *)1};A;");
-        EXPECT_EQ(";1;", r);
+        EXPECT_EQ(";(* c *)1;", r);
         EXPECT_TRUE(empty());
     }
     {

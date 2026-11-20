@@ -226,7 +226,8 @@ ExpandedPath expanded_path(const std::vector<Token>& ts) {
             p.end = j + 1;
             return p;
         }
-        name += ts[j].type == Token::C ? std::string(" ") : ts[j].text;
+        if (!ts[j].is_edge_space())
+            name += ts[j].type == Token::C ? std::string(" ") : ts[j].text;
     }
     return p;
 }
@@ -264,7 +265,8 @@ std::string expand_operand_text(const std::string& text, Env& env,
                                 bool report_unterminated) {
     std::string r;
     for (const auto& t : expand_operand_tokens(text, env, report_unterminated))
-        r += t.text;
+        if (!t.is_edge_space())
+            r += t.text;
     return r;
 }
 

@@ -175,10 +175,17 @@ TEST_F(FuncMacroTest, WhitespaceInParams) {
 }
 
 TEST_F(FuncMacroTest, WhitespaceInBody) {
+    // A comment at either end of the body is kept like one inside it (clang
+    // -CC: `/*~*/ 2/*~*/2 /*~*/`); the whitespace around it keeps its amount.
     EXPECT_EQ(";2/*~*/2;", pp("{#define F(a) a/*~*/a};F(2);"));
-    EXPECT_EQ(";2/*~*/2;", pp("{#define F(a) /*~*/  a/*~*/a};F(2);"));
-    EXPECT_EQ(";2/*~*/2;", pp("{#define F(a) a/*~*/a  /*~*/};F(2);"));
-    EXPECT_EQ(";2/*~*/2;", pp("{#define F(a) /*~*/  a/*~*/a  /*~*/};F(2);"));
+    EXPECT_EQ(";/*~*/  2/*~*/2;", pp("{#define F(a) /*~*/  a/*~*/a};F(2);"));
+    EXPECT_EQ(";2/*~*/2  /*~*/;", pp("{#define F(a) a/*~*/a  /*~*/};F(2);"));
+    EXPECT_EQ(";/*~*/  2/*~*/2  /*~*/;", pp("{#define F(a) /*~*/  a/*~*/a  /*~*/};F(2);"));
+    EXPECT_TRUE(empty());
+    // -nC: comments are whitespace, and whitespace at either end goes.
+    Env env = setup();
+    env.set_remove_comments(true);
+    EXPECT_EQ(";2 2;", pp("{#define F(a) /*~*/  a/*~*/a  /*~*/};F(2);", env));
     EXPECT_TRUE(empty());
 }
 
@@ -669,7 +676,7 @@ TEST_F(FuncMacroTest, Init) {
 }
 
 TEST_F(FuncMacroTest, InitError) {
-    // Fact: @ followed by a non-param token fires INVALID_STRINGIZING at expansion time
+    // @ followed by a non-param token is INVALID_STRINGIZING at {#define}
     EXPECT_THROW(pp("{#define F(x) @  xy};F(1)"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_STRINGIZING, code());
     EXPECT_THROW(pp("{#define F(x) @};F(1)"), Issue::Exception);
@@ -797,10 +804,11 @@ TEST_F(FuncMacroTest, GnuNamedVariadicVaArgsIsOrdinaryIdentifier) {
 
 // Since __VA_ARGS__ is an ordinary identifier for a named variadic,
 // stringizing it (which requires a formal parameter operand) is PP31, like
-// stringizing any other non-parameter identifier.
+// stringizing any other non-parameter identifier, and V4 is not defined
+// (clang 22: "'#' is not followed by a macro parameter", `V4(1)` as written).
 TEST_F(FuncMacroTest, GnuNamedVariadicStringizeVaArgsIsError) {
     Issue::ContinueMode guard({});
-    EXPECT_EQ(";@__VA_ARGS__;", pp("{#define V4(args...) @__VA_ARGS__};V4(1);"));
+    EXPECT_EQ(";V4(1);", pp("{#define V4(args...) @__VA_ARGS__};V4(1);"));
     auto cs = codes();
     ASSERT_EQ(1u, cs.size());
     EXPECT_EQ(Issue::Code::INVALID_STRINGIZING, cs[0]);
@@ -812,7 +820,8 @@ TEST_F(FuncMacroTest, GnuNamedVariadicStringizeVaArgsIsError) {
 TEST_F(FuncMacroTest, GnuNamedVariadicVaOpt) {
     EXPECT_EQ(";< >;<x 1>;",
               pp("{#define O(args...) <__VA_OPT__(x) args>};O();O(1);"));
-    EXPECT_EQ(";<>;<>;<12>;",
+    // `<>` would be one token: one space between (SPEC §3.9).
+    EXPECT_EQ(";< >;< >;<12>;",
               pp("{#define O2(a, args...) <__VA_OPT__(a @@ args)>};O2();O2(1);O2(1,2);"));
     EXPECT_EQ(";<''|x>;<'1,2'|x1,2>;",
               pp("{#define O3(args...) <@__VA_OPT__(args)|x @@ __VA_OPT__(args)>};O3();O3(1,2);"));

@@ -1,6 +1,8 @@
 #include "lexer.hpp"
 #include "lexer_helpers.hpp"
 
+#include <algorithm>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -325,6 +327,162 @@ std::string iec3_blank_out_comments(std::string_view s) {
         ++p;
     }
     return r;
+}
+
+namespace {
+
+// The IEC 61131-3 operators of two characters. tokenize() reads each of
+// them as two single-character tokens, but an IEC compiler reads the output
+// and takes them as one token.
+bool is_iec_operator(char a, char b) {
+    switch (a) {
+    case ':': return b == '=';
+    case '=': return b == '>';
+    case '<': return b == '=' || b == '>';
+    case '>': return b == '=';
+    case '*': return b == '*';
+    case '.': return b == '.';
+    default: return false;
+    }
+}
+
+// The tokens of `text` for the token-boundary rules: tokenize() without any
+// diagnostic, then each IEC operator above, written as two adjacent
+// single-character tokens, joined into one token (left to right, so "<=>"
+// is "<=" ">" and "..." is ".." ".").
+std::vector<Token> lex_for_boundary(const std::string& text) {
+    auto ts = tokenize(text, 0, 1,
+                       LexOptions{.report_nested_brace = false,
+                                  .report_unclosed_comment = false,
+                                  .quiet = true});
+    std::vector<Token> r;
+    r.reserve(ts.size());
+    for (auto& t : ts) {
+        if (!r.empty() && t.type == Token::ANY && t.text.size() == 1 &&
+            r.back().type == Token::ANY && r.back().text.size() == 1 &&
+            is_iec_operator(r.back().text[0], t.text[0])) {
+            r.back().text += t.text;
+            continue;
+        }
+        r.push_back(std::move(t));
+    }
+    return r;
+}
+
+bool is_all_ident_cont(std::string_view s) {
+    return std::all_of(s.begin(), s.end(), is_ident_cont);
+}
+
+} // anonymous namespace
+
+bool iec3_may_join(std::string_view before_left, std::string_view left, char right,
+                   char right2) {
+    if (left.empty())
+        return false;
+    const char l = left.back();
+    const char r = right;
+    // The '#' of an IEC typed literal (16#FF, T#1s, INT#5) is where the
+    // lexer splits such a literal into several tokens: no space is put next
+    // to it (iec3_needs_space()).
+    if (l == '#' || r == '#')
+        return false;
+    const auto is_digit = [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; };
+    if (left.front() == '%')
+        return is_ident_cont(r) || r == '.' || r == '*'; // %IX0.1, %I*
+    if (is_ident_cont(l)) {
+        if (is_ident_cont(r))
+            return true; // one identifier or number
+        // Only a number goes on with '.' and a digit ("1" ".5") or, after
+        // its exponent letter, with a sign ("1e" "+5"); an identifier never
+        // does.
+        if (!is_digit(left.front()))
+            return false;
+        return (r == '.' && is_digit(right2)) ||
+               ((r == '+' || r == '-') && (l == 'e' || l == 'E'));
+    }
+    switch (l) {
+    case '(': return r == '*';             // (*
+    case '/': return r == '/' || r == '*'; // // /*
+    case '@': return r == '@';             // @@
+    case '.':
+        // A number continued ("1" "." "5", "%IX0" "." "1"), or `..`.
+        if (r == '.')
+            return true;
+        // A number goes on with a digit after its '.', a direct
+        // representation with any letter or digit.
+        return !before_left.empty() &&
+               ((is_digit(before_left.front()) && is_digit(r)) ||
+                (before_left.front() == '%' && is_ident_cont(r)));
+    case '+':
+    case '-':
+        // An exponent continued: "1e" "+" "5".
+        return is_digit(r) && !before_left.empty() && is_digit(before_left.front()) &&
+               (before_left.back() == 'e' || before_left.back() == 'E');
+    default:
+        break;
+    }
+    return is_iec_operator(l, r);
+}
+
+bool iec3_needs_space(std::string_view before, std::string_view after) {
+    if (before.empty() || after.empty() || before.back() == '#' || after.front() == '#')
+        return false;
+    const auto b = lex_for_boundary(std::string(before));
+    const auto a = lex_for_boundary(std::string(after));
+    // Whether ts is b's tokens, then (with_space) one whitespace token, then
+    // a's tokens.
+    auto is_concat = [&](const std::vector<Token>& ts, bool with_space) {
+        if (ts.size() != b.size() + a.size() + (with_space ? 1 : 0))
+            return false;
+        std::size_t k = 0;
+        for (const auto& u : b)
+            if (ts[k++].text != u.text)
+                return false;
+        if (with_space && ts[k++].type != Token::WS)
+            return false;
+        for (const auto& u : a)
+            if (ts[k++].text != u.text)
+                return false;
+        return true;
+    };
+    std::string text;
+    text.reserve(before.size() + after.size() + 1);
+    text.append(before).append(after);
+    if (is_concat(lex_for_boundary(text), false))
+        return false;
+    text.insert(before.size(), 1, ' ');
+    return is_concat(lex_for_boundary(text), true);
+}
+
+std::optional<int> iec3_pasted_token_type(std::string_view left, std::string_view right) {
+    if (left.empty() || right.empty())
+        return std::nullopt;
+    // Identifiers and numbers: one identifier, or one number ("1" "x" is
+    // the number token "1x").
+    if (is_all_ident_cont(left) && is_all_ident_cont(right))
+        return Token::ANY;
+    // The '#' of an IEC typed literal (16#FF, T#1s, INT#5, COLOR#RED): the
+    // lexer reads the prefix, the '#' and the value as separate tokens
+    // (except a based number such as 16#FF), so a paste on either side of
+    // the '#' is one literal written together.
+    if ((left.back() == '#' && is_ident_cont(right.front())) ||
+        (right.front() == '#' && is_ident_cont(left.back())))
+        return Token::ANY;
+    std::string text;
+    text.reserve(left.size() + right.size());
+    text.append(left).append(right);
+    const auto ts = lex_for_boundary(text);
+    if (ts.size() != 1 || ts[0].text != text || ts[0].unterminated)
+        return std::nullopt;
+    switch (ts[0].type) {
+    case Token::C:
+    case Token::DOCUMENT:
+    case Token::PRAGMA:
+    case Token::DIRECTIVE:
+        return std::nullopt;
+    default:
+        return ts[0].type;
+    }
 }
 
 bool iec3_is_identifier(std::string_view s) {

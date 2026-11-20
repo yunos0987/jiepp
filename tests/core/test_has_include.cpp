@@ -836,4 +836,20 @@ TEST_F(HasIncludeTest, TextPathAngleOperands_TimingGuard) {
 
 #endif  // NDEBUG
 
+// SPEC §3.9: a path made by a macro is its expansion joined without the
+// spaces put at macro-expansion edges, like the C `#include INC` of clang 22
+// and gcc 13 (`#define INC3 <DIR/MAJOR.MINOR.h>` reaches lib/1.2.h,
+// `<DIR/F(a)b.h>` lib/ab.h). The space would give `lib/1. 2.iec`.
+TEST_F(HasIncludeTest, MacroMadeAngledPathHasNoEdgeSpaces) {
+    fs::create_directories(tmp_dir_ / "lib");
+    std::ofstream(tmp_dir_ / "lib" / "1.2.iec") << "one_two\n";
+    std::ofstream(tmp_dir_ / "lib" / "ab.iec") << "ab_file\n";
+    const std::string defs = "{#define MAJOR 1}{#define MINOR 2}{#define DIR lib}{#define F(a) a}"
+                             "{#define INC3 <DIR/MAJOR.MINOR.iec>}{#define INC4 <DIR/F(a)b.iec>}";
+    EXPECT_NE(std::string::npos, pp_hi(defs + "{#include INC3}").find("one_two"));
+    EXPECT_NE(std::string::npos, pp_hi(defs + "{#sinclude INC4}").find("ab_file"));
+    EXPECT_EQ("YES", pp_hi(defs + "{#if __has_include(INC3) && __has_include(INC4)}YES{#endif}"));
+    EXPECT_TRUE(empty());
+}
+
 #endif  // !JIEPP_SANDBOX

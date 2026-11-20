@@ -84,7 +84,7 @@ const Form kForms[] = {
     {"__VA_OPT__(x)", "", "__VA_OPT__(x)", 1},
     {"x @@ __VA_OPT__(y)", "x", "x__VA_OPT__(y)", 1},
     {"@__VA_OPT__(y)", "''", "@__VA_OPT__(y)", 1},
-    {"<__VA_OPT__(a)>", "<>", "<__VA_OPT__(a)>", 1},
+    {"<__VA_OPT__(a)>", "< >", "<__VA_OPT__(a)>", 1}, // `<>` would be one token (SPEC §3.9)
     {"__VA_OPT__(x) __VA_OPT__(y)", " ", "__VA_OPT__(x) __VA_OPT__(y)", 2},
     {"x @@ __VA_OPT__(y) @@ z", "xz", nullptr, 1},
     {"__VA_OPT__(y) @@ z", "z", nullptr, 1},

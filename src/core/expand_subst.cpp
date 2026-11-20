@@ -5,6 +5,7 @@
 #include "preprocessor.hpp"
 #include "preprocessor_internal.hpp"
 
+#include "../loader/lexer.hpp"
 #include "../macro/macro.hpp"
 #include "../util/iec_61131-3.hpp"
 #include "../util/stack_guard.hpp"
@@ -12,6 +13,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -70,6 +72,61 @@ static std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& t
     return ts;
 }
 
+// ── the end of an argument's expansion (SPEC §3.7) ────────────────
+
+void end_argument_expansion(std::vector<Token>& ts, std::size_t from,
+                            const std::vector<Token>& input) {
+    // The macros active in the call: the union of the input's hide sets
+    // (consecutive tokens overwhelmingly share one handle).
+    Token::HideSet context;
+    {
+        Token::HideSet last;
+        for (const auto& t : input) {
+            if (t.hs.empty() || t.hs.same(last))
+                continue;
+            last = t.hs;
+            context = Token::HideSet::unite(context, t.hs);
+        }
+    }
+    // Memo of the last (hide set -> its part in the context), like hsadd().
+    Token::HideSet memo_in;
+    Token::HideSet memo_out;
+    for (std::size_t i = from; i < ts.size(); ++i) {
+        Token& t = ts[i];
+        if (t.hs.empty())
+            continue;
+        // Only an identifier can be a macro name (the cheap test first).
+        if (t.type == Token::ANY && !t.text.empty() &&
+            (std::isalpha(static_cast<unsigned char>(t.text[0])) || t.text[0] == '_') &&
+            t.hs.contains(t.text)) {
+            // Left unexpanded because its macro was being expanded:
+            // painted, never expanded again (C17 6.10.3.4p2).
+            t.hs = (context.empty() ? Token::HideSet() : Token::HideSet::intersect(t.hs, context))
+                       .with(t.text);
+            continue;
+        }
+        if (context.empty()) {
+            t.hs = Token::HideSet();
+            continue;
+        }
+        if (!t.hs.same(memo_in)) {
+            memo_in = t.hs;
+            memo_out = Token::HideSet::intersect(t.hs, context);
+        }
+        t.hs = memo_out;
+    }
+}
+
+// A macro argument's pre-expansion (C17 6.10.3.1): `input` expanded as a
+// whole, appended to `out`, then end_argument_expansion(). Out of line and
+// never inlined so its locals do not enlarge subst()'s frame.
+[[gnu::noinline]] static void expand_argument_into(const std::vector<Token>& input,
+                                                   std::vector<Token>& out, Env& env) {
+    const std::size_t from = out.size();
+    expand(input, out, env);
+    end_argument_expansion(out, from, input);
+}
+
 // ── §glue — paste last of left side with first of right side ──────
 
 // A failed paste (PP32) keeps both operands as separate tokens, like gcc and
@@ -93,21 +150,22 @@ static std::string paste_echo_tail(const std::string& s) {
     return s.size() <= kPasteEchoMax ? s : "..." + std::string(Util::utf8_tail(s, kPasteEchoMax));
 }
 
-// The structural tokens ( ) , [ ]: pasting to one never forms a valid token.
-static bool is_structural_token(int type) {
-    return type == Token::LP || type == Token::RP || type == Token::SEP ||
-           type == Token::LB || type == Token::RB;
+// Work budget (PP64) cost of one token: 1 + len/64 steps.
+static inline std::uint64_t step_cost(const Token& t) {
+    return 1 + t.text.size() / 64;
 }
 
-// True iff `prev @@ next` forms one token: both have the same type and the
-// type is not a structural token.
-static bool paste_is_valid(const Token& prev, const Token& next) {
-    return prev.type == next.type && !is_structural_token(prev.type);
-}
-
-// Pastes the last token of src with the first token of item.
-static void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
+// Pastes the last token of src with the first token of item. The paste is
+// valid when the two written together read as exactly one token
+// (iec3_pasted_token_type(), SPEC §4.3), which then takes that token's
+// type. The merged token is charged here (unless `item_charged`: the inner
+// subst() of __VA_OPT__ content has charged it); every token pushed to src
+// instead is charged by the caller's next charge_new().
+static void glue_tokens(std::vector<Token>& src, std::vector<Token>& item, Env& env,
+                        bool item_charged) {
     if (src.empty()) {
+        if (!item.empty())
+            item.front().expansion_edge = true;
         for (auto& t : item)
             src.push_back(std::move(t));
         return;
@@ -118,18 +176,26 @@ static void glue_tokens(std::vector<Token>& src, std::vector<Token>& item) {
     auto& prev = src.back();
     auto& next = item.front();
 
-    if (!paste_is_valid(prev, next)) {
+    const std::optional<int> type = iec3_pasted_token_type(prev.text, next.text);
+    if (!type) {
         // Report, then keep both operands as separate tokens (gcc/clang).
         // Nothing of prev (text, hide set) changes. ISSUE runs before the
         // push so a thrown Issue::Exception leaves src untouched, and `prev`
-        // is not used after the push (it may dangle).
+        // is not used after the push (it may dangle). The two tokens now
+        // meet where no token was written next to the other, so a space
+        // goes between them if they would read as other tokens (SPEC §3.9),
+        // as gcc/clang print a failed paste.
         ISSUE(INVALID_TOKEN_PASTING,
               paste_echo_tail(prev.text) + " @@ " + paste_echo_head(next.text));
+        next.expansion_edge = true;
         for (auto& t : item)
             src.push_back(std::move(t));
         return;
     }
 
+    if (!item_charged)
+        env.charge_expansion_steps(step_cost(next));
+    prev.type = *type;
     prev.hs = Token::HideSet::intersect(prev.hs, next.hs);
     prev.text += next.text;
     // A pasted token is not the lexer's own text: its pragma body (if it
@@ -292,15 +358,84 @@ static Token stringize_tokens(const std::vector<Token>& ts) {
 
 // ── §Support functions: __VA_OPT__ helpers ────────────────────────
 
-// True when the macro is variadic (either form) and its variable arguments
-// are non-empty. O(1): see va_args_empty().
-static bool va_args_non_empty(
+// va_opt_active() for variable arguments that are not empty as written.
+// Arguments with no macro name and no pragma (whose body is expanded) expand
+// to themselves with no side effect: not empty, and nothing to expand here
+// (a later use of __VA_ARGS__ still expands them once). Otherwise they are
+// macro-expanded -- also two or more, which always give a token (the comma
+// between them), since gcc/clang expand them too (a __COUNTER__ in them
+// moves) -- into the expansion that the uses of their parameter share
+// (ArgExpansionMemo: a variadic body with __VA_OPT__ and __VA_ARGS__, or with
+// two __VA_OPT__, has a slot for it, see FunctionMacro::compute_arg_slots()),
+// or, when this is the only use, into a temporary.
+static bool va_opt_active_uncached(int va_idx,
+                                   const std::vector<std::vector<Token>>& actual_params,
+                                   const std::vector<ArgWs>* actual_ws,
+                                   ArgExpansionMemo* memo,
+                                   Env& env) {
+    bool may_change = false;
+    for (std::size_t k = static_cast<std::size_t>(va_idx);
+         k < actual_params.size() && !may_change; ++k) {
+        for (const auto& t : actual_params[k]) {
+            if (t.type == Token::PRAGMA ||
+                (t.type == Token::ANY && !t.text.empty() &&
+                 (std::isalpha(static_cast<unsigned char>(t.text[0])) || t.text[0] == '_') &&
+                 env.lookup(t.text) != nullptr)) {
+                may_change = true;
+                break;
+            }
+        }
+    }
+    if (!may_change)
+        return true;
+    auto has_token = [](const std::vector<Token>& ts) {
+        return std::any_of(ts.begin(), ts.end(),
+                           [](const Token& t) { return !(t.type & Token::MASK_WS); });
+    };
+    const int slot = (memo && va_idx < static_cast<int>(memo->slots->size()))
+                         ? (*memo->slots)[static_cast<std::size_t>(va_idx)]
+                         : -1;
+    if (slot < 0) {
+        std::vector<Token> expanded;
+        expand(select_arg(va_idx, actual_params, true), expanded, env);
+        return has_token(expanded);
+    }
+    // Filled as the parameter's first use fills it (subst()).
+    auto& cached = memo->expanded[static_cast<std::size_t>(slot)];
+    if (!cached) {
+        cached.emplace();
+        expand_argument_into(actual_ws ? select_arg(va_idx, actual_params, true, actual_ws,
+                                                    VaJoin::shared)
+                                       : select_arg(va_idx, actual_params, true),
+                             *cached, env);
+    }
+    return has_token(*cached);
+}
+
+// Whether __VA_OPT__(...) takes its content (SPEC §3.4): the macro is
+// variadic (either form) and its variable arguments are not empty after
+// macro expansion -- `F(EMPTY)` with an empty EMPTY leaves the content out,
+// like gcc/clang (C23 6.10.5.1). Empty as written is decided in O(1) (see
+// va_args_empty()), the rest by va_opt_active_uncached(), once per
+// invocation however many __VA_OPT__ the body has (ArgExpansionMemo).
+static bool va_opt_active(
     const std::unordered_map<std::string, std::pair<int, bool>>& formal_params,
-    const std::vector<std::vector<Token>>& actual_params) {
+    const std::vector<std::vector<Token>>& actual_params,
+    const std::vector<ArgWs>* actual_ws,
+    ArgExpansionMemo* memo,
+    Env& env) {
     auto it = formal_params.find(FunctionMacro::VA_SYM);
-    if (it == formal_params.end()) return false;
+    if (it == formal_params.end())
+        return false;
     auto [va_idx, is_va] = it->second;
-    return !va_args_empty(va_idx, actual_params, is_va);
+    if (va_args_empty(va_idx, actual_params, is_va))
+        return false;
+    if (memo && memo->va_opt_active)
+        return *memo->va_opt_active;
+    const bool active = va_opt_active_uncached(va_idx, actual_params, actual_ws, memo, env);
+    if (memo)
+        memo->va_opt_active = active;
+    return active;
 }
 
 // For the __VA_OPT__ token at body[i] (va_opt: the VaOptSpan table of body):
@@ -408,9 +543,69 @@ static Token stringize_param(int pidx,
     return Token::create(Token::STRING, std::move(text));
 }
 
-// Work budget (PP64) cost of one token: 1 + len/64 steps.
-static inline std::uint64_t step_cost(const Token& t) {
-    return 1 + t.text.size() / 64;
+// The `@` at body[i] applied to its operand (SPEC §4.1): appends the STRING
+// token to `out`, sets `end` to the index of the operand's last body token
+// and returns true. False when the macro has no parameters (`@` is then an
+// ordinary token) or no formal parameter, __VA_ARGC__ or well-formed
+// __VA_OPT__(...) follows. `va_opt` is computed into `local_va_opt` if the
+// body has no table yet (as subst()'s ensure_va_opt()). Shared by the
+// stringize case of subst() and the right operand of `@@` (`a @@ @b`).
+static bool stringize_operand(
+    std::span<const Token> body,
+    std::span<const VaOptSpan>& va_opt,
+    std::vector<VaOptSpan>& local_va_opt,
+    std::size_t i,
+    const std::unordered_map<std::string, std::pair<int, bool>>& formal_params,
+    const std::vector<std::vector<Token>>& actual_params,
+    const std::vector<ArgWs>* actual_ws,
+    Env& env,
+    ArgExpansionMemo* memo,
+    std::vector<Token>& out,
+    std::size_t& end) {
+    if (formal_params.empty())
+        return false;
+    std::size_t j = i + 1;
+    if (!va_opt.empty()) {
+        j = next_non_ws(va_opt, i, body.size());
+    } else {
+        // A body without __VA_OPT__ is normalized: no whitespace between `@`
+        // and a formal parameter.
+        while (j < body.size() && (body[j].type & Token::MASK_WS))
+            ++j;
+    }
+    if (j >= body.size() || body[j].type != Token::ANY)
+        return false;
+    if (body[j].text == FunctionMacro::VA_OPT) {
+        // @ __VA_OPT__(content): the content stringized, or ''.
+        if (va_opt.empty()) {
+            local_va_opt = compute_va_opt_spans(body);
+            va_opt = local_va_opt;
+        }
+        const std::size_t k = va_opt_close(body, va_opt, j, env);
+        if (k >= body.size())
+            return false;
+        std::vector<Token> inner;
+        if (va_opt_active(formal_params, actual_params, actual_ws, memo, env))
+            inner = subst_va_opt_content(body, va_opt, j, k, formal_params, actual_params,
+                                         actual_ws, env, /*va_sep_ws=*/true, memo);
+        out.push_back(stringize_tokens(inner));
+        end = k;
+        return true;
+    }
+    auto pit = formal_params.find(body[j].text);
+    if (pit == formal_params.end())
+        return false;
+    auto [pidx, is_va] = pit->second;
+    if (body[j].text == FunctionMacro::VA_ARGC) {
+        // Checked before the stringize cache: __VA_ARGC__ shares the pidx (and
+        // slot) of the variable arguments (review M1).
+        out.push_back(stringize_tokens({va_argc_token(pidx, actual_params)}));
+    } else {
+        // @param / @__VA_ARGS__ (see stringize_param()).
+        out.push_back(stringize_param(pidx, is_va, actual_params, actual_ws, memo));
+    }
+    end = j;
+    return true;
 }
 
 // task_slug arg-expand-once (D1/D3): append one occurrence's worth of a
@@ -507,12 +702,33 @@ std::vector<Token> subst(
         env.charge_expansion_steps(n);
     };
 
+    // SPEC §3.9: the tokens of a substituted argument (or __VA_OPT__
+    // content) meet the body tokens around it where nothing was written
+    // next to them. The first is marked Token::expansion_edge here, and
+    // `edge_at` is the index in `result` of the token that will follow the
+    // substitution, marked when it is pushed (npos: none pending). A `@@`
+    // right after the substitution pastes there instead and clears it.
+    std::size_t edge_at = std::string::npos;
+    auto substituted_from = [&](std::size_t start) {
+        if (start < result.size())
+            result[start].expansion_edge = true;
+        edge_at = result.size();
+    };
+    auto mark_edge_at = [&]() {
+        if (edge_at < result.size()) {
+            result[edge_at].expansion_edge = true;
+            edge_at = std::string::npos;
+        }
+    };
+
     for (std::size_t i = 0; i < body.size(); ++i) {
         charge_new();
+        mark_edge_at();
         const Token& t = body[i];
 
         // §subst case: IS is ## • T • IS' (paste)
         if (t.type == Token::GLUE) {
+            edge_at = std::string::npos;
             // The left operand is a placemarker (an empty formal-param substitution
             // or an empty __VA_OPT__ adjacent to this @@) when `pending_placemarker`
             // is set. In that case the whitespace preceding it belongs to the
@@ -549,7 +765,7 @@ std::vector<Token> subst(
                 ensure_va_opt();
                 std::size_t k = va_opt_close(body, va_opt, j, env);
                 if (k < body.size()) {
-                    if (va_args_non_empty(formal_params, actual_params)) {
+                    if (va_opt_active(formal_params, actual_params, actual_ws, memo, env)) {
                         item = ts_flatten(subst_va_opt_content(body, va_opt, j, k, formal_params,
                                                                actual_params, actual_ws, env,
                                                                va_sep_ws, memo));
@@ -561,6 +777,15 @@ std::vector<Token> subst(
                     item = {nb.clone()};
                     i = j;
                 }
+            } else if (std::size_t end = 0;
+                       nb.type == Token::STRINGIZE &&
+                       stringize_operand(body, va_opt, local_va_opt, j, formal_params,
+                                         actual_params, actual_ws, env, memo, item, end)) {
+                // `a @@ @b`: the operand of `@` is stringized first and the
+                // string is pasted (the C order, gcc/clang). A string is
+                // never a placemarker, even an empty one.
+                nb_is_param = true;
+                i = end;
             } else {
                 if (nb.type == Token::ANY) {
                     auto pit = formal_params.find(nb.text);
@@ -620,6 +845,8 @@ std::vector<Token> subst(
                     while (!result.empty() && (result.back().type & Token::MASK_WS))
                         result.pop_back();
                     i = k - 1;
+                    // What was before the comma meets what follows it.
+                    edge_at = result.size();
                 } else {
                     // Present (possibly empty: `LOG(x,)` keeps `g(x,)`): the
                     // comma stays and the arguments follow it unpasted, with
@@ -628,42 +855,50 @@ std::vector<Token> subst(
                         gnu_comma_va_idx < static_cast<int>(actual_ws->size()) &&
                         (va_sep_ws ? (*actual_ws)[gnu_comma_va_idx].lead
                                    : (*actual_ws)[gnu_comma_va_idx].lead_sp);
+                    const std::size_t start = result.size();
                     if (lead_ws && !item.empty())
                         result.push_back(Token::create(Token::WS, " "));
                     for (auto& tk : item)
                         result.push_back(std::move(tk));
+                    substituted_from(start);
                 }
                 pending_placemarker = false;
                 continue;
             }
 
+            // An argument or __VA_OPT__ content on the right ends where the
+            // body goes on (SPEC §3.9).
+            const bool item_substituted = nb_is_param || item_charged;
             if (left_is_placemarker) {
                 // Placemarker @@ item == item: append verbatim, no pasting.
+                // Its first token meets what was before the placemarker.
+                if (!item.empty())
+                    item.front().expansion_edge = true;
                 for (auto& tk : item)
                     result.push_back(std::move(tk));
                 pending_placemarker = item.empty();
                 if (item_charged)
                     charged = result.size();
+                if (item_substituted)
+                    edge_at = result.size();
             } else {
                 // Work budget (PP64): the one token merged by @@ (item[0]
-                // into result.back()) is charged before it is merged (a merge
-                // grows result.back() in place, which charge_new() above
-                // cannot see). Every token that is pushed to result instead
-                // -- item[1..] of a valid paste, the whole of item when the
-                // paste fails (PP32) or result is empty -- is charged once,
-                // by the next charge_new(); charging it here as well would
-                // count it twice. __VA_OPT__ content is the exception: the
-                // inner subst() has charged all of it, so neither the merge
-                // nor the next charge_new() may charge it again.
-                std::uint64_t merge_cost = 0;
-                if (!item_charged && !result.empty() && !item.empty() &&
-                    paste_is_valid(result.back(), item.front()))
-                    merge_cost = step_cost(item.front());
-                env.charge_expansion_steps(merge_cost);
-                glue_tokens(result, item);
+                // into result.back()) is charged by glue_tokens() as it is
+                // merged (a merge grows result.back() in place, which
+                // charge_new() above cannot see). Every token that is pushed
+                // to result instead -- item[1..] of a valid paste, the whole
+                // of item when the paste fails (PP32) or result is empty --
+                // is charged once, by the next charge_new(); charging it
+                // there as well would count it twice. __VA_OPT__ content is
+                // the exception: the inner subst() has charged all of it, so
+                // neither the merge nor the next charge_new() may charge it
+                // again.
+                glue_tokens(result, item, env, item_charged);
                 if (item_charged)
                     charged = result.size();
                 pending_placemarker = false;
+                if (item_substituted)
+                    edge_at = result.size();
             }
             continue;
         }
@@ -673,58 +908,21 @@ std::vector<Token> subst(
             // A stringized result is always a real (possibly empty-text) STRING
             // token, never a placemarker.
             pending_placemarker = false;
-            std::size_t j = i + 1;
-            if (!va_opt.empty()) {
-                j = next_non_ws(va_opt, i, body.size());
-            } else {
-                // A body without __VA_OPT__ is normalized: no whitespace
-                // between `@` and a formal parameter, and on the error path
-                // below every skipped whitespace token is emitted (and
-                // charged) right after.
-                while (j < body.size() && (body[j].type & Token::MASK_WS)) ++j;
+            std::size_t end = 0;
+            if (stringize_operand(body, va_opt, local_va_opt, i, formal_params, actual_params,
+                                  actual_ws, env, memo, result, end)) {
+                i = end;
+                continue;
             }
-            if (j < body.size() && body[j].type == Token::ANY) {
-                if (body[j].text == FunctionMacro::VA_OPT && formal_params.empty()) {
-                    // No parameters: __VA_OPT__ is an ordinary identifier, and
-                    // like clang's `#__VA_OPT__` in such a macro the '@' before
-                    // it stays as written, with no PP31.
-                    result.push_back(t.clone());
-                    continue;
-                }
-                if (body[j].text == FunctionMacro::VA_OPT) {
-                    // Handle: @ __VA_OPT__(content) → stringize VA_OPT content or ''
-                    ensure_va_opt();
-                    std::size_t k = va_opt_close(body, va_opt, j, env);
-                    if (k < body.size()) {
-                        std::vector<Token> inner;
-                        if (va_args_non_empty(formal_params, actual_params))
-                            inner = subst_va_opt_content(body, va_opt, j, k, formal_params,
-                                                         actual_params, actual_ws, env,
-                                                         /*va_sep_ws=*/true, memo);
-                        result.push_back(stringize_tokens(inner));
-                        i = k;
-                        continue;
-                    }
-                } else {
-                    auto pit = formal_params.find(body[j].text);
-                    if (pit != formal_params.end()) {
-                        auto [pidx, is_va] = pit->second;
-                        if (body[j].text == FunctionMacro::VA_ARGC) {
-                            // Checked before the stringize cache: __VA_ARGC__
-                            // shares the pidx (and slot) of the variable
-                            // arguments (review M1).
-                            result.push_back(stringize_tokens({va_argc_token(pidx, actual_params)}));
-                        } else {
-                            // @param / @__VA_ARGS__ (see stringize_param()).
-                            result.push_back(
-                                stringize_param(pidx, is_va, actual_params, actual_ws, memo));
-                        }
-                        i = j;
-                        continue;
-                    }
-                }
-            }
-            ISSUE(INVALID_STRINGIZING);
+            // Without parameters (an object macro, F(), a built-in
+            // replacement) `@` is an ordinary token, as `#` is in C (clang:
+            // `#define H # x` gives `# x`, `#define F() #__VA_OPT__(b)` gives
+            // `#__VA_OPT__(b)`). A function-like macro with parameters whose
+            // `@` is not followed by one is not defined ({#define} reports
+            // PP31), so the PP31 here is reached only for a FunctionMacro
+            // built directly in code.
+            if (!formal_params.empty())
+                ISSUE(INVALID_STRINGIZING);
             result.push_back(t.clone());
             continue;
         }
@@ -750,7 +948,8 @@ std::vector<Token> subst(
                     result.push_back(t.clone());
                     continue;
                 }
-                if (va_args_non_empty(formal_params, actual_params)) {
+                const std::size_t start = result.size();
+                if (va_opt_active(formal_params, actual_params, actual_ws, memo, env)) {
                     auto inner = subst_va_opt_content(body, va_opt, i, j, formal_params,
                                                       actual_params, actual_ws, env, va_sep_ws,
                                                       memo);
@@ -762,6 +961,7 @@ std::vector<Token> subst(
                     // Already charged by the inner subst().
                     charged = result.size();
                 }
+                substituted_from(start);
                 pending_placemarker = !va_opt_produced;
                 i = j; // advance past closing ')'
                 continue;
@@ -770,10 +970,12 @@ std::vector<Token> subst(
             auto pit = formal_params.find(t.text);
             if (pit != formal_params.end()) {
                 auto [pidx, is_va] = pit->second;
+                const std::size_t start = result.size();
 
                 if (t.text == FunctionMacro::VA_ARGC) {
                     pending_placemarker = false;
                     result.push_back(va_argc_token(pidx, actual_params));
+                    substituted_from(start);
                     continue;
                 }
 
@@ -827,10 +1029,13 @@ std::vector<Token> subst(
                     // back to being pasted as its own literal name. Never memoised
                     // (D1): the raw actual is pasted as-is, independent of any other
                     // occurrence's expansion.
+                    // Its last token is pasted with the right operand; its
+                    // first meets the body before it (SPEC §3.9).
                     auto flat = ts_flatten(*actual);
                     if (flat.empty()) {
                         pending_placemarker = true;
                     } else {
+                        flat.front().expansion_edge = true;
                         for (auto& ft : flat)
                             result.push_back(std::move(ft));
                         pending_placemarker = false;
@@ -840,24 +1045,26 @@ std::vector<Token> subst(
                     // into a throwaway `expanded` vector that is then
                     // copied token-by-token -- one fewer O(k) copy per
                     // formal-parameter occurrence.
-                    expand(*actual, result, env);
+                    expand_argument_into(*actual, result, env);
+                    substituted_from(start);
                     pending_placemarker = false;
                 } else {
                     auto& cached = memo->expanded[static_cast<std::size_t>(slot)];
                     if (!cached) {
                         cached.emplace();
                         if (slot_needs_marked_spelling)
-                            expand(select_arg(pidx, actual_params, true, actual_ws,
-                                              VaJoin::shared),
-                                   *cached, env);
+                            expand_argument_into(select_arg(pidx, actual_params, true, actual_ws,
+                                                            VaJoin::shared),
+                                                 *cached, env);
                         else
-                            expand(*actual, *cached, env);
+                            expand_argument_into(*actual, *cached, env);
                     }
                     const bool last =
                         (--memo->remaining[static_cast<std::size_t>(slot)] == 0);
                     append_expanded(result, *cached, /*keep_sep=*/va_sep_ws, /*move=*/last, env);
                     // Already charged (before the copy) by append_expanded().
                     charged = result.size();
+                    substituted_from(start);
                     pending_placemarker = false;
                 }
                 continue;
@@ -869,6 +1076,7 @@ std::vector<Token> subst(
         result.push_back(t.clone());
     }
 
+    mark_edge_at();
     charge_new();
     hsadd(hs, result);
     return result;

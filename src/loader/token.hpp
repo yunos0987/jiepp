@@ -118,6 +118,18 @@ struct Token {
     // the padding before `text`; excluded from operator== like the other
     // bookkeeping flags.
     bool        pragma_unterminated_reported = false;
+    // True when the token's left neighbour in the output is not the token
+    // written before it in the same text: the token starts a macro's
+    // replacement, follows a macro invocation (and so whatever its
+    // replacement ends with), starts or follows a substituted argument or
+    // __VA_OPT__ content, or is the right operand of a failed paste. Before
+    // such a token is output, expand() puts one space between it and the
+    // previous token if the two would otherwise read as other tokens
+    // (iec3_needs_space(), SPEC §3.9). Kept when the token is rescanned,
+    // since its left side stays such a meeting point. Reuses the padding
+    // before `text`; excluded from operator== like the other bookkeeping
+    // flags.
+    bool        expansion_edge = false;
     std::string text;
     int         num_of_lines = 0; // number of newlines this token contributes
     // True once this token's num_of_lines has already been applied to Env's line
@@ -143,8 +155,9 @@ struct Token {
     bool        unterminated = false;
     // True for a newline token re-emitted after a function-macro replacement
     // for line-count fidelity (see expand.cpp's function-macro argument
-    // collection): it is not whitespace that ever separated two tokens of
-    // the replacement, so stringizing (R2) skips it as a separator
+    // collection), and for the space expand() puts at a macro-expansion
+    // edge (expansion_edge): neither is whitespace that ever separated two
+    // tokens of the replacement, so stringizing (R2) skips it as a separator
     // candidate. Excluded from operator== like lineno_counted.
     bool        line_filler = false;
     HideSet     hs;          // hide-set (persistent trie handle, O(1) copy)
@@ -180,6 +193,14 @@ struct Token {
         lineno_counted = true;
     }
 
+    // True for the space expand() puts at a macro-expansion edge (SPEC
+    // §3.9; also the empty token after a {#token} output). An operand whose
+    // expansion is used as text (an {#include} path, a message) leaves it
+    // out, as stringizing does: gcc/clang spell those tokens without it.
+    bool is_edge_space() const noexcept {
+        return type == WS && line_filler && num_of_lines == 0;
+    }
+
     // Convert newlines inside whitespace/any tokens to spaces (for macro arg flattening)
     Token& flatten();
 
@@ -213,6 +234,9 @@ struct DirectiveToken : Token {
 std::vector<Token> ts_trim(std::vector<Token> ts);
 std::vector<Token> ts_ltrim(std::vector<Token> ts);
 std::vector<Token> ts_rtrim(std::vector<Token> ts);
+// ts_trim() that keeps a comment (Token::C) at either end: only the
+// whitespace tokens (Token::WS: spaces, tabs, newlines) are removed.
+std::vector<Token> ts_trim_spaces(std::vector<Token> ts);
 std::vector<Token> ts_flatten(std::vector<Token> ts);
 // Token::mark_output_only() on every token of ts.
 void ts_mark_output_only(std::vector<Token>& ts) noexcept;

@@ -17,7 +17,7 @@ class PragmaPushPopTest : public JieppTest {};
 // ---- [C1] 1-5: basic save and restore ----
 
 TEST_F(PragmaPushPopTest, PopRestoresRedefinedMacro) {
-    EXPECT_EQ("21", pp("{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}X"
+    EXPECT_EQ("2 1", pp("{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}X"
                        "{#pragma pop_macro('X')}X"));
     // [C3]: restoring over another definition is not a redefinition (PP35).
     EXPECT_TRUE(empty());
@@ -29,7 +29,7 @@ TEST_F(PragmaPushPopTest, PopRestoresUndefinedState) {
 }
 
 TEST_F(PragmaPushPopTest, TwoPushesRestoreTwoLevels) {
-    EXPECT_EQ("321", pp("{#define W 1}{#pragma push_macro('W')}"
+    EXPECT_EQ("3 2 1", pp("{#define W 1}{#pragma push_macro('W')}"
                         "{#undef W}{#define W 2}{#pragma push_macro('W')}"
                         "{#undef W}{#define W 3}W"
                         "{#pragma pop_macro('W')}W"
@@ -50,7 +50,7 @@ TEST_F(PragmaPushPopTest, PopWithEmptyStackIsSilentNoOp) {
 }
 
 TEST_F(PragmaPushPopTest, DoubleQuotesBehaveTheSame) {
-    EXPECT_EQ("21", pp("{#define X 1}{#pragma push_macro(\"X\")}{#undef X}{#define X 2}X"
+    EXPECT_EQ("2 1", pp("{#define X 1}{#pragma push_macro(\"X\")}{#undef X}{#define X 2}X"
                        "{#pragma pop_macro(\"X\")}X"));
     // The two quote forms share one stack.
     EXPECT_EQ("1", pp("{#define X 1}{#pragma push_macro(\"X\")}{#undef X}"
@@ -146,7 +146,7 @@ TEST_F(PragmaPushPopTest, MalformedPopIsPP82AndIgnored) {
                                  "pop_macro('X' (*c*) 'Y')", "pop_macro('X'"}) {
         SCOPED_TRACE(op);
         // The malformed pop changes nothing; the stack still holds 1.
-        EXPECT_EQ("21", pp("{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}"
+        EXPECT_EQ("2 1", pp("{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}"
                            "{#pragma " + op + "}X{#pragma pop_macro('X')}X"));
         auto msgs = messages();
         ASSERT_EQ(1u, msgs.size());
@@ -163,7 +163,7 @@ TEST_F(PragmaPushPopTest, UnterminatedLiteralIsPP82AndIgnored) {
         const bool push = op == "push_macro";
         // A push of X would make the final pop restore 1; a pop of X would
         // restore 1 before the first X.
-        EXPECT_EQ(push ? "2" : "21",
+        EXPECT_EQ(push ? "2" : "2 1",
                   pp(push ? "{#define X 1}{#pragma push_macro('XY$n)}{#undef X}{#define X 2}"
                             "{#pragma pop_macro('X')}X"
                           : "{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}"

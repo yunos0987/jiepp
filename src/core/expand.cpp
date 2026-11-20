@@ -15,8 +15,11 @@
 #include "../util/stack_guard.hpp"
 #include "../util/text.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -479,6 +482,76 @@ void expand_pragma_token(const Token& t, Env& env, std::vector<Token>& ots) {
     ots.push_back(out);
 }
 
+// SPEC §3.9: before the token `t` that meets the previous output token at a
+// macro-expansion edge (Token::expansion_edge) is output, one space goes
+// between them if the two would otherwise read as other tokens. The texts
+// on both sides of the edge are a few tokens -- up to three output tokens
+// before it, and t with up to two tokens after it in `work` -- up to the
+// nearest whitespace, so a number split by the edge ("1" ".5", "1." "5")
+// is seen. A token after it that is still to be expanded counts with its
+// own text; its replacement is checked again when it is output. Out of line
+// and never inlined so its locals do not enlarge expand()'s frame.
+[[gnu::noinline]] void space_before_edge(std::vector<Token>& ots, const Token& t,
+                                         const std::vector<Token>& work) {
+    if (ots.empty() || t.type == Token::WS || t.text.empty())
+        return;
+    const Token& prev = ots.back();
+    // A literal, comment or pragma on the left ends where it is closed or
+    // takes in everything after it; a space changes neither.
+    if ((prev.type & Token::MASK_WS) || prev.type == Token::STRING ||
+        prev.type == Token::WSTRING || prev.type == Token::DOCUMENT ||
+        prev.type == Token::PRAGMA || prev.type == Token::DIRECTIVE)
+        return;
+    constexpr std::size_t kTokens = 3;
+    constexpr std::size_t kMaxText = 256;
+    auto usable = [](const Token& u) {
+        return !(u.type & Token::MASK_WS) && u.type != Token::DIRECTIVE &&
+               u.type != Token::PRAGMA && u.text.size() <= kMaxText;
+    };
+    const std::string_view before_prev =
+        (ots.size() >= 2 && usable(ots[ots.size() - 2])) ? std::string_view(ots[ots.size() - 2].text)
+                                                         : std::string_view();
+    const char right2 = t.text.size() > 1                                   ? t.text[1]
+                        : (!work.empty() && usable(work.back()) && !work.back().text.empty())
+                            ? work.back().text.front()
+                            : '\0';
+    if (!iec3_may_join(before_prev, prev.text, t.text.front(), right2))
+        return;
+    // Identifier and number characters on both sides always read as one
+    // token, and one space always keeps them apart: no need to lex.
+    // Likewise a decimal integer before '.' and a digit always reads as one
+    // real number ("10" ".5").
+    auto word_char = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+    auto digits = [](const std::string& s) {
+        return std::all_of(s.begin(), s.end(),
+                           [](char c) { return std::isdigit(static_cast<unsigned char>(c)); });
+    };
+    bool needs = (word_char(prev.text.back()) && word_char(t.text.front())) ||
+                 (t.text.front() == '.' && std::isdigit(static_cast<unsigned char>(right2)) &&
+                  digits(prev.text));
+    if (!needs) {
+        std::size_t first = ots.size() - 1;
+        while (first > 0 && ots.size() - first < kTokens && usable(ots[first - 1]))
+            --first;
+        std::string before;
+        for (std::size_t i = first; i < ots.size(); ++i)
+            before += ots[i].text;
+        std::string after = t.text;
+        for (std::size_t k = work.size(), n = 0; k > 0 && n < kTokens - 1 && usable(work[k - 1]);
+             --k, ++n)
+            after += work[k - 1].text;
+        needs = iec3_needs_space(before, after);
+    }
+    if (needs) {
+        // Not written between the tokens: stringizing an expansion that
+        // holds it ({#string}, `@` of a relayed argument) does not count it
+        // as a separator, as gcc/clang spell such tokens without a space.
+        Token sp = Token::create(Token::WS, " ");
+        sp.line_filler = true;
+        ots.push_back(std::move(sp));
+    }
+}
+
 // Task d1: the two reports below run while collecting a function macro's
 // arguments, inside expand(); kept out of line so their locals do not
 // enlarge expand()'s frame, which every level of a nested expansion pays
@@ -809,9 +882,22 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             advance_lineno(t.num_of_lines, env);
         }
 
+        // A token of a skipped group outputs nothing: the macro-expansion
+        // edge before it (SPEC §3.9) moves on to the next token, which is
+        // what meets the output before it.
+        if (t.expansion_edge && !work.empty() && t.type != Token::DIRECTIVE &&
+            !ctrl_is_active(ctrl))
+            work.back().expansion_edge = true;
+
         // ── jiepp extension: directive processing ──
         if (t.type == Token::DIRECTIVE) {
+            // Likewise a directive, but only one that output nothing: the
+            // output of {#token}, {#string}, ... is joined to the text
+            // around the directive as written (SPEC §4.4).
+            const std::size_t before = ots.size();
             dispatch_directive(t, ctrl, env, ots);
+            if (t.expansion_edge && !work.empty() && ots.size() == before)
+                work.back().expansion_edge = true;
             continue;
         }
 
@@ -1247,8 +1333,11 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         // the argument list is dropped unexpanded: no diagnostics or
                         // __COUNTER__ increments come from inside it, and `replaced`
                         // stays empty so only the newline tail below is emitted.
-                        if (!unterminated_call)
+                        if (!unterminated_call) {
+                            if (t.expansion_edge)
+                                space_before_edge(ots, t, work);
                             ots.push_back(std::move(t));
+                        }
                     } else {
                         // Per-actual-argument leading/trailing whitespace/comment
                         // presence, from the raw (pre-flatten) argument tokens -- needed
@@ -1316,6 +1405,13 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         }
                     }
 
+                    // SPEC §3.9: the replacement meets what was before the
+                    // macro name and what follows the ')'.
+                    if (!replaced.empty())
+                        replaced.front().expansion_edge = true;
+                    if (!work.empty())
+                        work.back().expansion_edge = true;
+
                     const int source_lines = sum_num_of_lines - sum_output_only;
                     if (sum_output_only > 0) {
                         Token nl = Token::newline(sum_output_only);
@@ -1351,6 +1447,11 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                 auto repl = subst_object_macro(*om, t.hs.with(t.text), env);
                 // See the function-macro case above: never source lines.
                 ts_mark_output_only(repl);
+                // SPEC §3.9: as for a function macro.
+                if (!repl.empty())
+                    repl.front().expansion_edge = true;
+                if (!work.empty())
+                    work.back().expansion_edge = true;
 
                 // Push replacement in reverse for re-scanning
                 for (auto rit = repl.rbegin(); rit != repl.rend(); ++rit) {
@@ -1367,6 +1468,8 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
         // avoids a redundant Token copy (string + HideSet handle) for every
         // non-macro token passed through unchanged -- the majority of
         // tokens in most inputs.
+        if (t.expansion_edge)
+            space_before_edge(ots, t, work);
         ots.push_back(std::move(t));
     }
 

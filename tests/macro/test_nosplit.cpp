@@ -80,18 +80,22 @@ TEST_F(NosplitTest, Stringize) {
 }
 
 // T5: @@ does not pre-expand its operands; through a relay (XCAT) the
-// result is pasted. A protected comma at the edge is an ANY token, so
-// pasting it to an identifier is not PP32 (it would be for an ordinary
-// comma). `__nosplit(a, b) @@ y` pastes the closing ')' to 'y', which is
-// PP32 for any macro; the failed paste keeps both operands, so 'y' is not
-// lost (PasteToClosingParenKeepsBothOperands below).
+// result is pasted. A protected comma at the edge is an ANY token, but `x`
+// and `,` written together are still two tokens, so pasting them is PP32
+// (SPEC §4.3) and both stay. `__nosplit(a, b) @@ y` pastes the closing ')'
+// to 'y', which is PP32 for any macro; the failed paste keeps both
+// operands, so 'y' is not lost (PasteToClosingParenKeepsBothOperands below).
 TEST_F(NosplitTest, PasteAdjacency) {
     const std::string cat = "{#define CAT(p, q) p @@ q}{#define XCAT(p, q) CAT(p, q)}";
     EXPECT_EQ("x__nosplit(a, b)", pp("{#define P1() x @@ __nosplit(a, b)}P1()"));
     EXPECT_EQ("xa, b", pp(cat + "XCAT(x, __nosplit(a, b))"));
     EXPECT_EQ("a, by", pp(cat + "XCAT(__nosplit(a, b), y)"));
-    EXPECT_EQ("x, b", pp(cat + "XCAT(x, __nosplit(, b))"));
     EXPECT_TRUE(empty());
+    {
+        Issue::ContinueMode guard({});
+        EXPECT_EQ("x, b", pp(cat + "XCAT(x, __nosplit(, b))"));
+        EXPECT_EQ(Strings({"PP32: Invalid token pasting (@@); 'x @@ ,'"}), diags());
+    }
     {
         // Control: with ID, CAT receives three arguments.
         Issue::ContinueMode guard({});
@@ -101,10 +105,11 @@ TEST_F(NosplitTest, PasteAdjacency) {
 }
 
 // The closing ')' of __nosplit(...) pasted to 'y' is PP32 (a structural
-// token cannot be pasted); both operands stay, so 'y' is kept.
+// token cannot be pasted); both operands stay, so 'y' is kept, one space
+// after the `b` that ends __nosplit's replacement (SPEC §3.9).
 TEST_F(NosplitTest, PasteToClosingParenKeepsBothOperands) {
     Issue::ContinueMode guard({});
-    EXPECT_EQ("a, by", pp("{#define P2() __nosplit(a, b) @@ y}P2()"));
+    EXPECT_EQ("a, b y", pp("{#define P2() __nosplit(a, b) @@ y}P2()"));
     EXPECT_EQ(Strings({"PP32: Invalid token pasting (@@); ') @@ y'"}), diags());
 }
 

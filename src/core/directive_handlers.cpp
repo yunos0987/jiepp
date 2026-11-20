@@ -199,12 +199,17 @@ bool is_va_opt_token(const Token& t) {
     return t.type == Token::ANY && t.text == FunctionMacro::VA_OPT;
 }
 
-// A malformed __VA_OPT__: the text of its PP37, and how many __VA_OPT__
-// tokens of the body clang has read when it notices the problem (the
-// offending token included), which decides where the PP80 warnings of
-// handle_define() go around the PP37.
-struct MalformedVaOpt {
+// A problem clang notices while it reads a function-like macro's body, left
+// to right: a malformed __VA_OPT__ (PP37) or a `@` not followed by a
+// parameter (PP31). `at` is the body index of the token clang is reading
+// when it notices it (body.size() at the end of the body), which decides
+// which of the two is reported. `tokens` is how many __VA_OPT__ tokens of
+// the body clang has read by then (the offending token included), which
+// decides where the PP80 warnings of handle_define() go around the error.
+struct BodyError {
+    Issue::Code code;
     const char* what;
+    std::size_t at;
     std::size_t tokens;
 };
 
@@ -215,7 +220,7 @@ struct MalformedVaOpt {
 // A well-formed __VA_OPT__(...) is skipped as a whole, so a __VA_OPT__ inside
 // it is always "nested". Reads the VaOptSpan table the macro already holds,
 // so there is no second body scan.
-std::optional<MalformedVaOpt> malformed_va_opt(const FunctionMacro& m) {
+std::optional<BodyError> malformed_va_opt(const FunctionMacro& m) {
     const auto& body = m.body();
     const auto& spans = m.va_opt_spans();
     std::size_t seen = 0; // __VA_OPT__ tokens up to and including body[i]
@@ -229,15 +234,47 @@ std::optional<MalformedVaOpt> malformed_va_opt(const FunctionMacro& m) {
         if (lp >= body.size() || body[lp].type != Token::LP) {
             // The token after __VA_OPT__ is read before the problem is seen.
             const bool next_is_va_opt = lp < body.size() && is_va_opt_token(body[lp]);
-            return MalformedVaOpt{"__VA_OPT__ requires parenthesized argument",
-                                  seen + (next_is_va_opt ? 1 : 0)};
+            return BodyError{Issue::Code::INVALID_VA_OPT,
+                             "__VA_OPT__ requires parenthesized argument",
+                             std::min(lp, body.size()), seen + (next_is_va_opt ? 1 : 0)};
         }
         // The first __VA_OPT__ inside the parentheses is the one that is read.
-        if (spans[i].nested > 0)
-            return MalformedVaOpt{"nested __VA_OPT__ is not allowed", seen + 1};
+        if (spans[i].nested > 0) {
+            std::size_t at = lp + 1;
+            while (at < body.size() && !is_va_opt_token(body[at]))
+                ++at;
+            return BodyError{Issue::Code::INVALID_VA_OPT, "nested __VA_OPT__ is not allowed", at,
+                             seen + 1};
+        }
         if (spans[i].close == 0)
-            return MalformedVaOpt{"__VA_OPT__ requires parenthesized argument", seen};
+            return BodyError{Issue::Code::INVALID_VA_OPT,
+                             "__VA_OPT__ requires parenthesized argument", body.size(), seen};
         i += spans[i].close + 1;
+    }
+    return std::nullopt;
+}
+
+// The first `@` in the body of function-like macro `m` that is not followed
+// by a parameter (__VA_ARGS__ and __VA_ARGC__ of a variadic macro included)
+// or by __VA_OPT__, like clang's "'#' is not followed by a macro parameter".
+// clang notices it at the token after the `@` (at the `@` itself when it
+// ends the body). Comments between `@` and its operand are whitespace.
+std::optional<BodyError> stray_stringize(const FunctionMacro& m) {
+    const auto& body = m.body();
+    std::size_t seen = 0; // __VA_OPT__ tokens before body[i]
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        if (is_va_opt_token(body[i]))
+            ++seen;
+        if (body[i].type != Token::STRINGIZE)
+            continue;
+        std::size_t j = i + 1;
+        while (j < body.size() && (body[j].type & Token::MASK_WS))
+            ++j;
+        if (j < body.size() && body[j].type == Token::ANY &&
+            (is_va_opt_token(body[j]) || m.args().count(body[j].text) != 0))
+            continue;
+        return BodyError{Issue::Code::INVALID_STRINGIZING, nullptr,
+                         j < body.size() ? j : i, seen};
     }
     return std::nullopt;
 }
@@ -479,44 +516,78 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
         named_variadic ||
         std::find(param_names.begin(), param_names.end(), FunctionMacro::VA_SYM) != param_names.end();
 
-    while (i < ts.size() && (ts[i].type & Token::MASK_WS))
+    // A comment that starts the body is kept (SPEC §2, like gcc/clang -CC);
+    // with -nC it is whitespace already.
+    while (i < ts.size() && ts[i].type == Token::WS)
         ++i;
     std::vector<Token> body(ts.begin() + i, ts.end());
+    // An unclosed comment (PP20, reported by the lexer) runs to the end of
+    // the body; kept, it would swallow the text after each use. It is
+    // whitespace, as before comments at the ends of a body were kept.
+    {
+        std::size_t last = body.size();
+        while (last > 0 && body[last - 1].type == Token::WS)
+            --last;
+        if (last > 0 && body[last - 1].type == Token::C) {
+            // A closed block comment may carry the newline after it.
+            std::string_view c = body[last - 1].text;
+            while (!c.empty() && (c.back() == '\n' || c.back() == '\r'))
+                c.remove_suffix(1);
+            const bool closed =
+                c.starts_with("//") ||
+                (c.size() >= 4 && ((c.starts_with("(*") && c.ends_with("*)")) ||
+                                   (c.starts_with("/*") && c.ends_with("*/"))));
+            if (!closed)
+                body.resize(last - 1);
+        }
+    }
     line_comments_to_block_comments(body);
 
     // C6/U1: '@@' (GLUE) at either end of the replacement list has nothing
     // to paste with, like gcc/clang ("'##' cannot appear at either end of
-    // macro expansion"). body's leading whitespace is already stripped by
-    // the skip above; only the trailing side needs a reverse scan past
-    // whitespace here to find the true last token.
-    if (!body.empty()) {
-        std::size_t last = body.size();
-        while (last > 0 && (body[last - 1].type & Token::MASK_WS))
+    // macro expansion"). Comments at either end of the body are whitespace
+    // here. Returns true (after the report) when the definition is rejected
+    // for it.
+    auto glue_at_an_end = [&]() {
+        std::size_t first = 0, last = body.size();
+        while (first < last && (body[first].type & Token::MASK_WS))
+            ++first;
+        while (last > first && (body[last - 1].type & Token::MASK_WS))
             --last;
-        if (last > 0 && (body.front().type == Token::GLUE || body[last - 1].type == Token::GLUE)) {
-            // The whole line is read before this is noticed: the body of a
-            // non-variadic macro has warned, that of a variadic one has not.
-            if (variadic)
-                warned = ts.size();
-            else
-                warn_rest();
-            ISSUE(INVALID_TOKEN_PASTING,
-                  "'@@' cannot appear at either end of a macro expansion: " + Util::escape_line_breaks(raw_arg));
+        if (first == last ||
+            (body[first].type != Token::GLUE && body[last - 1].type != Token::GLUE))
             return false;
-        }
-    }
+        // The whole line is read before this is noticed: the body of a
+        // non-variadic macro has warned, that of a variadic one has not.
+        if (variadic)
+            warned = ts.size();
+        else
+            warn_rest();
+        ISSUE(INVALID_TOKEN_PASTING,
+              "'@@' cannot appear at either end of a macro expansion: " + Util::escape_line_breaks(raw_arg));
+        return true;
+    };
 
-    // Returns false (nothing defined) for a function-like macro whose body
-    // has a malformed __VA_OPT__. Like the checks above this abandons the
-    // whole {#define}: an existing definition of `name`, user or built-in,
-    // stays, and there is no PP35. Object-like macros are not checked.
-    // The PP80 warnings of the body come first, so before a PP37 (up to the
-    // token clang is reading when it finds the problem, and the rest of the
-    // line after it) and before a PP35.
+    // Returns false (nothing defined) for a definition rejected for its
+    // body. Like the checks above this abandons the whole {#define}: an
+    // existing definition of `name`, user or built-in, stays, and there is no
+    // PP35. Like clang, the body of a function-like macro is read left to
+    // right, and the first malformed __VA_OPT__ (PP37) or `@` not followed by
+    // a parameter (PP31) is reported; '@@' at either end (PP32) is noticed
+    // only once the whole body is read, so after them (clang 22: `F(x) @@ @y`
+    // is '#' is not followed by a macro parameter, `F(...) @@ __VA_OPT__ x`
+    // missing '(' following __VA_OPT__). Object-like macros have neither
+    // check: there `@` is an ordinary token and __VA_OPT__ an identifier.
+    // The PP80 warnings of the body come first, so before a PP37/PP31 (up to
+    // the token clang is reading when it finds the problem, and the rest of
+    // the line after it) and before a PP35.
     auto make_and_define = [&]() {
         if (is_function) {
             auto nm = std::make_unique<FunctionMacro>(param_names, body, named_variadic);
-            if (auto bad = malformed_va_opt(*nm)) {
+            std::optional<BodyError> bad = malformed_va_opt(*nm);
+            if (auto stray = stray_stringize(*nm); stray && (!bad || stray->at < bad->at))
+                bad = stray;
+            if (bad) {
                 if (variadic) {
                     warned = ts.size();
                 } else {
@@ -527,27 +598,43 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
                             ++seen;
                     warn_until(cut);
                 }
-                ISSUE(INVALID_VA_OPT, bad->what);
+                if (bad->code == Issue::Code::INVALID_STRINGIZING)
+                    ISSUE(INVALID_STRINGIZING,
+                          "'@' is not followed by a macro parameter: " + Util::escape_line_breaks(raw_arg));
+                else
+                    ISSUE(INVALID_VA_OPT, bad->what);
                 warn_rest();
                 return false;
             }
+            if (glue_at_an_end())
+                return false;
             if (!variadic)
                 warn_rest();
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
-                if (!existing->equal(*nm))
-                    ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
+                // An identical redefinition changes nothing (C17 6.10.3p2):
+                // the existing definition stays, with the comments it was
+                // written with (they count as whitespace in equal()).
+                if (existing->equal(*nm))
+                    return true;
+                ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
             } else if (is_builtin_operator_name(name)) {
                 ISSUE(MACRO_REDEFINED, name + ": redefining built-in macro");
             }
             env.define(name, std::move(nm));
         } else {
+            if (glue_at_an_end())
+                return false;
             auto nm = std::make_unique<UserDefinedObjectMacro>(body);
             warn_rest();
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
-                if (!existing->equal(*nm))
-                    ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
+                // An identical redefinition changes nothing (C17 6.10.3p2):
+                // the existing definition stays, with the comments it was
+                // written with (they count as whitespace in equal()).
+                if (existing->equal(*nm))
+                    return true;
+                ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
             } else if (is_builtin_operator_name(name)) {
                 ISSUE(MACRO_REDEFINED, name + ": redefining built-in macro");
             }
@@ -611,7 +698,22 @@ void handle_tokenize(const std::string& raw_arg, Env& env, std::vector<Token>& o
     // expand_operand_tokens()).
     ts_mark_output_only(ts);
     line_comments_to_block_comments(ts);
-    expand(ts, ots, env);
+    // The output is spliced into the text around the directive as written
+    // (`Main{### __COUNTER__}` is `Main0`, `{### 1}F(x)` is `1x`, SPEC
+    // §4.4): its first token is not a macro-expansion edge there, even when
+    // it starts a replacement, and an empty whitespace token after it keeps
+    // a replacement that follows from being checked against it. The edges
+    // inside the operand are (SPEC §3.9).
+    std::vector<Token> out;
+    expand(ts, out, env);
+    if (out.empty())
+        return;
+    out.front().expansion_edge = false;
+    for (auto& t : out)
+        ots.push_back(std::move(t));
+    Token end = Token::create(Token::WS, "");
+    end.line_filler = true;
+    ots.push_back(std::move(end));
 }
 
 void handle_stringize(const std::string& raw_arg,
