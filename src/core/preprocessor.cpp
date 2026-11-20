@@ -336,7 +336,7 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     // NOTE: "defined" is NOT installed permanently; it is installed temporarily
     // by eval_cond_str during #if/#elif condition evaluation only.
 
-    // Predefined IEC 61131-3 type range/mask macros (matching jieccc_config.py)
+    // Predefined IEC 61131-3 type range/mask macros (matching jiecc_config.py)
     static const std::vector<std::pair<std::string, std::string>> builtin_macros = {
 #define JIEPP_BUILTIN_STR(name, val) {name, val},
 #include "builtin_macros.def"

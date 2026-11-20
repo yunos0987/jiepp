@@ -64,13 +64,13 @@ Issue::Severity Issue::severity_of(Code code) {
 }
 
 std::string_view Issue::codename(Code code) {
-	switch (code) {
+    switch (code) {
 #define JIEPP_ISSUE_CODE(name, id, severity, message) \
     case Issue::Code::name: return #name;
 #include "issue_codes.def"
 #undef JIEPP_ISSUE_CODE
-	}
-	return "";
+    }
+    return "";
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +94,6 @@ void Issue::initialize(std::ostream& stream) {
     error_count_ = 0;
     error_limit_ = 0;
     continue_abort_codes_.clear();
-    message_ = PlainTextMessage::instance();
 }
 
 void Issue::set_output(std::ostream& stream) {

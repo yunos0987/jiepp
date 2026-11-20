@@ -209,7 +209,6 @@ struct DirectiveToken : Token {
 #undef JIEPP_DIRECTIVE_TOKEN
 
     static int         name_to_kind(std::string_view name);
-    static std::string kind_to_name(int kind);
 };
 
 // Token list helpers

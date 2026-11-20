@@ -213,7 +213,7 @@ jiepp_harden_target(jiepp)
 if(GTest_FOUND OR TARGET GTest::gtest)
     enable_testing()
 
-    file(GLOB_RECURSE TEST_SOURCES "tests/*.cpp" "tests/*/*.cpp" "tests/*/*/*.cpp")
+    file(GLOB_RECURSE TEST_SOURCES "tests/*.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX [[.*/debug_.*\.cpp$]])
     if(TEST_SOURCES)
         add_executable(jiepp_test ${TEST_SOURCES})
@@ -235,7 +235,6 @@ if(GTest_FOUND OR TARGET GTest::gtest)
         # Test data path
         target_compile_definitions(jiepp_test PRIVATE
             JIEPP_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-            JIEPP_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
             JIEPP_EXE_PATH="$<TARGET_FILE:jiepp>"
             # C8: tests/jiepp/test_jiepp_command.cpp's run_e2e() writes each
             # e2e case's actual .piec/.log/.d here instead of into

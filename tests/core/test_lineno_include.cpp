@@ -1,4 +1,4 @@
-﻿#include "lineno_test_helper.hpp"
+#include "lineno_test_helper.hpp"
 #include <algorithm>
 
 // ---- Include directives: file-level line number / diagnostic path tracking ----

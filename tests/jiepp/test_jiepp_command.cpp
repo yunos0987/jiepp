@@ -66,15 +66,7 @@ static void run_e2e(const std::string& testid,
     std::ofstream actual_log_file(actual_log_filepath, std::ios::binary);
     Issue::initialize(actual_log_file);
 
-    bool error_mode;
-    std::string input_base;
-    if (testid.ends_with(".error")) {
-        input_base = testid.substr(0, testid.size() - std::string(".error").size());
-        error_mode = true;
-    } else {
-        input_base = testid;
-        error_mode = false;
-    }
+    const bool error_mode = testid.ends_with(".error");
 
     // Build define_macros strings
     std::vector<std::string> define_macros;

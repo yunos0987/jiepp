@@ -6,7 +6,7 @@
 namespace {
 
 bool _not_space(unsigned char ch) {
-	return !std::isspace(ch);
+    return !std::isspace(ch);
 }
 
 }

@@ -6,13 +6,13 @@
 namespace {
 
 std::string severity_text(Issue::Severity severity) {
-	switch (severity) {
-	case Issue::Severity::SEVERE:  return "error";
-	case Issue::Severity::ERROR:   return "error";
-	case Issue::Severity::WARNING: return "warning";
-	case Issue::Severity::INFO:    return "info";
-	}
-	return "";
+    switch (severity) {
+    case Issue::Severity::SEVERE:  return "error";
+    case Issue::Severity::ERROR:   return "error";
+    case Issue::Severity::WARNING: return "warning";
+    case Issue::Severity::INFO:    return "info";
+    }
+    return "";
 }
 
 std::string pp_code(Issue::Code code) {
@@ -25,7 +25,7 @@ std::string pp_code(Issue::Code code) {
 }
 
 std::string_view message_for(Issue::Code code) {
-	switch (code) {
+    switch (code) {
 #define JIEPP_ISSUE_CODE(name, id, severity, message) case Issue::Code::name: return message;
 #include "issue_codes.def"
 #undef JIEPP_ISSUE_CODE
@@ -37,54 +37,54 @@ std::string_view message_for(Issue::Code code) {
 
 std::string PlainTextMessage::strip_source_location(const std::string& line) {
 #ifndef NDEBUG
-	auto at = line.rfind("@");
-	if (at != std::string::npos) {
-		auto colon = line.rfind(':');
-		if ((colon != std::string::npos) && (colon > at + 3))
-			return line.substr(0, at);
-	}
+    auto at = line.rfind("@");
+    if (at != std::string::npos) {
+        auto colon = line.rfind(':');
+        if ((colon != std::string::npos) && (colon > at + 3))
+            return line.substr(0, at);
+    }
 #endif
-	return line;
+    return line;
 }
 
 Issue::Code PlainTextMessage::parse_code(const std::string& line) {
-	// Parse "PPnnn" format from error output
-	const std::size_t pos = line.find("PP");
-	if (pos != std::string::npos) {
-		std::size_t end = pos + 2;
-		while (end < line.size() && std::isdigit(static_cast<unsigned char>(line[end])))
-			++end;
-		if (end != pos + 2) {
-			try {
-				auto codenum = line.substr(pos + 2, end - (pos + 2));
-				unsigned int code = std::stoul(codenum);
-				return static_cast<Issue::Code>(code);
-			} catch (...) {}
-		}
-	}
-	FATAL();
-	return Issue::Code::FATAL; // unreachable
+    // Parse "PPnnn" format from error output
+    const std::size_t pos = line.find("PP");
+    if (pos != std::string::npos) {
+        std::size_t end = pos + 2;
+        while (end < line.size() && std::isdigit(static_cast<unsigned char>(line[end])))
+            ++end;
+        if (end != pos + 2) {
+            try {
+                auto codenum = line.substr(pos + 2, end - (pos + 2));
+                unsigned int code = std::stoul(codenum);
+                return static_cast<Issue::Code>(code);
+            } catch (...) {}
+        }
+    }
+    FATAL();
+    return Issue::Code::FATAL; // unreachable
 }
 
 void PlainTextMessage::message(std::ostream& output, Issue::Severity severity, Issue::Code code, std::string context, std::string file, LineNo lineno, int column, [[maybe_unused]] std::source_location loc_) {
-	// Issue::happen() passes Issue::CLI_LOCATION verbatim (instead of a real
-	// file) for diagnostics not tied to any source file; render those as
-	// "jiepp: error: PPxx: message" with no ":line.column" suffix.
-	std::string loc = (file == Issue::CLI_LOCATION) ? file
-	    : file + ":" + std::to_string(lineno) + "." + std::to_string(column);
+    // Issue::happen() passes Issue::CLI_LOCATION verbatim (instead of a real
+    // file) for diagnostics not tied to any source file; render those as
+    // "jiepp: error: PPxx: message" with no ":line.column" suffix.
+    std::string loc = (file == Issue::CLI_LOCATION) ? file
+        : file + ":" + std::to_string(lineno) + "." + std::to_string(column);
 
-	if ((code == Issue::Code::SEVERE_MESSAGE) || (code == Issue::Code::ERROR_MESSAGE) || (code == Issue::Code::WARNING_MESSAGE) || (code == Issue::Code::INFO_MESSAGE)) {
-		output << loc << ": " << severity_text(severity) << ": " << pp_code(code) << ": '" << context << "'";
+    if ((code == Issue::Code::SEVERE_MESSAGE) || (code == Issue::Code::ERROR_MESSAGE) || (code == Issue::Code::WARNING_MESSAGE) || (code == Issue::Code::INFO_MESSAGE)) {
+        output << loc << ": " << severity_text(severity) << ": " << pp_code(code) << ": '" << context << "'";
     } else if (code == Issue::Code::UNDEFINED_IDENTIFIER && !context.empty()) {
-		// clang's -Wundef wording: the identifier is the subject of the
-		// sentence ("'FOO' is not defined, evaluates to 0"), not a suffix.
-		output << loc << ": " << severity_text(severity) << ": " << pp_code(code)
-		       << ": '" << context << "' is not defined, evaluates to 0";
-	} else {
-		output << loc << ": " << severity_text(severity) << ": " << pp_code(code) << ": " << std::string(message_for(code));
-		if (!context.empty())
-			output << "; '" << context << "'";
-	}
+        // clang's -Wundef wording: the identifier is the subject of the
+        // sentence ("'FOO' is not defined, evaluates to 0"), not a suffix.
+        output << loc << ": " << severity_text(severity) << ": " << pp_code(code)
+               << ": '" << context << "' is not defined, evaluates to 0";
+    } else {
+        output << loc << ": " << severity_text(severity) << ": " << pp_code(code) << ": " << std::string(message_for(code));
+        if (!context.empty())
+            output << "; '" << context << "'";
+    }
 #ifndef NDEBUG
     output << "@" << loc_.file_name() << ':' << loc_.line();
 #endif

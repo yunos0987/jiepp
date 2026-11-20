@@ -49,19 +49,3 @@ int DirectiveToken::name_to_kind(std::string_view name) {
         return -1;
     return it->second;
 }
-
-std::string DirectiveToken::kind_to_name(int kind) {
-    // Build from .def: last entry per kind wins (later entries overwrite)
-    static const std::unordered_map<int, std::string> table = []() {
-        std::unordered_map<int, std::string> m;
-#define JIEPP_DIRECTIVE(k, kw) m[DirectiveToken::k] = kw;
-#include "directive_table.def"
-#undef JIEPP_DIRECTIVE
-        return m;
-    }();
-
-    auto it = table.find(kind);
-    if (it == table.end())
-        return "";
-    return it->second;
-}

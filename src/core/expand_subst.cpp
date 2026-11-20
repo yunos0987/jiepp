@@ -242,7 +242,7 @@ int argc_from(int idx, const std::vector<std::vector<Token>>& actuals) {
 // the normal substitution path, the `@@` (paste) raw-operand path, and the
 // `@` (stringize) raw-operand path (F16). Kept as a single helper so the
 // three sites cannot drift out of sync again.
-Token va_argc_token(int idx, const std::vector<std::vector<Token>>& actuals) {
+static Token va_argc_token(int idx, const std::vector<std::vector<Token>>& actuals) {
     return Token::create(Token::ANY, std::to_string(argc_from(idx, actuals)));
 }
 

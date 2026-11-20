@@ -2,9 +2,6 @@
 #include "../env/issue.hpp"
 
 #include <cctype>
-#if defined(__cpp_lib_format)
-#include <format>
-#endif
 #include <optional>
 #include <string>
 #include <string_view>
