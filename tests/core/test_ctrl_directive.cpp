@@ -457,3 +457,83 @@ TEST_F(CtrlDirectiveTest, IfDeadDivisionSilent) {
     EXPECT_EQ("y", strip(pp("{#if TRUE \\or\\ 1 mod 0 = 1}y{#else}n{#endif}")));
     EXPECT_TRUE(empty());
 }
+
+// SPEC 6.3: a division or modulo by zero in an evaluated operand makes the
+// whole condition false, like clang (gcc only zeroes that operation), not
+// just that operation. Inputs measured with clang and gcc (`#if 1/0 + 5` is
+// false in clang, true in gcc; `#if 1/0 == 0` is false in both).
+TEST_F(CtrlDirectiveTest, IfDivisionByZeroMakesConditionFalse) {
+    Issue::ContinueMode guard({});
+    const std::string div0 = "<unknown location>:1.0: error: PP52: Invalid expression; 'division by zero'";
+    const std::string mod0 = "<unknown location>:1.0: error: PP52: Invalid expression; 'modulo by zero'";
+    EXPECT_EQ("n", strip(pp("{#if 1/0 + 5}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if 1/0 = 0}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if 1 mod 0 + 5}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({mod0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if (2/0) * 0 + 1}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    // In an {#elif}: the group is not taken, a later {#else} is.
+    EXPECT_EQ("n", strip(pp("{#if 0}a{#elif 1/0 + 5}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    // Suppressed, still false.
+    EXPECT_EQ("n", strip(pp("{#ignore PP52}{#if 1/0 + 5}y{#else}n{#endif}")));
+    EXPECT_TRUE(empty());
+}
+
+// clang: one PP24 for each group still open at the end of the file,
+// innermost first, each at the line of the {#if} that opened it -- also
+// after an {#elif}/{#else} of the group, and for a group opened in a
+// skipped group (`#if 1 / x / #if 0 / y` gives two errors, at lines 3 and
+// 1; gcc gives the same two).
+TEST_F(CtrlDirectiveTest, UnclosedGroupsAreReportedAtTheirIf) {
+    Issue::ContinueMode guard({});
+    auto pp24 = [](int line) {
+        return "<unknown location>:" + std::to_string(line) +
+               ".0: error: PP24: Unterminated conditional directive; 'unclosed if'";
+    };
+    pp("{#if 1}\nx\n{#if 0}\ny\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(3), pp24(1)}), messages());
+    pp("a\n{#if 1}\nx\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(2)}), messages());
+    pp("{#if 0}\nq\n{#else}\nz\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(1)}), messages());
+    pp("{#if 0}\n{#elif 1}\nq\n{#elif 0}\nr\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(1)}), messages());
+    pp("{#ifdef A}\n{#ifndef B}\n{#if 1}\nx\n{#endif}\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(2), pp24(1)}), messages());
+    pp("{#if 0}\n{#if 1}\n{#else}\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(2), pp24(1)}), messages());
+    pp("{#if 1}\n{#else}\n{#if 0}\n{#elif 1}\n{#else}\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(3), pp24(1)}), messages());
+}
+
+// The PP24 of a group opened before a {#line N 'file'} is at the file name
+// the {#if} was read under (clang and gcc: `#line 100` / `#if 1` /
+// `#line 200 "bar.c"` / `#if 1` gives bar.c:200 and main.c:100).
+TEST_F(CtrlDirectiveTest, UnclosedGroupKeepsItsFileName) {
+    Issue::ContinueMode guard({});
+    pp("{#line 100}\n{#if 1}\n{#line 200 'bar.iec'}\n{#if 1}\nx\n");
+    EXPECT_EQ(std::vector<std::string>(
+                  {"bar.iec:200.0: error: PP24: Unterminated conditional directive; 'unclosed if'",
+                   "<unknown location>:100.0: error: PP24: Unterminated conditional directive; "
+                   "'unclosed if'"}),
+              messages());
+}
+
+// After a division by zero nothing that depends on values is reported in
+// the same expression (clang: one error for `1/0 + 1/0` and `1/0 || 1/0`;
+// gcc reports each division).
+TEST_F(CtrlDirectiveTest, OneDivisionByZeroPerExpression) {
+    Issue::ContinueMode guard({});
+    const std::string div0 = "<unknown location>:1.0: error: PP52: Invalid expression; 'division by zero'";
+    EXPECT_EQ("n", strip(pp("{#if 1/0 + 1/0}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if 1/0 \\or\\ 1/0}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if 1 mod 0 + 2/0}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>(
+                  {"<unknown location>:1.0: error: PP52: Invalid expression; 'modulo by zero'"}),
+              messages());
+}

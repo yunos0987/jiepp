@@ -226,3 +226,29 @@ TEST_F(LexerTest, EllipsisIsThreeDotTokens) {
     EXPECT_EQ(Token::ANY, result2[2].type);
     EXPECT_EQ(".", result2[2].text);
 }
+
+// ---- iec3_tokens_from_source(): a last line without a newline ----
+
+TEST_F(LexerTest, SourceLastLineIsEnded) {
+    auto nl_count = [](const std::vector<Token>& v) {
+        int n = 0;
+        for (const auto& t : v)
+            n += t.num_of_lines;
+        return n;
+    };
+    // Ended by LF, CRLF or CR: nothing added.
+    EXPECT_EQ(1, nl_count(iec3_tokens_from_source("a\n", false)));
+    EXPECT_EQ(1, nl_count(iec3_tokens_from_source("a\r\n", false)));
+    EXPECT_EQ(1, nl_count(iec3_tokens_from_source("a\r", false)));
+    // Not ended: one newline token added.
+    auto t = iec3_tokens_from_source("a\r\nb", false);
+    EXPECT_EQ(2, nl_count(t));
+    ASSERT_FALSE(t.empty());
+    EXPECT_EQ(Token::newline(1), t.back());
+    // Empty, or a UTF-8 BOM only: nothing.
+    EXPECT_TRUE(iec3_tokens_from_source("", false).empty());
+    EXPECT_TRUE(iec3_tokens_from_source("\xEF\xBB\xBF", false).empty());
+    // A BOM and text: ended.
+    EXPECT_EQ(1, nl_count(iec3_tokens_from_source("\xEF\xBB\xBF" "a", false)));
+    EXPECT_TRUE(empty());
+}

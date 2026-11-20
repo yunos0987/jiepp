@@ -40,6 +40,8 @@ Issue::Code cf_failure_code = Issue::Code::SUCCESS;
 // See cf_value_diag() (constfold_internal.hpp); lowered by the actions in
 // and_expr/or_expr, reset by evaluate().
 int cf_unevaluated_depth = 0;
+// See zero_divisor() below; reset by evaluate().
+bool cf_zero_divisor = false;
 
 // The lexer keeps the spelling of a type keyword (for the -Wundef message);
 // the cast rule compares an upper-cased copy.
@@ -107,6 +109,18 @@ static CfValue cast_int_literal_to_dword(const CfValue& v) {
     if (v.kind == ValueKind::Int)
         return make_bitstring(static_cast<std::uint32_t>(v.ival), BitKind::DWORD);
     return v;
+}
+
+// Division or modulo by zero in an evaluated operand (SPEC 6.3): PP52, and,
+// like clang, the whole expression is false -- an evaluation failure, like a
+// type error, but the parse goes on (evaluate() drops the value). Nothing in
+// an unevaluated operand (SPEC 6.4).
+static void zero_divisor(const char* what,
+                         std::source_location loc = std::source_location::current()) {
+    if (cf_unevaluated_depth > 0 || cf_zero_divisor)
+        return;
+    cf_value_diag(Issue::Code::INVALID_EXPRESSION, what, true, loc);
+    cf_zero_divisor = true;
 }
 
 [[noreturn]] static void type_error() {
@@ -456,7 +470,7 @@ mul_expr:
     }
   | mul_expr CF_SLASH unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
-            if ($3.ival == 0) { cf_value_diag(Issue::Code::INVALID_EXPRESSION, "division by zero", false); $$ = CfValue::int_value(0); }
+            if ($3.ival == 0) { zero_divisor("division by zero"); $$ = CfValue::int_value(0); }
             // A3: INT64_MIN / -1 overflows the quotient, which traps in
             // hardware (SIGFPE-style crash) even though two's-complement
             // wraparound defines the result as INT64_MIN itself.
@@ -466,7 +480,7 @@ mul_expr:
     }
   | mul_expr CF_MOD   unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
-            if ($3.ival == 0) { cf_value_diag(Issue::Code::INVALID_EXPRESSION, "modulo by zero", false); $$ = CfValue::int_value(0); }
+            if ($3.ival == 0) { zero_divisor("modulo by zero"); $$ = CfValue::int_value(0); }
             // A3: same overflow trap as division by -1; the remainder is
             // mathematically 0 but the hardware idiv instruction used for
             // '%' still traps before producing it.

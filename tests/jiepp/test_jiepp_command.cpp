@@ -2645,8 +2645,9 @@ AFTER;
     EXPECT_EQ(1, rc);
     EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
     EXPECT_NE(std::string::npos, out.find("AFTER"))   << out;
-    // {#if 1/0}: division by zero folds to 0 (A3/A4), so this behaves like
-    // any other false {#if} -- its body is skipped, not emitted.
+    // {#if 1/0}: division by zero makes the condition false (SPEC 6.3), so
+    // this behaves like any other false {#if} -- its body is skipped, not
+    // emitted.
     EXPECT_EQ(std::string::npos, out.find("SKIPPED")) << out;
     EXPECT_GE(Issue::error_count_, 2) << "expected #error and 1/0 to both count";
 }

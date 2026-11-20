@@ -323,9 +323,11 @@ TEST_F(HasIncludeTest, TokenPathResolutionEdgeCases) {
         {"__has_include (* c *) ('existing.iec')",
          ";|",
          "1|"},
+        // A document comment is a token, not whitespace: no '(' follows
+        // the operator.
         {"__has_include (*! d *) ('existing.iec')",
-         ";|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include (*! d *) ('existing.iec')'\n",
-         "0|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include (*! d *) ('existing.iec')'\n"},
+         ";|<unknown location>:1.0: error: PP52: Invalid expression; 'missing '(' after '__has_include''\n",
+         "0|<unknown location>:1.0: error: PP52: Invalid expression; 'missing '(' after '__has_include''\n"},
         {"__has_include(existing)",
          ";|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(existing)'\n",
          "0|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(existing)'\n"},
@@ -347,9 +349,11 @@ TEST_F(HasIncludeTest, TokenPathResolutionEdgeCases) {
         {"x__has_include('existing.iec')",
          ";|<unknown location>:1.0: error: PP52: Invalid expression; 'x__has_include('existing.iec')'\n",
          "0|<unknown location>:1.0: error: PP52: Invalid expression; 'x__has_include('existing.iec')'\n"},
+        // Without its '(' the operator is PP52 and the expression is not
+        // evaluated (like __has_builtin; gcc/clang report it too).
         {"__has_include",
-         ";|<unknown location>:1.0: error: PP91: 'm'\n",
-         "0|"},
+         ";|<unknown location>:1.0: error: PP52: Invalid expression; 'missing '(' after '__has_include''\n",
+         "0|<unknown location>:1.0: error: PP52: Invalid expression; 'missing '(' after '__has_include''\n"},
         {"__has_include('existing.iec') + __has_include(<missing_hi.iec>)",
          ";|",
          "1|"},

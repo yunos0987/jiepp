@@ -24,6 +24,13 @@ namespace jiepp::expand_detail {
 struct CtrlState {
     std::optional<bool> condition;
     bool seen_else = false;
+    // The line of the {#if}/{#ifdef}/{#ifndef} that opened the group: an
+    // unclosed group is reported there (PP24), like clang.
+    LineNo line = 0;
+    // The file name that line belongs to, kept only once a {#line N 'file'}
+    // renames the file while the group is open (empty: the current name, so
+    // an ordinary {#if} copies no string).
+    std::string file;
 };
 
 bool ctrl_is_active(const std::vector<CtrlState>& stack);
@@ -59,6 +66,14 @@ bool has_builtin(std::string_view name, Env& env);
 bool& sandbox_has_include_reported();
 #endif
 
+// An operand error of the __has_builtin/__has_include operator, reported like
+// a 'defined' operand error: the first one of a condition is reported (PP52
+// for `code` INVALID_EXPRESSION, PP39 for INVALID_BUILTIN_OPERAND) and
+// recorded in `defop`, so the caller treats the whole condition as false
+// without evaluating it; "0" is pushed to `ots` in place of the call.
+void fail_operator_operand(DefinedOperator& defop, std::vector<Token>& ots,
+                           Issue::Code code, const std::string& what);
+
 // The __has_builtin operator branch of expand(), called with the operator
 // token already popped from `work` while the transient 'defined' operator is
 // active and not suspended. Pushes "1"/"0" to `ots`; an operand error is
@@ -81,9 +96,10 @@ bool& sandbox_has_include_reported();
 // {#if} operand.
 // failure != SUCCESS when the evaluation itself failed -- PP62 (sandbox
 // __has_include), a 'defined' operand error (PP40, or PP52 for a missing
-// ')'), or a constfold failure (PP50/PP51/PP52, literal errors included) --
+// ')' or '(' after __has_builtin/__has_include), or a constfold failure
+// (PP50/PP51/PP52, literal errors and division/modulo by zero included) --
 // whether or not that diagnostic was shown (it may have been suppressed by
-// {#ignore}). Division/modulo by zero is not a failure (SPEC 6.3).
+// {#ignore}).
 struct CondValue {
     Issue::Code failure = Issue::Code::SUCCESS; // first failing diagnostic code
     cf::ConstValue value;                       // valid only when failure == SUCCESS

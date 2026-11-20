@@ -512,8 +512,8 @@ int jiepp_command(const JieppOptions& opts)
                     // std::ferror(stdin), is PP10 '<stdin>' at this location.
                     const std::optional<std::string> text =
                         Loader::read_stream(std::cin, env, "<stdin>", /*check_stdio_stdin=*/true);
-                    auto its = iec3_tokens_from_string(text ? *text : std::string(),
-                                                       env.get_remove_comments(), 1);
+                    auto its = iec3_tokens_from_source(text ? *text : std::string(),
+                                                       env.get_remove_comments());
                     expand(its, ots, env);
                 } else {
                     // Exactly one input file here: more than one was already

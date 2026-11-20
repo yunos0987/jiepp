@@ -14,6 +14,14 @@
 std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove_comments, LineNo lineno = 1,
                                            bool report_nested_brace = true);
 
+// iec3_tokens_from_string() for the whole text of a source file (the main
+// input, an included or -include file, the jiepp command's standard input),
+// from line 1. A last line with no newline at its end is ended by one
+// newline token, as if the file had it, like gcc/clang: what follows the
+// file (the including file's next line, a line marker) starts on a line of
+// its own. An empty file (or one with only a UTF-8 BOM) gets none.
+std::vector<Token> iec3_tokens_from_source(const std::string& input, bool remove_comments);
+
 // Re-lexes text that is not read verbatim from a source file: a decoded
 // directive operand, a pragma body, or macro-produced text. Its newlines are
 // not source lines, so every lexer diagnostic is reported at the current

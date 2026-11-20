@@ -100,7 +100,7 @@ std::shared_ptr<const std::vector<Token>> Loader::tokens(const std::string& path
         std::optional<std::string> text = read_file(path, env);
         if (!text)
             return std::make_shared<const std::vector<Token>>();
-        std::vector<Token> raw = iec3_tokens_from_string(*text, false, 1);
+        std::vector<Token> raw = iec3_tokens_from_source(*text, false);
         env.set_cache(path, std::move(raw));
         cached = env.get_cache(path);
     }

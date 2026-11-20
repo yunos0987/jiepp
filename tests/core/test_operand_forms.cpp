@@ -403,12 +403,19 @@ TEST_F(OperandFormTest, HasIncludeOperandIsMacroExpanded) {
     });
 }
 
+// The operator needs its '(' (gcc/clang "missing '(' after '__has_include'",
+// like __has_builtin): PP52, and the condition is false without evaluating
+// the rest. Outside a condition the word is plain text.
 TEST_F(OperandFormTest, HasIncludeWithoutParentheses) {
-    const std::string pp52 = kAt + "error: PP52: Invalid expression; '__has_include 'f.iec''";
+    const std::string pp52 = kAt + "error: PP52: Invalid expression; 'missing '(' after '__has_include''";
     check({
-        {"{#if __has_include}Y{#else}N{#endif}", "N", {}},
+        {"{#if __has_include}Y{#else}N{#endif}", "N", {pp52}},
         {"{#if __has_include 'f.iec'}Y{#else}N{#endif}", "N", {pp52}},
+        {"{#if 1 \\or\\ __has_include}Y{#else}N{#endif}", "N", {pp52}},
+        {"{#define H __has_include}{#if H}Y{#else}N{#endif}", "N", {pp52}},
+        {"{#if 0}{#elif __has_include + 1}Y{#else}N{#endif}", "N", {pp52}},
         {"__assert(__has_include 'f.iec', m)A", "A", {pp52}},
+        {"__has_include x", "__has_include x", {}},
     });
 }
 
@@ -494,6 +501,9 @@ TEST_F(SandboxOperandFormTest, DefinedHasIncludeIsNotPP62) {
         {"{#ifdef __has_include}Y{#else}N{#endif}", "N", {}},
         // Nothing inside a comment is read as __has_include (decision 4).
         {"{#if (* __has_include(x) *) 1}Y{#else}N{#endif}", "Y", {}},
+        // Without '(' the word is an undefined identifier here (0), not the
+        // PP52 of a normal build.
+        {"{#if __has_include}Y{#else}N{#endif}", "N", {}},
     });
 }
 

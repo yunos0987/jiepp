@@ -225,13 +225,13 @@ TEST_F(NosplitTest, TextEqualsVaArgsOracle) {
     }
 }
 
-// The line number inside a multi-line call is that of the closing
-// parenthesis, as for a function macro. As with __VA_ARGS__, a line break
+// A __LINE__ in the arguments of a multi-line call is the line it is written
+// on, as for a function macro (SPEC 12.1). As with __VA_ARGS__, a line break
 // in the arguments is not output in place (no space after the comma); the
 // call's line break follows the result, keeping the line count.
 TEST_F(NosplitTest, LineInMultiLineArguments) {
-    EXPECT_EQ("2,2\n", pp("__nosplit(__LINE__,\n__LINE__)"));
-    EXPECT_EQ("2,2\n", pp(kId + "ID(__LINE__,\n__LINE__)")); // same as the control
+    EXPECT_EQ("1,2\n", pp("__nosplit(__LINE__,\n__LINE__)"));
+    EXPECT_EQ("1,2\n", pp(kId + "ID(__LINE__,\n__LINE__)")); // same as the control
     EXPECT_TRUE(empty());
 }
 

@@ -134,6 +134,19 @@ struct Token {
     // before `text`; excluded from operator== like the other bookkeeping
     // flags.
     bool        expansion_edge = false;
+    // The source line the token is written on, when that is not the line
+    // the Env line counter is at when the token is expanded (src_line valid
+    // only while has_src_line): a token of a function-macro call's argument
+    // on another line than the call's ')' (expand()'s argument collection),
+    // a token on a later line of a multi-line directive operand or pragma
+    // body (the re-lex with a line map, iec3_relex()), and the replacement
+    // of a macro whose name -- or, for a function macro, whose ')' -- has
+    // one (a function macro's replacement takes its ')' line only). A
+    // built-in object macro (__LINE__) expanded from such a name reports
+    // that line (SPEC §12.1), like gcc/clang. Reuses the padding before
+    // `text`; excluded from operator== like the other bookkeeping fields.
+    bool          has_src_line = false;
+    std::uint32_t src_line = 0;
     std::string text;
     int         num_of_lines = 0; // number of newlines this token contributes
     // True once this token's num_of_lines has already been applied to Env's line

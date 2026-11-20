@@ -500,7 +500,7 @@ TEST_F(ConstfoldTest, EvalConstValueReturnsKindAndValue) {
 }
 
 // ---- R1 (H1/M1): failure codes, including literal errors raised inside
-// scanner/grammar actions; division by zero is not a failure ----
+// scanner/grammar actions and division by zero ----
 
 TEST_F(ConstfoldTest, EvalConstValueReportsFailureCode) {
     Issue::ContinueMode guard({});
@@ -518,10 +518,12 @@ TEST_F(ConstfoldTest, EvalConstValueReportsFailureCode) {
     auto cs = codes();
     ASSERT_EQ(7u, cs.size());
 
+    // Division by zero fails the whole expression (SPEC 6.3, clang): the
+    // value is Int 0, not that of "0 + 5".
     auto r = eval_const_value("1 / 0 + 5");
-    EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, r.failure);
     EXPECT_EQ(ValueKind::Int, r.value.kind);
-    EXPECT_EQ(5, r.value.i);
+    EXPECT_EQ(0, r.value.i);
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()); // "division by zero"
 
     // A failure does not leak into the next evaluation.

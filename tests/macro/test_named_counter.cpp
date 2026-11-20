@@ -273,7 +273,8 @@ TEST_F(NamedCounterTest, SetLiteralErrorsLeaveCounterUnchanged) {
 
 #ifndef JIEPP_SANDBOX
 // N7 (M2): a suppressed evaluator diagnostic still fails, with PP39. Division
-// by zero is not a failure, so under {#ignore PP52} it is silent and stored.
+// by zero is a failure too (SPEC 6.3), so under {#ignore PP52} it is PP39 and
+// the counter keeps its value.
 TEST_F(NamedCounterTest, SetWithSuppressedDiagReportsPP39) {
     Issue::ContinueMode guard({});
     EXPECT_EQ("3", pp("{#ignore PP52}__counter_set(a, 3)__counter_set(a, 1 x)__counter_peek(a)"));
@@ -283,16 +284,19 @@ TEST_F(NamedCounterTest, SetWithSuppressedDiagReportsPP39) {
     EXPECT_EQ(Strings({pp39("__counter_set: value must be an integer: 2.5")}), diags());
     EXPECT_EQ("0", pp("__counter_set(a, TRUE + 1)__counter_peek(a)"));
     EXPECT_EQ(Strings({pp39("__counter_set: value could not be evaluated: TRUE + 1")}), diags());
-    EXPECT_EQ("4", pp("__counter_set(a, 1 / 0 + 4)__counter_peek(a)"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ("0", pp("__counter_set(a, 1 / 0 + 4)__counter_peek(a)"));
+    EXPECT_EQ(Strings({pp39("__counter_set: value could not be evaluated: 1 / 0 + 4")}), diags());
 }
 #endif
 
-// N7 (L4): division by zero reports PP52, continues with 0, and is stored.
-TEST_F(NamedCounterTest, SetDivisionByZeroStoresValue) {
+// Division and modulo by zero report PP52 and fail the evaluation (SPEC
+// 6.3, like clang's {#if}): the counter keeps its value.
+TEST_F(NamedCounterTest, SetDivisionByZeroKeepsValue) {
     Issue::ContinueMode guard({});
-    EXPECT_EQ("7", pp("__counter_set(a, 10 / 0 + 7)__counter_peek(a)"));
+    EXPECT_EQ("3", pp("__counter_set(a, 3)__counter_set(a, 10 / 0 + 7)__counter_peek(a)"));
     EXPECT_EQ(Strings({"PP52: Invalid expression; 'division by zero'"}), diags());
+    EXPECT_EQ("5", pp("__counter_set(a, 5)__counter_set(a, 10 mod 0)__counter_peek(a)"));
+    EXPECT_EQ(Strings({"PP52: Invalid expression; 'modulo by zero'"}), diags());
 }
 
 // SPEC 6.4: a dead operand never makes __counter_set fail; the value is
@@ -343,3 +347,13 @@ TEST_F(NamedCounterTest, MisspeltNameIsNewCounter) {
     EXPECT_EQ("0 0", pp("__counter(slot) __counter_peek(sloot)"));
     EXPECT_TRUE(empty());
 }
+
+#ifndef JIEPP_SANDBOX
+// A __has_include without '(' in the value is PP52, an evaluation failure:
+// the counter keeps its value.
+TEST_F(NamedCounterTest, SetBareHasIncludeKeepsValue) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("2", pp("__counter_set(a, 2)__counter_set(a, __has_include)__counter_peek(a)"));
+    EXPECT_EQ(Strings({"PP52: Invalid expression; 'missing '(' after '__has_include''"}), diags());
+}
+#endif

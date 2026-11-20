@@ -298,6 +298,19 @@ bool has_builtin(std::string_view name, Env& env) {
     return is_builtin_macro(env.lookup(name));
 }
 
+void fail_operator_operand(DefinedOperator& defop, std::vector<Token>& ots,
+                           Issue::Code code, const std::string& what) {
+    if (!defop.operand_error) {
+        defop.operand_error = true;
+        defop.operand_error_code = code;
+        if (code == Issue::Code::INVALID_BUILTIN_OPERAND)
+            ISSUE(INVALID_BUILTIN_OPERAND, what);
+        else
+            ISSUE(INVALID_EXPRESSION, what);
+    }
+    ots.push_back(Token::create(Token::ANY, "0"));
+}
+
 // The __has_builtin operator branch of expand(): `work` has the operator token
 // already popped. Errors follow the 'defined' branch (first error per
 // condition only, state kept in the DefinedOperator, remaining text not
@@ -311,15 +324,7 @@ bool has_builtin(std::string_view name, Env& env) {
             work.pop_back();
     };
     auto fail = [&](Issue::Code code, const std::string& what) {
-        if (!defop.operand_error) {
-            defop.operand_error = true;
-            defop.operand_error_code = code;
-            if (code == Issue::Code::INVALID_BUILTIN_OPERAND)
-                ISSUE(INVALID_BUILTIN_OPERAND, what);
-            else
-                ISSUE(INVALID_EXPRESSION, what);
-        }
-        ots.push_back(Token::create(Token::ANY, "0"));
+        fail_operator_operand(defop, ots, code, what);
     };
 
     skip_ws();

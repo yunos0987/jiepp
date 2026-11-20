@@ -159,6 +159,76 @@ TEST_F(SmokeTest, StdinPipe) {
         << "stdout: " << r.out;
 }
 
+// ---- 5b. A file's last line without a newline is ended by one ----
+//
+// Measured with clang and gcc: an included `a.h` of just `A` followed by
+// `b` gives "A" and "b" on two lines, `__LINE__` after it is still the next
+// line, and a main input or standard input `a\nb` ends with a newline. No
+// diagnostic. An empty file adds nothing.
+
+TEST_F(SmokeTest, LastLineWithoutNewlineIsEnded) {
+    write_file(tmp_dir_ / "nonl_a.iec", "A\n__LINE__");
+    write_file(tmp_dir_ / "nonl_e.iec", "");
+    fs::path input = tmp_dir_ / "nonl_main.iec";
+    write_file(input, "{#include 'nonl_a.iec'}\n__LINE__\n{#include 'nonl_e.iec'}b\n{#include "
+                      "'nonl_a.iec'}");
+
+    auto r = run("-P \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "A\n2\n2\nb\nA\n2\n") << "stdout: " << r.out;
+    EXPECT_EQ(r.err, "");
+
+    // With line markers, the marker back to the main input is on a line of
+    // its own.
+    write_file(input, "{#include 'nonl_a.iec'}\nb");
+    r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("\n2\n(*{#:1 '"), std::string::npos) << "stdout: " << r.out;
+    EXPECT_TRUE(r.out.ends_with("}*)\nb\n")) << "stdout: " << r.out;
+
+    // -include, and the standard input.
+    write_file(input, "b");
+    r = run("-P -include \"" + (tmp_dir_ / "nonl_a.iec").generic_string() + "\" \"" +
+            input.generic_string() + "\"");
+    EXPECT_EQ(r.out, "A\n2\nb\n") << "stdout: " << r.out;
+    write_file(input, "a\nb");
+    r = run("-P -", input.generic_string());
+    EXPECT_EQ(r.out, "a\nb\n") << "stdout: " << r.out;
+}
+
+// ---- 5c. An unclosed group in an included or -include file ----
+//
+// Measured with clang and gcc: the groups left open in the included file are
+// reported at that file's {#if} lines (innermost first), and the including
+// file's {#endif} does not close them (#endif without #if).
+
+TEST_F(SmokeTest, UnclosedGroupInIncludedFile) {
+    write_file(tmp_dir_ / "pp24_a.iec", "{#if 1}\n{#if 0}\nh\n");
+    fs::path input = tmp_dir_ / "pp24_main.iec";
+    write_file(input, "{#include 'pp24_a.iec'}\n{#endif}\nend\n");
+
+    auto r = run("-P \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    const auto a2 = r.err.find("pp24_a.iec:2.0: error: PP24");
+    const auto a1 = r.err.find("pp24_a.iec:1.0: error: PP24");
+    const auto m2 = r.err.find("pp24_main.iec:2.0: error: PP27");
+    EXPECT_NE(a2, std::string::npos) << r.err;
+    EXPECT_NE(a1, std::string::npos) << r.err;
+    EXPECT_NE(m2, std::string::npos) << r.err;
+    EXPECT_LT(a2, a1) << r.err;
+    EXPECT_LT(a1, m2) << r.err;
+
+    // -include: reported at the -include file's line, and the main input
+    // goes on.
+    write_file(input, "end\n");
+    r = run("-P -include \"" + (tmp_dir_ / "pp24_a.iec").generic_string() + "\" \"" +
+            input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("pp24_a.iec:2.0: error: PP24"), std::string::npos) << r.err;
+    EXPECT_NE(r.err.find("pp24_a.iec:1.0: error: PP24"), std::string::npos) << r.err;
+    EXPECT_EQ(r.out, "end\n") << r.out;
+}
+
 // ---- 5a. stdin is read in binary mode (B2) ----
 //
 // The Windows CRT opens stdin in text mode, where byte 0x1A (Ctrl+Z) ends the
@@ -545,7 +615,7 @@ TEST_F(SmokeTest, ArgCountMismatchDoesNotExpandUnderDD) {
 
     auto r = run("-dD -P \"" + input.generic_string() + "\"");
     EXPECT_EQ(r.exit_code, 1);
-    EXPECT_EQ(r.out, "{#define P(x) x}{#define Q 9}P 9");
+    EXPECT_EQ(r.out, "{#define P(x) x}{#define Q 9}P 9\n"); // the file has no last newline
     EXPECT_NE(r.err.find("PP34"), std::string::npos) << "stderr: " << r.err;
     EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1)
         << "stderr should have exactly one PP34 line: " << r.err;

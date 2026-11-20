@@ -54,7 +54,35 @@ std::vector<Token> tokenize(const std::string& text, std::size_t start, LineNo l
 
     StringMergeState merge_state;
 
+    // A re-lexed text with a line map (a multi-line directive operand or
+    // pragma body): every token lexed on a line below the text's first line
+    // keeps that line (Token::src_line), so a __LINE__ there -- written, or
+    // made by a macro whose name or ')' is there -- is that line. Applied
+    // to the tokens each step pushes, when the step ends (also through its
+    // `continue`).
+    const LineMap* const src_lines = opts.at_current_location ? opts.line_map : nullptr;
+    struct MarkSrcLines {
+        const LineMap* map;
+        std::vector<Token>& r;
+        std::size_t first;
+        std::size_t pos;
+        ~MarkSrcLines() {
+            if (!map)
+                return;
+            const std::size_t below = map->line_of(pos);
+            if (below == 0)
+                return;
+            const auto line = static_cast<std::uint32_t>(
+                wrap_lineno(Issue::lineno() + static_cast<LineNo>(below)));
+            for (std::size_t i = first; i < r.size(); ++i) {
+                r[i].has_src_line = true;
+                r[i].src_line = line;
+            }
+        }
+    };
+
     while (p < n) {
+        MarkSrcLines mark{src_lines, r, r.size(), p};
         char c = text[p];
 
         // ---- Whitespace (non-newline) ----
@@ -262,6 +290,14 @@ std::vector<Token> iec3_tokens_from_string(const std::string& input, bool remove
     return lex_text(input, remove_comments, lineno,
                     LexOptions{.report_nested_brace = report_nested_brace},
                     /*strip_bom=*/true);
+}
+
+std::vector<Token> iec3_tokens_from_source(const std::string& input, bool remove_comments) {
+    auto tokens = iec3_tokens_from_string(input, remove_comments, 1);
+    const std::size_t bom = input.starts_with("\xEF\xBB\xBF") ? 3 : 0;
+    if (input.size() > bom && !is_nl_char(input.back()))
+        tokens.push_back(Token::newline(1));
+    return tokens;
 }
 
 std::vector<Token> iec3_relex(const std::string& text, bool remove_comments,

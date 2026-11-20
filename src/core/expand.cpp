@@ -157,9 +157,10 @@ void dispatch_directive(const Token& t,
                     report_invalid_escape();
                 bool cond = ifdef_form ? eval_ifdef(raw_arg, ifndef_form, ifdef_name, env)
                                        : eval_cond(raw_arg, env);
-                ctrl.push_back({cond ? std::optional<bool>(true) : std::nullopt});
+                ctrl.push_back({cond ? std::optional<bool>(true) : std::nullopt, false,
+                                Issue::lineno(), {}});
             } else {
-                ctrl.push_back({false});
+                ctrl.push_back({false, false, Issue::lineno(), {}});
             }
             break;
         case DirectiveToken::ELIF:
@@ -319,11 +320,20 @@ void dispatch_directive(const Token& t,
     case DirectiveToken::WSTRING:
         jiepp::preprocessor_detail::handle_stringize(raw_arg, env, ots, true);
         break;
-    case DirectiveToken::SETLINE:
+    case DirectiveToken::SETLINE: {
         // U1(a)/C1/C2: key == "" is the nameless marker form ({#:N}); a
         // named key ("line"/"set_line"/"set-line") is the gcc-style form.
+        // An open group whose {#if} was read under the old file name keeps
+        // that name for its PP24 (CtrlState::file; clang/gcc).
+        std::string before = ctrl.size() > 1 ? Issue::filepath() : std::string();
         jiepp::preprocessor_detail::handle_setline(raw_arg, key, env, ots);
+        if (ctrl.size() > 1 && Issue::filepath() != before) {
+            for (std::size_t i = 1; i < ctrl.size(); ++i)
+                if (ctrl[i].file.empty())
+                    ctrl[i].file = before;
+        }
         break;
+    }
     case DirectiveToken::SYSPATH:
 #ifdef JIEPP_SANDBOX
         ISSUE(SANDBOX_RESTRICTED_DIRECTIVE, "syspath");
@@ -641,6 +651,48 @@ struct ExpansionDepthGuard {
     ExpansionDepthGuard& operator=(const ExpansionDepthGuard&) = delete;
 };
 
+// Token::src_line: the tokens of `ts` that have no source line of their own
+// get `line`, the line of the macro name (or ')') they replace.
+void inherit_src_line(std::vector<Token>& ts, std::uint32_t line) noexcept {
+    for (auto& u : ts) {
+        if (!u.has_src_line) {
+            u.has_src_line = true;
+            u.src_line = line;
+        }
+    }
+}
+
+// Token::src_line of a function-macro call's replacement: every token gets
+// the line of the call's ')' token `rp` (none when `rp` has none).
+void set_replacement_src_line(std::vector<Token>& ts, const Token& rp) noexcept {
+    for (auto& u : ts) {
+        u.has_src_line = rp.has_src_line;
+        u.src_line = rp.src_line;
+    }
+}
+
+// Token::src_line of a function-macro call's arguments, after they are
+// collected: each token without a line of its own holds, in src_line, the
+// number of uncounted lines read before it (the collection loop stores it).
+// A call on one line (`lines` == 0) leaves them all without a line: the
+// counter is at their line when they are expanded. Otherwise each token that
+// is not on the ')' line gets its line, counted from `call_line` (the
+// counter's line before the call's lines were applied).
+[[gnu::noinline]] void set_argument_src_lines(std::vector<std::vector<Token>>& params,
+                                              LineNo call_line, int lines) noexcept {
+    if (lines == 0)
+        return;
+    for (auto& p : params) {
+        for (auto& u : p) {
+            if (u.has_src_line || u.src_line == static_cast<std::uint32_t>(lines))
+                continue;
+            u.has_src_line = true;
+            u.src_line = static_cast<std::uint32_t>(
+                wrap_lineno(call_line + static_cast<LineNo>(u.src_line)));
+        }
+    }
+}
+
 // subst() of a "()-less macro" (object macro). Kept out of expand() so its
 // locals do not enlarge expand()'s frame, which is on the stack once per
 // nesting level (unoptimized builds give every local its own slot). S-01: a
@@ -648,14 +700,27 @@ struct ExpansionDepthGuard {
 // copied on every use. Safe: subst() of an object macro never calls
 // expand(), and a superseded macro is retired, never destroyed (symtab.hpp
 // lifetime invariant, F14).
-std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new_hs, Env& env) {
+std::vector<Token> subst_object_macro(ObjectMacro& om, const Token& name, Env& env) {
     static const std::unordered_map<std::string, std::pair<int, bool>> no_params;
     static const std::vector<std::vector<Token>> no_actuals;
-    if (auto* um = dynamic_cast<UserDefinedObjectMacro*>(&om))
-        return subst(um->tokens(), um->va_opt_spans(), no_params, no_actuals, nullptr, new_hs,
-                     env);
-    auto repl = om.replacement(env);
-    return subst(repl, {}, no_params, no_actuals, nullptr, new_hs, env);
+    const Token::HideSet new_hs = name.hs.with(name.text);
+    std::vector<Token> r;
+    if (auto* um = dynamic_cast<UserDefinedObjectMacro*>(&om)) {
+        r = subst(um->tokens(), um->va_opt_spans(), no_params, no_actuals, nullptr, new_hs, env);
+    } else if (name.has_src_line) {
+        // A built-in (__LINE__) written on another line than the one the
+        // counter is at (an argument of a call spanning lines, a later line
+        // of a directive operand): its own line, like gcc/clang (SPEC §12.1).
+        Issue::LineGuard at_name(name.src_line);
+        auto repl = om.replacement(env);
+        r = subst(repl, {}, no_params, no_actuals, nullptr, new_hs, env);
+    } else {
+        auto repl = om.replacement(env);
+        r = subst(repl, {}, no_params, no_actuals, nullptr, new_hs, env);
+    }
+    if (name.has_src_line)
+        inherit_src_line(r, name.src_line);
+    return r;
 }
 
 // The call of a built-in function macro (__error/__assert/__counter*/__nosplit/
@@ -678,12 +743,14 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
 // keyword `kw`, already taken from `work`, while the transient 'defined'
 // operator is active and not suspended -- in an {#if}/{#elif} condition and
 // in the expression of __assert and __counter_set, written there or made by
-// a macro, like gcc/clang. Returns false, leaving `work` as it was, when the
-// keyword is not followed by '(' (it is then an ordinary identifier) and for
-// a call that the main loop can pass through itself; otherwise the call has
-// been consumed and its result, or the text of a malformed call, written to
-// `ots`. A malformed call is left as text so the evaluator reports it (PP52),
-// as before.
+// a macro, like gcc/clang. A keyword not followed by '(' is an operand error
+// reported through `defop` (PP52 "missing '('", the whole condition false,
+// like __has_builtin and gcc/clang); in a sandbox build it is an ordinary
+// identifier (false is returned). Returns false, leaving `work` as it was,
+// for a call that the main loop can pass through itself; otherwise the call
+// has been consumed and its result, or the text of a malformed call, written
+// to `ots`. A malformed call is left as text so the evaluator reports it
+// (PP52), as before.
 //
 // The operand follows the path rules of {#include} (SPEC §7) and gcc/clang:
 // - a terminated string literal right after the '(' is the path, decoded
@@ -709,7 +776,8 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
 // condition is PP62 (sandbox_has_include_reported()), and the call is left
 // as text.
 [[gnu::noinline]] bool expand_has_include(Token& kw, std::vector<Token>& work,
-                                          std::vector<Token>& ots, Env& env) {
+                                          std::vector<Token>& ots, Env& env,
+                                          DefinedOperator& defop) {
     namespace pd = jiepp::preprocessor_detail;
     // work[n - 1] is the next unread token.
     auto skip_ws = [&work](std::size_t n) {
@@ -718,8 +786,18 @@ std::vector<Token> subst_object_macro(ObjectMacro& om, const Token::HideSet& new
         return n;
     };
     std::size_t n = skip_ws(work.size());
-    if (n == 0 || work[n - 1].type != Token::LP)
+    if (n == 0 || work[n - 1].type != Token::LP) {
+#ifdef JIEPP_SANDBOX
+        (void)defop;
         return false;
+#else
+        // Like gcc/clang (and __has_builtin, SPEC 5.2): the operator needs
+        // its '('. PP52, and the whole condition is false.
+        fail_operator_operand(defop, ots, Issue::Code::INVALID_EXPRESSION,
+                              "missing '(' after '__has_include'");
+        return true;
+#endif
+    }
 #ifdef JIEPP_SANDBOX
     (void)kw;
     (void)ots;
@@ -866,7 +944,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
     // pop_back/push_back are O(1), eliminating the O(N²) erase+insert pattern
     // that previously shifted the entire vector on every macro expansion.
     std::vector<Token> work(its.rbegin(), its.rend());
-    std::vector<CtrlState> ctrl = {{true}};
+    std::vector<CtrlState> ctrl = {{true, false, 0, {}}};
 
     while (!work.empty()) {
         Token t = std::move(work.back());
@@ -937,11 +1015,12 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
 
         // ── __has_include(...) operator (SPEC 7.5) ──
         // In the same places as __has_builtin, also before the macro lookup;
-        // without a '(' after it the keyword falls through as an identifier.
+        // without a '(' after it the keyword is an operand error (PP52; an
+        // identifier in a sandbox build).
         if (t.type == Token::ANY && t.text.size() == 13 && t.text[0] == '_' &&
             t.text == "__has_include") {
             auto* hi_defop = dynamic_cast<DefinedOperator*>(env.lookup("defined"));
-            if (hi_defop && !hi_defop->suspended && expand_has_include(t, work, ots, env))
+            if (hi_defop && !hi_defop->suspended && expand_has_include(t, work, ots, env, *hi_defop))
                 continue;
         }
 
@@ -1119,6 +1198,10 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
 
                         const bool was_counted_comment =
                             pt.lineno_counted && pt.type == Token::C && pt.text.starts_with("//");
+                        // Token::src_line: the uncounted lines before this
+                        // token, made a line by set_argument_src_lines() below.
+                        if (!pt.has_src_line)
+                            pt.src_line = static_cast<std::uint32_t>(sum_uncounted);
                         sum_num_of_lines += pt.num_of_lines;
                         if (pt.output_only_lines)
                             sum_output_only += pt.num_of_lines;
@@ -1316,12 +1399,14 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
 
                     // Advance the line counter to the closing ')' (or, on an
                     // unterminated call, to the end of the collected tokens) BEFORE
-                    // subst(), so a __LINE__ reference inside the macro body or an
-                    // argument reports the invocation's closing-paren line (gcc/clang
-                    // behaviour for a function-macro call spanning multiple lines),
-                    // not the line the macro name appeared on. Also shared by the
-                    // error path below, so line counting is identical whether or not
-                    // the call errors.
+                    // subst(), so a __LINE__ reference inside the macro body reports
+                    // the invocation's closing-paren line (clang behaviour for a
+                    // function-macro call spanning multiple lines), not the line the
+                    // macro name appeared on; one in an argument has its own line
+                    // (set_argument_src_lines(), gcc/clang, SPEC §12.1). Also shared
+                    // by the error path below, so line counting is identical whether
+                    // or not the call errors.
+                    set_argument_src_lines(params, env.get_lineno(), sum_uncounted);
                     advance_lineno(sum_uncounted, env);
 
                     std::vector<Token> replaced;
@@ -1413,6 +1498,15 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
                         }
                     }
 
+                    // The replacement is at the line of this call's ')'
+                    // (clang): the line of the ')' token when it has one (a
+                    // call completed inside an argument or a multi-line
+                    // directive operand), else the counter's line. A token
+                    // that brought its own line from an argument loses it:
+                    // a call it then forms with what follows the replacement
+                    // is also at this ')' line.
+                    set_replacement_src_line(replaced, rp_token);
+
                     // SPEC §3.9: the replacement meets what was before the
                     // macro name and what follows the ')'.
                     if (!replaced.empty())
@@ -1452,7 +1546,7 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
             }
             // Case: T is a "()-less macro" → expand(subst(ts(T), {}, {}, HS∪{T}, {}) • TS')
             else if (auto* om = dynamic_cast<ObjectMacro*>(macro)) {
-                auto repl = subst_object_macro(*om, t.hs.with(t.text), env);
+                auto repl = subst_object_macro(*om, t, env);
                 // See the function-macro case above: never source lines.
                 ts_mark_output_only(repl);
                 // SPEC §3.9: as for a function macro.
@@ -1481,8 +1575,15 @@ std::vector<Token>& expand(const std::vector<Token>& its, std::vector<Token>& ot
         ots.push_back(std::move(t));
     }
 
-    if (ctrl.size() != 1)
+    // One PP24 per group still open at the end of the text, innermost first,
+    // each at the line (and file name) of the {#if} that opened it (clang;
+    // also after an {#elif}/{#else} of the group or a {#line}).
+    for (std::size_t i = ctrl.size(); i-- > 1;) {
+        Issue::LineGuard at_if(ctrl[i].line, ctrl[i].file.empty()
+                                                 ? std::nullopt
+                                                 : std::optional<std::string>(ctrl[i].file));
         ISSUE(UNTERMINATED_CONDITIONAL, "unclosed if");
+    }
 
     return ots;
 }

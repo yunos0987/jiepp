@@ -53,6 +53,7 @@ TEST_F(OutputOnlyLinesCommandTest, CompactedRunInsideExpansion) {
 }
 
 TEST_F(OutputOnlyLinesCommandTest, NoMarkerAtEndOfFile) {
-    EXPECT_EQ("(*{#:0 'u6_output_only.iec'}*)\n\nL1 a\nb",
+    // The file's last line has no newline: the output ends with one (gcc/clang).
+    EXPECT_EQ("(*{#:0 'u6_output_only.iec'}*)\n\nL1 a\nb\n",
               run_jiepp_on("{#define Z a$nb}\nL1 Z", {}));
 }

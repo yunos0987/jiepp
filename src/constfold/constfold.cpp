@@ -38,12 +38,14 @@ cf::ConstValue to_const_value(const CfValue& v) {
 }
 
 // The one evaluation behind eval_const_expr() and eval_const_value(). On an
-// empty expression, a parse failure or a type error, value stays Int 0 (the
-// old 0 result of eval_const_expr()); a literal error raised inside a scanner
-// or grammar action records a failure but keeps the parsed value.
+// empty expression, a parse failure, a type error or a division by zero,
+// value stays Int 0 (the old 0 result of eval_const_expr()); a literal error
+// raised inside a scanner or grammar action records a failure but keeps the
+// parsed value.
 cf::EvalResult evaluate(const std::string& expr) {
     cf::EvalResult r;
     cf_failure_code = Issue::Code::SUCCESS;
+    cf_zero_divisor = false;
     // A parse aborted by an exception (PP50, a throwing diagnostic) never
     // runs the action that lowers the depth; start every evaluation at 0.
     cf_unevaluated_depth = 0;
@@ -117,7 +119,10 @@ cf::EvalResult evaluate(const std::string& expr) {
         return r;
     }
     r.failure = cf_failure_code;
-    r.value = to_const_value(result);
+    // A division or modulo by zero makes the whole expression false (value
+    // Int 0), like a type error, not just that operation (SPEC 6.3).
+    if (!cf_zero_divisor)
+        r.value = to_const_value(result);
     return r;
 }
 

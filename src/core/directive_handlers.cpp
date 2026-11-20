@@ -292,6 +292,10 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     // with -nC (gcc/clang without -C). Either way a comment is whitespace to
     // the checks below (Token::C has MASK_WS), so the definition is the same.
     auto ts = lex_operand(raw_arg, env.get_remove_comments());
+    // The replacement list is expanded where the macro is used: a body
+    // token has no source line of its own (Token::src_line).
+    for (auto& t : ts)
+        t.has_src_line = false;
     // Task d1: like clang, which lexes a macro body once at its definition,
     // the PP20/PP29 of a pragma body in the replacement list are reported
     // here, at the lines the body is written on, and not again at each
