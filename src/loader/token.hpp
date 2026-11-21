@@ -90,38 +90,43 @@ struct Token {
     using HideSet = ::HideSet;
 
     int         type   = ANY;
+    // Layout: the one-bit flags below share the 8 bytes that start with
+    // `type`, and num_of_lines and src_line share the 8 bytes after `text`,
+    // so the fields besides `text` take 32 bytes (static_assert after the
+    // struct). Token is copied and moved for every token of every macro
+    // expansion: with a plain bool for each flag it was 72 bytes instead of
+    // 64 (x64, 32-byte std::string), and bench/cases/reused_fmacro_params ran
+    // about 15% slower.
+    //
     // True only for a whitespace token that select_arg() inserted around a
     // joining comma of the variable arguments and that only the stringize
     // consumer keeps (a newline-only edge, R6), for the shared memoised
     // expansion of a multi-use variadic parameter (task_slug arg-expand-once,
     // expand_subst.cpp D3). Never leaves subst(): consumers either keep it
-    // (stringize context) or skip it (plain use). Placed here, directly after
-    // `type`, to reuse the padding before `text` so sizeof(Token) is
-    // unchanged; excluded from operator== like the other bookkeeping flags.
-    bool        va_sep = false;
+    // (stringize context) or skip it (plain use). Excluded from operator==
+    // like the other bookkeeping flags.
+    bool        va_sep : 1 = false;
     // True only for a PRAGMA token that the lexer produced while re-lexing
     // a pragma body (expand_operand_tokens() with a pragma OperandKind),
     // with its text exactly as lexed. The body of such a token is re-lexed
     // without reporting a raw '{' inside a nested pragma body (PP22): the
     // enclosing pass already reported that same character (task_slug
     // security-impl, A2 / S-02; see read_pragma_body()). Cleared wherever
-    // the text is rewritten (expand_pragma_token(), glue_tokens()). Also
-    // reuses the padding before `text`; excluded from operator== like the
-    // other bookkeeping flags.
-    bool        relexed_pragma = false;
+    // the text is rewritten (expand_pragma_token(), glue_tokens()).
+    // Excluded from operator== like the other bookkeeping flags.
+    bool        relexed_pragma : 1 = false;
     // True for a DIRECTIVE token with no closing '}': the lexer ran it to the
-    // end of the input (PP23) and added the '}'. Reuses the padding before
-    // `text`; excluded from operator== like the other bookkeeping flags.
-    bool        unclosed_directive = false;
+    // end of the input (PP23) and added the '}'. Excluded from operator==
+    // like the other bookkeeping flags.
+    bool        unclosed_directive : 1 = false;
     // True for a PRAGMA token whose rewritten text (expand_pragma_token())
     // came from a pass that already reported PP29 for an unterminated literal
     // or PP20 for an unclosed comment in its body: a later rescan of that
     // text (macro argument used in the body) lexes the same literal or
     // comment again and must not report it again.
-    // Cleared wherever the text is rewritten again (glue_tokens()). Reuses
-    // the padding before `text`; excluded from operator== like the other
-    // bookkeeping flags.
-    bool        pragma_unterminated_reported = false;
+    // Cleared wherever the text is rewritten again (glue_tokens()).
+    // Excluded from operator== like the other bookkeeping flags.
+    bool        pragma_unterminated_reported : 1 = false;
     // True when the token's left neighbour in the output is not the token
     // written before it in the same text: the token starts a macro's
     // replacement, follows a macro invocation (and so whatever its
@@ -130,10 +135,9 @@ struct Token {
     // such a token is output, expand() puts one space between it and the
     // previous token if the two would otherwise read as other tokens
     // (iec3_needs_space(), SPEC §3.9). Kept when the token is rescanned,
-    // since its left side stays such a meeting point. Reuses the padding
-    // before `text`; excluded from operator== like the other bookkeeping
-    // flags.
-    bool        expansion_edge = false;
+    // since its left side stays such a meeting point. Excluded from
+    // operator== like the other bookkeeping flags.
+    bool        expansion_edge : 1 = false;
     // The source line the token is written on, when that is not the line
     // the Env line counter is at when the token is expanded (src_line valid
     // only while has_src_line): a token of a function-macro call's argument
@@ -143,17 +147,14 @@ struct Token {
     // of a macro whose name -- or, for a function macro, whose ')' -- has
     // one (a function macro's replacement takes its ')' line only). A
     // built-in object macro (__LINE__) expanded from such a name reports
-    // that line (SPEC §12.1), like gcc/clang. Reuses the padding before
-    // `text`; excluded from operator== like the other bookkeeping fields.
-    bool          has_src_line = false;
-    std::uint32_t src_line = 0;
-    std::string text;
-    int         num_of_lines = 0; // number of newlines this token contributes
+    // that line (SPEC §12.1), like gcc/clang. Excluded from operator== like
+    // the other bookkeeping fields.
+    bool        has_src_line : 1 = false;
     // True once this token's num_of_lines has already been applied to Env's line
     // counter (see expand.cpp's function-macro argument collection). Bookkeeping
     // only: deliberately excluded from operator== so existing token-equality
     // callers (macro redefinition checks, tests) are unaffected.
-    bool        lineno_counted = false;
+    bool        lineno_counted : 1 = false;
     // True if this token's num_of_lines are printed but are not source
     // lines: the token is part of a macro replacement or of a re-lexed
     // directive operand / pragma body, so its newlines come from a decoded
@@ -163,20 +164,24 @@ struct Token {
     // where a macro expansion never changes __LINE__) and are not counted
     // as source lines by compact_blank_lines(). Excluded from operator==
     // like lineno_counted, so macro redefinition checks are unaffected.
-    bool        output_only_lines = false;
+    bool        output_only_lines : 1 = false;
     // True for a STRING/WSTRING token whose literal the lexer ended at a
     // newline or at the end of the input, not at its closing quote.
     // push_string_token() never merges the next literal into such a token
     // (it has no closing quote to drop). Excluded from operator== like
     // lineno_counted. core reports it as PP29 and clears the mark.
-    bool        unterminated = false;
+    bool        unterminated : 1 = false;
     // True for a newline token re-emitted after a function-macro replacement
     // for line-count fidelity (see expand.cpp's function-macro argument
     // collection), and for the space expand() puts at a macro-expansion
     // edge (expansion_edge): neither is whitespace that ever separated two
     // tokens of the replacement, so stringizing (R2) skips it as a separator
     // candidate. Excluded from operator== like lineno_counted.
-    bool        line_filler = false;
+    bool        line_filler : 1 = false;
+    std::string text;
+    int         num_of_lines = 0; // number of newlines this token contributes
+    // The line of has_src_line.
+    std::uint32_t src_line = 0;
     HideSet     hs;          // hide-set (persistent trie handle, O(1) copy)
     // The source lines of a DIRECTIVE/PRAGMA token's body (LineMap), or of
     // the start of an unterminated literal or a dropped directive lexed
@@ -225,6 +230,10 @@ struct Token {
         return type == o.type && text == o.text && num_of_lines == o.num_of_lines;
     }
 };
+// See "Layout" at the top of Token: a new flag goes in as a one-bit field
+// next to the others, so that Token does not grow.
+static_assert(sizeof(Token) <= sizeof(std::string) + 32,
+              "Token grew: keep the flags as one-bit fields next to `type`");
 
 struct DirectiveToken : Token {
     static constexpr int MASK_CTRL      = 0b1000'0000'0000'0000;
