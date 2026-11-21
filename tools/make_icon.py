@@ -10,9 +10,10 @@ The icon shows the directive opener {# above an IEC 61131-3 ladder rung
 with a normally open contact (--| |--). The colors are those of
 docs/jiepp-banner.svg.
 
-Each icon size is drawn separately at 8x and box-filtered down. The 16 px
-image is the hand-drawn pixel grid PIXELS_16 instead, since the strokes of
-the drawing merge at that size.
+Each icon size is drawn separately at 8x and box-filtered down. The 16, 20
+and 24 px images are the hand-drawn pixel grids of HAND_DRAWN instead, since
+the strokes of the drawing merge at those sizes (at 20 and 24 px, the two
+bars of the contact).
 
 Requires Pillow (pip install Pillow). Run from the repository root:
 
@@ -69,7 +70,8 @@ STROKES = [
 
 TILE = (2.0, 2.0, 62.0, 62.0, 13.0)  # x0, y0, x1, y1, corner radius
 
-# 16 px: ' ' transparent, '.' tile, 'A' brace, 'W' hash, 'G' rung and contact.
+# Pixel grids: ' ' transparent, '.' tile, 'A' brace, 'W' hash, 'G' rung and
+# contact.
 PIXELS_16 = [
     " .............. ",
     "................",
@@ -88,6 +90,55 @@ PIXELS_16 = [
     "................",
     " .............. ",
 ]
+PIXELS_20 = [
+    " .................. ",
+    "....................",
+    "....AA...W...W......",
+    "....A....W...W......",
+    "....A....W...W......",
+    "....A..WWWWWWWWW....",
+    "....A....W...W......",
+    "...AA....W...W......",
+    "...AA....W...W......",
+    "....A..WWWWWWWWW....",
+    "....A....W...W......",
+    "....A....W...W......",
+    "....A....W...W......",
+    "....AA..............",
+    "....................",
+    "........G..G........",
+    ".GGGGGGGG..GGGGGGGG.",
+    "........G..G........",
+    "....................",
+    " .................. ",
+]
+PIXELS_24 = [
+    "  ....................  ",
+    " ...................... ",
+    "......AAA...............",
+    ".....AA....WW...WW......",
+    ".....AA....WW...WW......",
+    ".....AA....WW...WW......",
+    ".....AA..WWWWWWWWWWW....",
+    ".....AA..WWWWWWWWWWW....",
+    "...AAA.....WW...WW......",
+    "...AAA.....WW...WW......",
+    ".....AA..WWWWWWWWWWW....",
+    ".....AA..WWWWWWWWWWW....",
+    ".....AA....WW...WW......",
+    ".....AA....WW...WW......",
+    ".....AA....WW...WW......",
+    "......AAA...............",
+    ".........GG..GG.........",
+    ".........GG..GG.........",
+    ".GGGGGGGGGG..GGGGGGGGGG.",
+    ".GGGGGGGGGG..GGGGGGGGGG.",
+    ".........GG..GG.........",
+    ".........GG..GG.........",
+    " ...................... ",
+    "  ....................  ",
+]
+HAND_DRAWN = {len(rows): rows for rows in (PIXELS_16, PIXELS_20, PIXELS_24)}
 _PIXEL_COLORS = {".": NAVY, "A": AMBER, "W": WHITE, "G": GREEN}
 
 
@@ -150,8 +201,8 @@ def render_pixels(rows):
 
 
 def render(size):
-    if size == len(PIXELS_16):
-        return render_pixels(PIXELS_16)
+    if size in HAND_DRAWN:
+        return render_pixels(HAND_DRAWN[size])
     big = size * SUPERSAMPLE
     k = big / VIEW
     img = Image.new("RGBA", (big, big), (0, 0, 0, 0))

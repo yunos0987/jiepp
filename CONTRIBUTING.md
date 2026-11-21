@@ -68,7 +68,7 @@ python tools/convert_boost_pp.py --check <dir>/include/boost/preprocessor tests/
 
 ## アイコンの更新 / Updating the Icon
 
-`jiepp.exe` のアイコン `src/jiepp/jiepp.ico`（`src/jiepp/jiepp.rc` で Windows のビルドに組み込む）と `docs/jiepp-icon.svg` は、`tools/make_icon.py` の中の図から生成します。手で編集せず、スクリプトの図（16 px は手描きのピクセル図 `PIXELS_16`）を直して再生成してください。Pillow が必要です。
+`jiepp.exe` のアイコン `src/jiepp/jiepp.ico`（`src/jiepp/jiepp.rc` で Windows のビルドに組み込む）と `docs/jiepp-icon.svg` は、`tools/make_icon.py` の中の図から生成します。手で編集せず、スクリプトの図（16・20・24 px は手描きのピクセル図 `PIXELS_16`・`PIXELS_20`・`PIXELS_24`）を直して再生成してください。Pillow が必要です。
 
 ```bash
 python tools/make_icon.py          # 2 つのファイルを書き直す
