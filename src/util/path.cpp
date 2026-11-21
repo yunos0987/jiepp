@@ -154,5 +154,11 @@ std::string Util::reached_dir(std::string_view path)
     // "/a.iec" is in the root, which is "/" and not "".
     if (slash == 0)
         return "/";
+#ifdef _WIN32
+    // "C:/a.iec" is in the root of drive C, which is "C:/" and not the
+    // drive-relative "C:".
+    if (slash == 2 && p[1] == ':' && std::isalpha(static_cast<unsigned char>(p[0])))
+        return p.substr(0, 3);
+#endif
     return p.substr(0, p[slash - 1] == '/' ? slash + 1 : slash);
 }

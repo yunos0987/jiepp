@@ -273,6 +273,12 @@ TEST_F(UtilTest, reached_path) {
     EXPECT_EQ("C:a.iec", Util::reached_path("C:", "a.iec"));
     EXPECT_EQ("C:", Util::reached_dir("C:main.iec"));
     EXPECT_EQ("C:a.iec", Util::reached_path(Util::reached_dir("C:main.iec"), "a.iec"));
+    // A file in the root of a drive: its directory is the root, "C:/", not
+    // the drive-relative "C:".
+    EXPECT_EQ("C:/", Util::reached_dir("C:/main.iec"));
+    EXPECT_EQ("C:/", Util::reached_dir("C:\\main.iec"));
+    EXPECT_EQ("C:/h.iec", Util::reached_path(Util::reached_dir("C:/main.iec"), "h.iec"));
+    EXPECT_EQ("C:/sub", Util::reached_dir("C:/sub/main.iec"));
 #else
     // Elsewhere "C:" is an ordinary directory name.
     EXPECT_EQ("C:/a.iec", Util::reached_path("C:", "a.iec"));
