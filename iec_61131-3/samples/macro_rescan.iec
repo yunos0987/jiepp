@@ -1,0 +1,22 @@
+(* macro_rescan.iec - arguments are rescanned, __VA_OPT__ looks at the expanded argument *)
+
+{#define EMPTY}
+{#define LPAREN (}
+{#define DEFER(id) id EMPTY}
+{#define EXPAND(...) __VA_ARGS__}
+{#define TWICE(x) (x) * 2}
+
+(* __VA_OPT__ keeps its content only when the expanded variable arguments are not empty. *)
+{#define LOG(fmt, ...) log(fmt __VA_OPT__(,) __VA_ARGS__)}
+
+program Main
+var
+    n: int;
+end_var
+(* DEFER hides the call from the first scan; EXPAND scans it again. *)
+n := DEFER(TWICE)(3);
+n := EXPAND(DEFER(TWICE)(3));
+LOG('start');
+LOG('empty', EMPTY);
+LOG('value', n);
+end_program

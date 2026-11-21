@@ -1,0 +1,18 @@
+(* pp_number.iec - a number with letters after it is one token *)
+
+(* Macros named like the units of a time literal ... *)
+{#define ms 1000}
+{#define s 60}
+
+program Main
+var
+    t: time;
+    n: int;
+end_var
+(* ... do not expand inside the literal: t#10ms and t#1m30s stay as written. *)
+t := t#10ms;
+t := t#1m30s;
+(* A separate name still expands. *)
+n := ms;
+n := s;
+end_program

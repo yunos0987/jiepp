@@ -62,6 +62,7 @@
 
 ### サンプルと性能測定 / Samples and benchmarks
 
+- サンプル `iec_61131-3/samples/pp_number.iec`（時間リテラル `t#10ms` の中の `ms` を、同じ名前のマクロがあっても展開しない）と `iec_61131-3/samples/macro_rescan.iec`（`DEFER`/`EXPAND` による引数の再走査と、展開した可変長引数で決まる `__VA_OPT__`）を追加した
 - `bench` のケース `recursive_fmacros` を削除した。`nested_fmacros` と同じ形・同じサイズの入力だった。`include_directives`・`nested_include_directives` が生成する入力を、ほかのケースと同じ UTF-8・LF にした（Windows では CRLF だった）ので、この 2 ケースの数値は以前の結果と直接は比べられない
 
 ### 文書 / Documentation
