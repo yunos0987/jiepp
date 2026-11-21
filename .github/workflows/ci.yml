@@ -21,7 +21,12 @@ jobs:
           submodules: recursive
 
       - name: Install LLVM/Clang
-        run: choco install llvm --yes --no-progress
+        # upgrade, not install: the runner image already has an older LLVM,
+        # which install leaves in place, and the image's MSVC STL may require
+        # a newer Clang (STL1000 "expected Clang 22 or newer" with VS 18).
+        run: |
+          choco upgrade llvm --yes --no-progress
+          clang++ --version
 
       - name: Install Ninja
         run: choco install ninja --yes --no-progress
