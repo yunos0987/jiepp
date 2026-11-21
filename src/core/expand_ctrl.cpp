@@ -6,7 +6,6 @@
 #include "preprocessor_internal.hpp"
 
 #include "../constfold/constfold.hpp"
-#include "../loader/loader.hpp"
 #include "../loader/directive_parser.hpp"
 #include "../loader/lexer.hpp"
 #include "../macro/macro.hpp"
@@ -155,7 +154,11 @@ bool& sandbox_has_include_reported() {
 }
 #endif
 
-std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_error) {
+// The macro-expanded text of an {#if}/{#elif} condition. *operand_error
+// receives whether the evaluation hit a 'defined' operand/paren error (C3):
+// eval_cond() then treats the whole condition as false without calling
+// eval_const_expr() on it.
+static std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_error) {
     // C3/U5: the transient 'defined' operator is installed by an RAII
     // scope, so it is removed on scope exit even when expand_condition()
     // below throws. __has_include(...) is an operator of that expansion, as
@@ -165,8 +168,7 @@ std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_e
     std::string result;
     for (const auto& t : expand_condition(raw_cond, env))
         result += t.text;
-    if (operand_error)
-        *operand_error = defined_scope.op()->operand_error;
+    *operand_error = defined_scope.op()->operand_error;
     return result;
 }
 
@@ -180,7 +182,7 @@ bool eval_cond(const std::string& raw_cond, Env& env) {
         return false;
     // Comments are whitespace in the expression, as in C: those written in
     // the operand and those a macro body brought in (bodies keep comments
-    // unless -nC) both survive expand_operand_text() as text, and constfold's
+    // unless -nC) both survive expand_condition() as text, and constfold's
     // scanner knows no comment syntax. A __has_include(<a//b>) call was
     // resolved during the expansion, so its path is no longer in the text.
     int64_t val = eval_const_expr(iec3_blank_out_comments(expanded));
@@ -296,6 +298,19 @@ bool has_builtin(std::string_view name, Env& env) {
     return is_builtin_macro(env.lookup(name));
 }
 
+void fail_operator_operand(DefinedOperator& defop, std::vector<Token>& ots,
+                           Issue::Code code, const std::string& what) {
+    if (!defop.operand_error) {
+        defop.operand_error = true;
+        defop.operand_error_code = code;
+        if (code == Issue::Code::INVALID_BUILTIN_OPERAND)
+            ISSUE(INVALID_BUILTIN_OPERAND, what);
+        else
+            ISSUE(INVALID_EXPRESSION, what);
+    }
+    ots.push_back(Token::create(Token::ANY, "0"));
+}
+
 // The __has_builtin operator branch of expand(): `work` has the operator token
 // already popped. Errors follow the 'defined' branch (first error per
 // condition only, state kept in the DefinedOperator, remaining text not
@@ -309,15 +324,7 @@ bool has_builtin(std::string_view name, Env& env) {
             work.pop_back();
     };
     auto fail = [&](Issue::Code code, const std::string& what) {
-        if (!defop.operand_error) {
-            defop.operand_error = true;
-            defop.operand_error_code = code;
-            if (code == Issue::Code::INVALID_BUILTIN_OPERAND)
-                ISSUE(INVALID_BUILTIN_OPERAND, what);
-            else
-                ISSUE(INVALID_EXPRESSION, what);
-        }
-        ots.push_back(Token::create(Token::ANY, "0"));
+        fail_operator_operand(defop, ots, code, what);
     };
 
     skip_ws();

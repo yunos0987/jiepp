@@ -12,27 +12,41 @@
 
 %code top {
 #include "env/issue.hpp"
-#include <cmath>
+#include "util/text.hpp"
+#include <bit>
 #include <cstdint>
-#include <stdexcept>
 }
 
 %code {
 CfValue cflval;  // global semantic value shared with flex scanner
-bool cf_expr_complete = false;  // set true when a complete expr is reduced
+// Whether the last token yylex() returned, and the one before it, can end
+// an operand (a literal, an identifier, a bare type keyword, TRUE/FALSE or
+// ')'). Maintained by yylex(), reset by evaluate().
+bool cf_last_token_ends_operand = false;
+bool cf_prev_token_ends_operand = false;
 // C1: the code eval_const_expr() should raise for a parse failure, chosen by
-// error() below from cf_expr_complete at the moment bison detects the
-// error -- INVALID_EXPRESSION if a complete expr had already been reduced
-// (a complete expression was followed by more), MISSING_EXPRESSION
-// otherwise. error() itself no longer raises a diagnostic (see below), so
-// eval_const_expr() is the single place a parse failure is reported, using
-// this code instead of unconditionally reporting MISSING_EXPRESSION.
+// error() below at the moment bison detects the error, from the token
+// before the offending one (the offending token is the lookahead, the last
+// one read). After a token that ends an operand the parser wanted an
+// operator, ')' or the end, so a complete operand is followed by something
+// else: INVALID_EXPRESSION ("1 x", "(1 x)", "(1"). After an operator, '('
+// or at the start it wanted an operand that is not there:
+// MISSING_EXPRESSION ("1 +", "(1) +", "()"), which is what gcc ("operator
+// '+' has no right operand") and clang ("expected value in expression")
+// report whether or not a parenthesised operand came earlier. error()
+// itself raises no diagnostic (see below), so eval_const_expr() is the
+// single place a parse failure is reported, using this code.
 Issue::Code cf_error_code = Issue::Code::MISSING_EXPRESSION;
 // See cf_note_failure() (constfold_internal.hpp) and eval_const_value().
 Issue::Code cf_failure_code = Issue::Code::SUCCESS;
 // See cf_value_diag() (constfold_internal.hpp); lowered by the actions in
 // and_expr/or_expr, reset by evaluate().
 int cf_unevaluated_depth = 0;
+// See zero_divisor() below; reset by evaluate().
+bool cf_zero_divisor = false;
+// The expression being evaluated, quoted by integer_overflow() below; set by
+// evaluate() for the length of the parse.
+const std::string* cf_expr_text = nullptr;
 
 // The lexer keeps the spelling of a type keyword (for the -Wundef message);
 // the cast rule compares an upper-cased copy.
@@ -57,6 +71,22 @@ extern int cflex(void);
 
 static int yylex(cf::CfParser::semantic_type* yylval) {
     int tok = cflex();
+    cf_prev_token_ends_operand = cf_last_token_ends_operand;
+    switch (tok) {
+    case cf::CfParser::token::CF_INT:
+    case cf::CfParser::token::CF_FLOAT:
+    case cf::CfParser::token::CF_INT_MIN_MAG:
+    case cf::CfParser::token::CF_IDENT:
+    case cf::CfParser::token::CF_TYPE_KW:
+    case cf::CfParser::token::CF_TRUE:
+    case cf::CfParser::token::CF_FALSE:
+    case cf::CfParser::token::CF_RPAREN:
+        cf_last_token_ends_operand = true;
+        break;
+    default:
+        cf_last_token_ends_operand = false;
+        break;
+    }
     switch (tok) {
     case cf::CfParser::token::CF_INT:
     case cf::CfParser::token::CF_FLOAT:
@@ -86,6 +116,18 @@ static CfValue cast_int_literal_to_dword(const CfValue& v) {
     return v;
 }
 
+// Division or modulo by zero in an evaluated operand (SPEC 6.3): PP52, and,
+// like clang, the whole expression is false -- an evaluation failure, like a
+// type error, but the parse goes on (evaluate() drops the value). Nothing in
+// an unevaluated operand (SPEC 6.4).
+static void zero_divisor(const char* what,
+                         std::source_location loc = std::source_location::current()) {
+    if (cf_unevaluated_depth > 0 || cf_zero_divisor)
+        return;
+    cf_value_diag(Issue::Code::INVALID_EXPRESSION, what, true, loc);
+    cf_zero_divisor = true;
+}
+
 [[noreturn]] static void type_error() {
     cf_note_failure(Issue::Code::EXPR_TYPE_ERROR);
     ISSUE(EXPR_TYPE_ERROR);
@@ -100,20 +142,53 @@ static CfValue cast_int_literal_to_dword(const CfValue& v) {
 // A3: perform +, -, *, and unary negation via uint64_t so that wraparound on
 // signed overflow (e.g. INT64_MIN - 1) is well-defined two's-complement
 // arithmetic instead of undefined behavior.
-static int64_t wrap_add(int64_t a, int64_t b) {
-    return static_cast<int64_t>(static_cast<std::uint64_t>(a) + static_cast<std::uint64_t>(b));
-}
-
-static int64_t wrap_sub(int64_t a, int64_t b) {
-    return static_cast<int64_t>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(b));
-}
-
-static int64_t wrap_mul(int64_t a, int64_t b) {
-    return static_cast<int64_t>(static_cast<std::uint64_t>(a) * static_cast<std::uint64_t>(b));
-}
-
 static int64_t wrap_neg(int64_t a) {
     return static_cast<int64_t>(static_cast<std::uint64_t>(0) - static_cast<std::uint64_t>(a));
+}
+
+// PP55 (SPEC 6.3): an Int operation whose mathematical result is not an Int
+// (or, for a shift, whose count is outside 0..63). The value is still the
+// wrapped one, so this is a warning only, like clang's "integer overflow in
+// preprocessor expression" (one per operation). Value dependent: nothing in
+// an unevaluated operand or after a division by zero (cf_value_diag()),
+// which is tested here first so the quoted text is built only when reported.
+static void integer_overflow(std::source_location loc = std::source_location::current()) {
+    if (cf_unevaluated_depth > 0 || cf_zero_divisor)
+        return;
+    cf_value_diag(Issue::Code::INTEGER_OVERFLOW,
+                  cf_expr_text ? Util::diag_clip(Util::escape_line_breaks(*cf_expr_text))
+                               : std::string(),
+                  /*failure=*/false, loc);
+}
+
+// The checked Int operations: the two's-complement result (wrapped mod
+// 2^64), and PP55 when it differs from the mathematical one.
+static int64_t checked_add(int64_t a, int64_t b) {
+    int64_t r;
+    if (__builtin_add_overflow(a, b, &r))
+        integer_overflow();
+    return r;
+}
+
+static int64_t checked_sub(int64_t a, int64_t b) {
+    int64_t r;
+    if (__builtin_sub_overflow(a, b, &r))
+        integer_overflow();
+    return r;
+}
+
+static int64_t checked_mul(int64_t a, int64_t b) {
+    int64_t r;
+    if (__builtin_mul_overflow(a, b, &r))
+        integer_overflow();
+    return r;
+}
+
+// Unary minus: only -INT64_MIN does not fit (it stays INT64_MIN).
+static int64_t checked_neg(int64_t a) {
+    if (a == INT64_MIN)
+        integer_overflow();
+    return wrap_neg(a);
 }
 
 // D: shift count n and left operand v/L for '<<'/'>>' in {#if}. "Out of
@@ -128,18 +203,32 @@ static int64_t wrap_neg(int64_t a) {
 // decision): out of range, '<<' gives 0 and '>>' behaves like a shift by
 // 63 (-1 for a negative value, 0 otherwise). In range, both are the
 // ordinary C shift.
+//
+// PP55, like clang: a count out of range (either direction), and a '<<' that
+// shifts out a bit other than a copy of the sign bit, i.e. whose result is
+// not v * 2^n (1 << 63, 3 << 62; not -1 << 63).
 static int64_t shift_int(int64_t v, int64_t n, bool left) {
-    if (n < 0 || n >= 64)
+    if (n < 0 || n >= 64) {
+        integer_overflow();
         return left ? 0 : (v < 0 ? -1 : 0);
-    if (left)
-        return static_cast<int64_t>(static_cast<std::uint64_t>(v) << n);
+    }
+    if (left) {
+        const std::uint64_t u = static_cast<std::uint64_t>(v);
+        // Bits that may be shifted out without changing the value: the run
+        // of leading copies of the sign bit, less the sign bit itself.
+        const int room = (v < 0 ? std::countl_one(u) : std::countl_zero(u)) - 1;
+        if (n > room)
+            integer_overflow();
+        return static_cast<int64_t>(u << n);
+    }
     return v >> n;
 }
 
 // Bitstring is not a C type: out of range gives 0 for every width and both
 // directions (coordinator decision, rev3) -- unlike Int's '>>', which does
 // not clamp. In range, both directions are the ordinary logical shift
-// (masked to width by the caller via make_bitstring()).
+// (masked to width by the caller via make_bitstring()). No PP55: a bit
+// string shift (IEC SHL/SHR) drops the bits shifted out by definition.
 static std::uint64_t shift_bits(std::uint64_t v, int64_t n, bool left) {
     if (n < 0 || n >= 64)
         return 0;
@@ -233,8 +322,8 @@ void cf::CfParser::error(const std::string& msg) {
     // {#elif} condition twice. eval_const_expr() is now the single place
     // that raises, using the code chosen here.
     (void)msg;
-    cf_error_code = cf_expr_complete ? Issue::Code::INVALID_EXPRESSION
-                                      : Issue::Code::MISSING_EXPRESSION;
+    cf_error_code = cf_prev_token_ends_operand ? Issue::Code::INVALID_EXPRESSION
+                                               : Issue::Code::MISSING_EXPRESSION;
 }
 }
 
@@ -269,7 +358,7 @@ void cf::CfParser::error(const std::string& msg) {
 start: expr { result = $1; }
      ;
 
-expr: or_expr { cf_expr_complete = true; $$ = $1; }
+expr: or_expr { $$ = $1; }
     ;
 
 or_expr:
@@ -338,10 +427,7 @@ shift_expr:
         } else if (l.kind == ValueKind::Bitstring) {
             $$ = make_bitstring(shift_bits(l.bits, n, true), l.bit_kind);
         } else {
-            CfValue bit = cast_int_literal_to_dword(l);
-            if (bit.kind == ValueKind::Bitstring)
-                $$ = make_bitstring(shift_bits(bit.bits, n, true), bit.bit_kind);
-            else type_error();
+            type_error(); // a Bool or a Float left operand
         }
     }
   | shift_expr CF_SHR add_expr        {
@@ -352,10 +438,7 @@ shift_expr:
         } else if (l.kind == ValueKind::Bitstring) {
             $$ = make_bitstring(shift_bits(l.bits, n, false), l.bit_kind);
         } else {
-            CfValue bit = cast_int_literal_to_dword(l);
-            if (bit.kind == ValueKind::Bitstring)
-                $$ = make_bitstring(shift_bits(bit.bits, n, false), bit.bit_kind);
-            else type_error();
+            type_error(); // a Bool or a Float left operand
         }
     }
   ;
@@ -364,12 +447,12 @@ add_expr:
     bor_expr                          { $$ = $1; }
   | add_expr CF_PLUS  bor_expr        {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int)
-            $$ = CfValue::int_value(wrap_add($1.ival, $3.ival));
+            $$ = CfValue::int_value(checked_add($1.ival, $3.ival));
         else type_error();
     }
   | add_expr CF_MINUS bor_expr        {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int)
-            $$ = CfValue::int_value(wrap_sub($1.ival, $3.ival));
+            $$ = CfValue::int_value(checked_sub($1.ival, $3.ival));
         else type_error();
     }
   ;
@@ -434,22 +517,23 @@ mul_expr:
     unary_expr                        { $$ = $1; }
   | mul_expr CF_STAR  unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int)
-            $$ = CfValue::int_value(wrap_mul($1.ival, $3.ival));
+            $$ = CfValue::int_value(checked_mul($1.ival, $3.ival));
         else type_error();
     }
   | mul_expr CF_SLASH unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
-            if ($3.ival == 0) { cf_value_diag(Issue::Code::INVALID_EXPRESSION, "division by zero", false); $$ = CfValue::int_value(0); }
+            if ($3.ival == 0) { zero_divisor("division by zero"); $$ = CfValue::int_value(0); }
             // A3: INT64_MIN / -1 overflows the quotient, which traps in
             // hardware (SIGFPE-style crash) even though two's-complement
-            // wraparound defines the result as INT64_MIN itself.
-            else if ($3.ival == -1) $$ = CfValue::int_value(wrap_neg($1.ival));
+            // wraparound defines the result as INT64_MIN itself. 2^63 is not
+            // an Int: PP55, like clang (the remainder below is 0 and fits).
+            else if ($3.ival == -1) $$ = CfValue::int_value(checked_neg($1.ival));
             else $$ = CfValue::int_value($1.ival / $3.ival);
         } else type_error();
     }
   | mul_expr CF_MOD   unary_expr      {
         if ($1.kind == ValueKind::Int && $3.kind == ValueKind::Int) {
-            if ($3.ival == 0) { cf_value_diag(Issue::Code::INVALID_EXPRESSION, "modulo by zero", false); $$ = CfValue::int_value(0); }
+            if ($3.ival == 0) { zero_divisor("modulo by zero"); $$ = CfValue::int_value(0); }
             // A3: same overflow trap as division by -1; the remainder is
             // mathematically 0 but the hardware idiv instruction used for
             // '%' still traps before producing it.
@@ -488,7 +572,7 @@ unary_core:
         else type_error();
     }
   | CF_MINUS unary_core               {
-        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(wrap_neg($2.ival));
+        if ($2.kind == ValueKind::Int) $$ = CfValue::int_value(checked_neg($2.ival));
         else if ($2.kind == ValueKind::Float) $$ = CfValue::float_value(-$2.fval);
         else type_error();
     }
@@ -520,12 +604,17 @@ primary:
   | CF_LPAREN expr CF_RPAREN          { $$ = $2; }
   | CF_TYPE_KW CF_HASH cast_value     {
         const std::string kw = ascii_upper($1.text);
-        if (kw == "BOOL")        $$ = cast_to_bool($3);
-        else if (kw == "BYTE")   $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::BYTE);
-        else if (kw == "WORD")   $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::WORD);
-        else if (kw == "DWORD")  $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::DWORD);
-        else if (kw == "LWORD")  $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), BitKind::LWORD);
-        else                     $$ = CfValue::int_value(cast_scalar_to_int($3));
+        if (kw == "BOOL") {
+            $$ = cast_to_bool($3);
+        } else {
+            // The scanner (constfold.l) returns CF_TYPE_KW only for BOOL,
+            // BYTE, WORD, DWORD and LWORD.
+            const BitKind kind = kw == "BYTE"    ? BitKind::BYTE
+                                 : kw == "WORD"  ? BitKind::WORD
+                                 : kw == "DWORD" ? BitKind::DWORD
+                                                 : BitKind::LWORD;
+            $$ = make_bitstring(static_cast<uint64_t>(cast_scalar_to_int($3)), kind);
+        }
     }
   | CF_TYPE_KW                        { warn_undefined($1.text); $$ = CfValue::int_value(0); }
   ;

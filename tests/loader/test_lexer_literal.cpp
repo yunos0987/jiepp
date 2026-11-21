@@ -1,24 +1,6 @@
-#include "test_helper.hpp"
-
-#include "loader/lexer.hpp"
+#include "lexer_test_helper.hpp"
 
 #include <chrono>
-
-// ---- helpers ----
-
-static std::vector<Token> ts(const std::string& text, bool remove_comments = false) {
-    return iec3_tokens_from_string(text, remove_comments);
-}
-
-static Token make(int type, const std::string& text, int line = 0) {
-    return Token::create(type, text, line);
-}
-
-static void expect_tokens(const std::vector<Token>& expected,
-                          const std::string& text,
-                          bool remove_comments = false) {
-    EXPECT_EQ(expected, ts(text, remove_comments));
-}
 
 // ---- date/time literal splitting ----
 
@@ -85,7 +67,22 @@ TEST_F(LexerLiteralTest, Numbers) {
                   "16#__ff");
     expect_tokens({make(Token::ANY, "10#01")}, "10#01");
     expect_tokens({make(Token::ANY, "1_2_3")}, "1_2_3");
-    expect_tokens({make(Token::ANY, "1_2_3"), make(Token::ANY, "s")}, "1_2_3s");
+    // Letters and digits written right after a number are part of it
+    // (SPEC §2, like a C pp-number without its '.' and sign): not a number
+    // and a macro-expandable identifier.
+    expect_tokens({make(Token::ANY, "1_2_3s")}, "1_2_3s");
+    expect_tokens({make(Token::ANY, "12abc")}, "12abc");
+    expect_tokens({make(Token::ANY, "10ms")}, "10ms");
+    expect_tokens({make(Token::ANY, "1e")}, "1e");
+    expect_tokens({make(Token::ANY, "1.5f")}, "1.5f");
+    expect_tokens({make(Token::ANY, "1__0")}, "1__0");
+    expect_tokens({make(Token::ANY, "16#FFx_")}, "16#FFx_");
+    // '.' and a sign end it.
+    expect_tokens({make(Token::ANY, "1e"), make(Token::ANY, "+"), make(Token::ANY, "x")}, "1e+x");
+    expect_tokens({make(Token::ANY, "0"), make(Token::ANY, "."), make(Token::ANY, "."),
+                   make(Token::ANY, "MAX")},
+                  "0..MAX");
+    expect_tokens({make(Token::ANY, "1"), make(Token::ANY, "."), make(Token::ANY, "MAX")}, "1.MAX");
     expect_tokens({make(Token::ANY, "0.0")}, "0.0");
     expect_tokens({make(Token::ANY, "1.0")}, "1.0");
     expect_tokens({make(Token::ANY, "2.0e+0")}, "2.0e+0");

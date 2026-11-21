@@ -2,13 +2,69 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 namespace {
 
 bool _not_space(unsigned char ch) {
-	return !std::isspace(ch);
+    return !std::isspace(ch);
 }
 
+}
+
+namespace {
+
+const char* const MONTH_NAMES[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+const char* const WEEKDAY_NAMES[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+// An out-of-range field (a tm that was not filled by localtime) is clamped
+// rather than indexing past the table.
+const char* name_of(const char* const* names, int count, int i) {
+    return names[i < 0 ? 0 : (i >= count ? count - 1 : i)];
+}
+
+}
+
+std::string Util::diag_excerpt(std::string_view s, std::size_t max_bytes) {
+    const std::size_t eol = s.find_first_of("\r\n");
+    const std::string_view line = s.substr(0, eol);
+    const std::string_view head = utf8_head(line, max_bytes);
+    std::string r(head);
+    // Only line breaks after the head (the end of a file that ends in a
+    // newline) leave nothing out.
+    if (s.find_first_not_of("\r\n", head.size()) != std::string_view::npos)
+        r += "...";
+    return r;
+}
+
+std::string Util::diag_clip(std::string_view s, std::size_t max_bytes) {
+    const std::string_view head = utf8_head(s, max_bytes);
+    std::string r(head);
+    if (head.size() < s.size())
+        r += "...";
+    return r;
+}
+
+std::string Util::format_date(const std::tm& tm) {
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "%s %2d %d", name_of(MONTH_NAMES, 12, tm.tm_mon), tm.tm_mday,
+                  tm.tm_year + 1900);
+    return buf;
+}
+
+std::string Util::format_time(const std::tm& tm) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return buf;
+}
+
+std::string Util::format_timestamp(const std::tm& tm) {
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "%s %s %2d %02d:%02d:%02d %d",
+                  name_of(WEEKDAY_NAMES, 7, tm.tm_wday), name_of(MONTH_NAMES, 12, tm.tm_mon),
+                  tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, tm.tm_year + 1900);
+    return buf;
 }
 
 std::string_view Util::ltrim_view(std::string_view s) {

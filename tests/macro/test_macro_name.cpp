@@ -202,7 +202,7 @@ TEST_F(MacroNameTest, SetupProcessesPredefineMacrosLikeDefine) {
     }
     {
         EXPECT_THROW(setup({{"defined", "1"}}), Issue::Exception);
-        EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
     }
     {
         Env env = setup({{"A", "1"}, {"A", "2"}});

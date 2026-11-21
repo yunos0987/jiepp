@@ -9,18 +9,7 @@
 // refer to the behaviour table of the implementation plan.
 // =====================================================================
 
-class NamedCounterTest : public JieppTest {
-protected:
-    // Each diagnostic line without its location prefix, e.g. "PP39: ...".
-    std::vector<std::string> diags() {
-        std::vector<std::string> out;
-        for (const auto& m : messages()) {
-            auto p = m.find(": PP");
-            out.push_back(p == std::string::npos ? m : m.substr(p + 2));
-        }
-        return out;
-    }
-};
+class NamedCounterTest : public JieppTest {};
 
 using Strings = std::vector<std::string>;
 using Codes = std::vector<Issue::Code>;
@@ -63,7 +52,7 @@ TEST_F(NamedCounterTest, SetChangesValueAndExpandsToNothing) {
 TEST_F(NamedCounterTest, SetValueUsesIfEvaluator) {
     EXPECT_EQ("10", pp("{#define BASE 5}__counter_set(a, BASE * 2)__counter_peek(a)"));
     EXPECT_EQ("1", pp("__counter_set(a, TRUE)__counter_peek(a)"));
-    EXPECT_EQ("015", pp("__counter(b)__counter(b)__counter_set(a, __counter(b) + 3)__counter_peek(a)"));
+    EXPECT_EQ("0 1 5", pp("__counter(b)__counter(b)__counter_set(a, __counter(b) + 3)__counter_peek(a)"));
     EXPECT_EQ("4", pp("__counter_set(a, UNDEFINED_X + 4)__counter_peek(a)"));
     EXPECT_EQ("1", pp("{#define X}__counter_set(a, defined(X))__counter_peek(a)"));
     EXPECT_TRUE(empty());
@@ -127,7 +116,7 @@ TEST_F(NamedCounterTest, NameThroughParameterIsPreExpanded) {
 
 // N6: counter names are their own namespace.
 TEST_F(NamedCounterTest, CounterNamespaceIsSeparateFromMacros) {
-    EXPECT_EQ("0 9 1 n 0n",
+    EXPECT_EQ("0 9 1 n 0 n",
               pp("{#define c 9}__counter(c) c {#undef c}__counter(c) {#ifdef c}y{#else}n{#endif} "
                  "__counter(d){#ifdef d}y{#else}n{#endif}"));
     EXPECT_TRUE(empty());
@@ -160,9 +149,9 @@ TEST_F(NamedCounterTest, OverflowSaturatesWithPP53) {
 
 // N10: disabled group and skipped {#elif}.
 TEST_F(NamedCounterTest, NoEffectInDisabledGroup) {
-    EXPECT_EQ("y1", pp("{#if 0}__counter(a)__counter_set(a, 9){#elif __counter(a)}x{#else}y{#endif}"
+    EXPECT_EQ("y 1", pp("{#if 0}__counter(a)__counter_set(a, 9){#elif __counter(a)}x{#else}y{#endif}"
                        "__counter_peek(a)"));
-    EXPECT_EQ("t0", pp("{#if 1}t{#elif __counter(b)}u{#else}__counter(b){#endif}__counter_peek(b)"));
+    EXPECT_EQ("t 0", pp("{#if 1}t{#elif __counter(b)}u{#else}__counter(b){#endif}__counter_peek(b)"));
     EXPECT_TRUE(empty());
 }
 
@@ -195,7 +184,7 @@ TEST_F(NamedCounterTest, GluedOperandNeedsRelay) {
 
 // N13: once per evaluated condition.
 TEST_F(NamedCounterTest, UsableInIfExpression) {
-    EXPECT_EQ("AB2y", pp("{#if __counter(a) = 0}A{#else}B{#endif}{#if __counter(a) = 0}A{#else}B{#endif}"
+    EXPECT_EQ("AB 2 y", pp("{#if __counter(a) = 0}A{#else}B{#endif}{#if __counter(a) = 0}A{#else}B{#endif}"
                          "__counter_peek(a){#if __counter_peek(a) = 2}y{#endif}"));
     EXPECT_TRUE(empty());
 }
@@ -248,8 +237,9 @@ TEST_F(NamedCounterTest, WatchpointBracketArgumentNotSplit) {
 // Watchpoint: an identical redefinition (different whitespace amount) of a
 // macro using __counter is silent, in source and through -D.
 TEST_F(NamedCounterTest, WatchpointIdenticalRedefinitionSilent) {
-    // The later (equal) definition is the one in effect, spacing included.
-    EXPECT_EQ("k   0", pp("{#define C(n) n __counter(n)}{#define C(n)  n   __counter(n)}C(k)"));
+    // The identical redefinition changes nothing: the first definition stays
+    // in effect, its spacing included (SPEC §3.6).
+    EXPECT_EQ("k 0", pp("{#define C(n) n __counter(n)}{#define C(n)  n   __counter(n)}C(k)"));
     EXPECT_TRUE(empty());
     Env env = setup({{"K", "__counter(k)"}, {"K", "__counter(k)"}, {"X", "1"}, {"X", "1"}});
     EXPECT_TRUE(empty());
@@ -283,7 +273,8 @@ TEST_F(NamedCounterTest, SetLiteralErrorsLeaveCounterUnchanged) {
 
 #ifndef JIEPP_SANDBOX
 // N7 (M2): a suppressed evaluator diagnostic still fails, with PP39. Division
-// by zero is not a failure, so under {#ignore PP52} it is silent and stored.
+// by zero is a failure too (SPEC 6.3), so under {#ignore PP52} it is PP39 and
+// the counter keeps its value.
 TEST_F(NamedCounterTest, SetWithSuppressedDiagReportsPP39) {
     Issue::ContinueMode guard({});
     EXPECT_EQ("3", pp("{#ignore PP52}__counter_set(a, 3)__counter_set(a, 1 x)__counter_peek(a)"));
@@ -293,16 +284,19 @@ TEST_F(NamedCounterTest, SetWithSuppressedDiagReportsPP39) {
     EXPECT_EQ(Strings({pp39("__counter_set: value must be an integer: 2.5")}), diags());
     EXPECT_EQ("0", pp("__counter_set(a, TRUE + 1)__counter_peek(a)"));
     EXPECT_EQ(Strings({pp39("__counter_set: value could not be evaluated: TRUE + 1")}), diags());
-    EXPECT_EQ("4", pp("__counter_set(a, 1 / 0 + 4)__counter_peek(a)"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ("0", pp("__counter_set(a, 1 / 0 + 4)__counter_peek(a)"));
+    EXPECT_EQ(Strings({pp39("__counter_set: value could not be evaluated: 1 / 0 + 4")}), diags());
 }
 #endif
 
-// N7 (L4): division by zero reports PP52, continues with 0, and is stored.
-TEST_F(NamedCounterTest, SetDivisionByZeroStoresValue) {
+// Division and modulo by zero report PP52 and fail the evaluation (SPEC
+// 6.3, like clang's {#if}): the counter keeps its value.
+TEST_F(NamedCounterTest, SetDivisionByZeroKeepsValue) {
     Issue::ContinueMode guard({});
-    EXPECT_EQ("7", pp("__counter_set(a, 10 / 0 + 7)__counter_peek(a)"));
+    EXPECT_EQ("3", pp("__counter_set(a, 3)__counter_set(a, 10 / 0 + 7)__counter_peek(a)"));
     EXPECT_EQ(Strings({"PP52: Invalid expression; 'division by zero'"}), diags());
+    EXPECT_EQ("5", pp("__counter_set(a, 5)__counter_set(a, 10 mod 0)__counter_peek(a)"));
+    EXPECT_EQ(Strings({"PP52: Invalid expression; 'modulo by zero'"}), diags());
 }
 
 // SPEC 6.4: a dead operand never makes __counter_set fail; the value is
@@ -332,7 +326,7 @@ TEST_F(NamedCounterTest, CounterInsideAssertExpr) {
 TEST_F(NamedCounterTest, ValuesSurviveUndefOfBuiltin) {
     Issue::ContinueMode guard({});
     Env env = setup();
-    EXPECT_EQ("0 1__counter(a)", pp("__counter(a) __counter(a){#undef __counter}__counter(a)", env));
+    EXPECT_EQ("0 1 __counter(a)", pp("__counter(a) __counter(a){#undef __counter}__counter(a)", env));
     EXPECT_EQ(Strings({"PP35: Macro redefined; '__counter: undefining built-in macro'"}), diags());
     EXPECT_EQ(2u, env.counter_value("a"));
     EXPECT_EQ("2", pp("__counter_peek(a)", env));
@@ -353,3 +347,13 @@ TEST_F(NamedCounterTest, MisspeltNameIsNewCounter) {
     EXPECT_EQ("0 0", pp("__counter(slot) __counter_peek(sloot)"));
     EXPECT_TRUE(empty());
 }
+
+#ifndef JIEPP_SANDBOX
+// A __has_include without '(' in the value is PP52, an evaluation failure:
+// the counter keeps its value.
+TEST_F(NamedCounterTest, SetBareHasIncludeKeepsValue) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("2", pp("__counter_set(a, 2)__counter_set(a, __has_include)__counter_peek(a)"));
+    EXPECT_EQ(Strings({"PP52: Invalid expression; 'missing '(' after '__has_include''"}), diags());
+}
+#endif

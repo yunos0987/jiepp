@@ -9,18 +9,7 @@
 // to the behaviour table of the implementation plan.
 // =====================================================================
 
-class BuiltinDiagTest : public JieppTest {
-protected:
-    // Each diagnostic line without its location prefix, e.g. "PP91: 'boom'".
-    std::vector<std::string> diags() {
-        std::vector<std::string> out;
-        for (const auto& m : messages()) {
-            auto p = m.find(": PP");
-            out.push_back(p == std::string::npos ? m : m.substr(p + 2));
-        }
-        return out;
-    }
-};
+class BuiltinDiagTest : public JieppTest {};
 
 using Strings = std::vector<std::string>;
 
@@ -177,13 +166,18 @@ TEST_F(BuiltinDiagTest, AssertNulConditionIsReportedOnce) {
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, cs[0]);
 }
 
-// E10: division by zero is PP52 and evaluation continues with 0.
-TEST_F(BuiltinDiagTest, AssertDivisionByZeroDecidedByValue) {
+// E10: division by zero is PP52 and an evaluation failure (SPEC 6.3): the
+// expression cannot be evaluated, so only PP52 is reported, whatever the
+// value of the rest would have been.
+TEST_F(BuiltinDiagTest, AssertDivisionByZeroIsFailure) {
     Issue::ContinueMode guard({});
     EXPECT_EQ(";", pp("__assert(1 / 0 = 0, m1);"));
     EXPECT_EQ(Strings({"PP52: Invalid expression; 'division by zero'"}), diags());
     EXPECT_EQ(";", pp("__assert(1 / 0, m2);"));
-    EXPECT_EQ(Strings({"PP52: Invalid expression; 'division by zero'", "PP91: 'm2'"}), diags());
+    EXPECT_EQ(Strings({"PP52: Invalid expression; 'division by zero'"}), diags());
+    // Suppressed, it still fails: the PP91 of the message.
+    EXPECT_EQ(";", pp("{#ignore PP52}__assert(1 mod 0 + 1 = 1, m3);"));
+    EXPECT_EQ(Strings({"PP91: 'm3'"}), diags());
 }
 
 // SPEC 6.4: a dead operand (not evaluated) is never an evaluation failure, so

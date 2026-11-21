@@ -1,12 +1,13 @@
 #include "preprocessor.hpp"
 #include "../loader/directive_parser.hpp"
-#include "../env/param_constants.hpp"
 #include "line_compaction.hpp"
 #include "preprocessor_internal.hpp"
 
 #include "../loader/lexer.hpp"
 #include "../loader/loader.hpp"
+#include "../util/text.hpp"
 
+#include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -37,9 +38,9 @@ void preprocess(std::istream& input, std::ostream& output, Env& env) {
     auto its = iec3_tokens_from_string(text ? *text : std::string(), env.get_remove_comments(),
                                        first_lineno);
     std::vector<Token> ots;
+    expand(its, ots, env);
     // No leading line marker here (unlike the jiepp command line), so tell
     // the compaction which line the stream starts on.
-    expand(its, ots, env);
     jiepp::compact_blank_lines(ots, env.get_max_blank_lines(),
                                jiepp::BlankLineMode::Markers, env.is_standard_pragma_style(),
                                first_lineno);
@@ -89,10 +90,13 @@ void report_unterminated_literal(Token& t) {
     t.unterminated = false;
     const std::size_t below = t.line_map ? t.line_map->line_of(0) : 0;
     t.line_map.reset();
-    // Opening quote to the end of the literal's first line: a "$"+newline
-    // continuation would otherwise put a line break in the diagnostic.
+    // Opening quote to the end of the literal's first line, and no more than
+    // diag_clip() quotes: a "$"+newline continuation would otherwise put a
+    // line break in the diagnostic, and a literal in a directive with no
+    // closing '}' runs to the end of the input.
     at_lines_below(below, [&] {
-        ISSUE(UNTERMINATED_STRING_LITERAL, t.text.substr(0, t.text.find_first_of("\r\n")));
+        ISSUE(UNTERMINATED_STRING_LITERAL,
+              Util::diag_clip(std::string_view(t.text).substr(0, t.text.find_first_of("\r\n"))));
     });
 }
 
@@ -226,7 +230,8 @@ ExpandedPath expanded_path(const std::vector<Token>& ts) {
             p.end = j + 1;
             return p;
         }
-        name += ts[j].type == Token::C ? std::string(" ") : ts[j].text;
+        if (!ts[j].is_edge_space())
+            name += ts[j].type == Token::C ? std::string(" ") : ts[j].text;
     }
     return p;
 }
@@ -264,7 +269,8 @@ std::string expand_operand_text(const std::string& text, Env& env,
                                 bool report_unterminated) {
     std::string r;
     for (const auto& t : expand_operand_tokens(text, env, report_unterminated))
-        r += t.text;
+        if (!t.is_edge_space())
+            r += t.text;
     return r;
 }
 
@@ -302,8 +308,6 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
 #define JIEPP_VERSION "0.0.0"
 #endif
     Env env;
-    env.set_max_include_depth(DEFAULT_MAX_INCLUDE_DEPTH);
-    env.set_pragma_style("annotated");
     // Set before -D processing below (U5): -D's body follows the same
     // comment policy as {#define} (handle_define() reads it via
     // env.get_remove_comments()).
@@ -336,7 +340,7 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     // NOTE: "defined" is NOT installed permanently; it is installed temporarily
     // by eval_cond_str during #if/#elif condition evaluation only.
 
-    // Predefined IEC 61131-3 type range/mask macros (matching jieccc_config.py)
+    // Predefined IEC 61131-3 type range/mask macros (matching jiecc_config.py)
     static const std::vector<std::pair<std::string, std::string>> builtin_macros = {
 #define JIEPP_BUILTIN_STR(name, val) {name, val},
 #include "builtin_macros.def"
@@ -370,10 +374,14 @@ Env setup(const std::vector<std::pair<std::string, std::string>>& predefine_macr
     // head such as "F(x)", is validated the same as any {#define} name, and
     // redefining an existing macro (including a builtin one already
     // installed above) with a different body is MACRO_REDEFINED (PP35).
-    for (auto& [k, v] : predefine_macros)
-        jiepp::preprocessor_detail::handle_define(k + " " + v, env);
+    for (const auto& kv : predefine_macros)
+        apply_define_option(kv, env);
 
     return env;
+}
+
+void apply_define_option(const std::pair<std::string, std::string>& name_value, Env& env) {
+    (void)jiepp::preprocessor_detail::handle_define(name_value.first + " " + name_value.second, env);
 }
 
 void apply_undef_option(const std::string& name, Env& env) {
@@ -407,7 +415,8 @@ std::string define_directive_text(const std::string& name, const Macro& macro) {
 
 void dump_macros(Env& env, std::ostream& output) {
     for (auto& [name, macro] : env.symbols()) {
-        if (dynamic_cast<DefinedOperator*>(macro)) continue;
+        // Empty for a macro without a {#define} form (a built-in, the
+        // transient 'defined' operator).
         std::string line = jiepp::preprocessor_detail::define_directive_text(name, *macro);
         if (!line.empty())
             output << line << "\n";

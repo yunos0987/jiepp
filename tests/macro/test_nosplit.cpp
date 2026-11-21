@@ -12,18 +12,7 @@
 // by a plain __VA_ARGS__) changes the results checked here.
 // =====================================================================
 
-class NosplitTest : public JieppTest {
-protected:
-    // Each diagnostic line without its location prefix, e.g. "PP34: ...".
-    std::vector<std::string> diags() {
-        std::vector<std::string> out;
-        for (const auto& m : messages()) {
-            auto p = m.find(": PP");
-            out.push_back(p == std::string::npos ? m : m.substr(p + 2));
-        }
-        return out;
-    }
-};
+class NosplitTest : public JieppTest {};
 
 // The RobustnessTest* name matches the sandbox test presets' filter
 // ^(Sandbox|RobustnessTest), so these run in sandbox builds too.
@@ -91,18 +80,22 @@ TEST_F(NosplitTest, Stringize) {
 }
 
 // T5: @@ does not pre-expand its operands; through a relay (XCAT) the
-// result is pasted. A protected comma at the edge is an ANY token, so
-// pasting it to an identifier is not PP32 (it would be for an ordinary
-// comma). `__nosplit(a, b) @@ y` pastes the closing ')' to 'y', which is
-// PP32 for any macro; the failed paste keeps both operands, so 'y' is not
-// lost (PasteToClosingParenKeepsBothOperands below).
+// result is pasted. A protected comma at the edge is an ANY token, but `x`
+// and `,` written together are still two tokens, so pasting them is PP32
+// (SPEC §4.3) and both stay. `__nosplit(a, b) @@ y` pastes the closing ')'
+// to 'y', which is PP32 for any macro; the failed paste keeps both
+// operands, so 'y' is not lost (PasteToClosingParenKeepsBothOperands below).
 TEST_F(NosplitTest, PasteAdjacency) {
     const std::string cat = "{#define CAT(p, q) p @@ q}{#define XCAT(p, q) CAT(p, q)}";
     EXPECT_EQ("x__nosplit(a, b)", pp("{#define P1() x @@ __nosplit(a, b)}P1()"));
     EXPECT_EQ("xa, b", pp(cat + "XCAT(x, __nosplit(a, b))"));
     EXPECT_EQ("a, by", pp(cat + "XCAT(__nosplit(a, b), y)"));
-    EXPECT_EQ("x, b", pp(cat + "XCAT(x, __nosplit(, b))"));
     EXPECT_TRUE(empty());
+    {
+        Issue::ContinueMode guard({});
+        EXPECT_EQ("x, b", pp(cat + "XCAT(x, __nosplit(, b))"));
+        EXPECT_EQ(Strings({"PP32: Invalid token pasting (@@); 'x @@ ,'"}), diags());
+    }
     {
         // Control: with ID, CAT receives three arguments.
         Issue::ContinueMode guard({});
@@ -112,10 +105,11 @@ TEST_F(NosplitTest, PasteAdjacency) {
 }
 
 // The closing ')' of __nosplit(...) pasted to 'y' is PP32 (a structural
-// token cannot be pasted); both operands stay, so 'y' is kept.
+// token cannot be pasted); both operands stay, so 'y' is kept, one space
+// after the `b` that ends __nosplit's replacement (SPEC §3.9).
 TEST_F(NosplitTest, PasteToClosingParenKeepsBothOperands) {
     Issue::ContinueMode guard({});
-    EXPECT_EQ("a, by", pp("{#define P2() __nosplit(a, b) @@ y}P2()"));
+    EXPECT_EQ("a, b y", pp("{#define P2() __nosplit(a, b) @@ y}P2()"));
     EXPECT_EQ(Strings({"PP32: Invalid token pasting (@@); ') @@ y'"}), diags());
 }
 
@@ -231,13 +225,13 @@ TEST_F(NosplitTest, TextEqualsVaArgsOracle) {
     }
 }
 
-// The line number inside a multi-line call is that of the closing
-// parenthesis, as for a function macro. As with __VA_ARGS__, a line break
+// A __LINE__ in the arguments of a multi-line call is the line it is written
+// on, as for a function macro (SPEC 12.1). As with __VA_ARGS__, a line break
 // in the arguments is not output in place (no space after the comma); the
 // call's line break follows the result, keeping the line count.
 TEST_F(NosplitTest, LineInMultiLineArguments) {
-    EXPECT_EQ("2,2\n", pp("__nosplit(__LINE__,\n__LINE__)"));
-    EXPECT_EQ("2,2\n", pp(kId + "ID(__LINE__,\n__LINE__)")); // same as the control
+    EXPECT_EQ("1,2\n", pp("__nosplit(__LINE__,\n__LINE__)"));
+    EXPECT_EQ("1,2\n", pp(kId + "ID(__LINE__,\n__LINE__)")); // same as the control
     EXPECT_TRUE(empty());
 }
 

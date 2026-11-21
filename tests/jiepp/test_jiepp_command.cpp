@@ -41,7 +41,6 @@ static void run_e2e(const std::string& testid,
                     bool remove_comments = false,
                     int max_include_depth = -1,
                     bool dM = false,
-                    const std::string& dep_target = "",
                     const std::vector<std::string>& include_files = {},
                     const std::vector<std::string>& undef_macros = {},
                     bool suppress_warnings = false,
@@ -66,15 +65,7 @@ static void run_e2e(const std::string& testid,
     std::ofstream actual_log_file(actual_log_filepath, std::ios::binary);
     Issue::initialize(actual_log_file);
 
-    bool error_mode;
-    std::string input_base;
-    if (testid.ends_with(".error")) {
-        input_base = testid.substr(0, testid.size() - std::string(".error").size());
-        error_mode = true;
-    } else {
-        input_base = testid;
-        error_mode = false;
-    }
+    const bool error_mode = testid.ends_with(".error");
 
     // Build define_macros strings
     std::vector<std::string> define_macros;
@@ -82,17 +73,14 @@ static void run_e2e(const std::string& testid,
         define_macros.push_back(k + "=" + v);
 
     // Convert include_files to relative paths (for consistent golden output)
-    std::vector<std::string> rel_include_filepaths;
-    for (const auto& filepath : include_files)
-        rel_include_filepaths.push_back(filepath);
 
     JieppOptions opts;
     opts.input_filepaths = {input_filepath.generic_string()};
-    opts.define_macros = define_macros;
+    opts.add_defines(define_macros);
     opts.syspaths = syspaths;
     opts.output_filepath = actual_out_filepath;
-    opts.include_filepaths = rel_include_filepaths;
-    opts.undef_macros = undef_macros;
+    opts.include_filepaths = include_files;
+    opts.add_undefs(undef_macros);
     opts.suppress_warnings = suppress_warnings;
     opts.werror = werror;
     if (max_include_depth >= 0)
@@ -106,9 +94,10 @@ static void run_e2e(const std::string& testid,
     // coverage, so it must also set -MD to keep "preprocessed output + dep
     // file" semantics and preserve every existing golden byte-for-byte.
     opts.MD = true;
-    if (!dep_target.empty())
-        opts.dep_target = dep_target;
     opts.dep_file = actual_dep_filepath;
+    // With -MD and -o the default target is the -o path, which is under the
+    // build tree here; the goldens keep the target of the plain case.
+    opts.dep_targets = {{input_filepath.stem().string() + ".output"}};
 
     int rc = jiepp_command(opts);
     actual_log_file.close();
@@ -166,7 +155,7 @@ TEST_F(JieppCommandTest, DOptionRejectsNonIdentifierName) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"1=2"};
+    opts.add_defines({"1=2"});
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: error: PP30: Invalid define syntax; "
               "'macro name must be an identifier: 1 2'",
@@ -177,7 +166,7 @@ TEST_F(JieppCommandTest, UOptionRejectsNonIdentifierName) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.undef_macros = {"1"};
+    opts.add_undefs({"1"});
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: error: PP30: Invalid define syntax; "
               "'macro name must be an identifier: 1'",
@@ -188,9 +177,9 @@ TEST_F(JieppCommandTest, UOptionRejectsDefined) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.undef_macros = {"defined"};
+    opts.add_undefs({"defined"});
     EXPECT_NE(0, jiepp_command(opts));
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
 }
 
 // U4: --silent must already be in effect for a diagnostic raised while
@@ -200,7 +189,7 @@ TEST_F(JieppCommandTest, SilentSuppressesDOptionDiagnostic) {
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
     opts.silent = true;
-    opts.define_macros = {"=1"};
+    opts.add_defines({"=1"});
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_TRUE(empty());
 }
@@ -210,7 +199,7 @@ TEST_F(JieppCommandTest, SuppressWarningsSuppressesDOptionRedefineWarning) {
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
     opts.suppress_warnings = true;
-    opts.define_macros = {"A=1", "A=2"};
+    opts.add_defines({"A=1", "A=2"});
     EXPECT_EQ(0, jiepp_command(opts));
     EXPECT_TRUE(empty());
 }
@@ -220,7 +209,7 @@ TEST_F(JieppCommandTest, WerrorPromotesDOptionRedefineWarning) {
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
     opts.werror = true;
-    opts.define_macros = {"A=1", "A=2"};
+    opts.add_defines({"A=1", "A=2"});
     EXPECT_NE(0, jiepp_command(opts));
 }
 
@@ -231,7 +220,7 @@ TEST_F(JieppCommandTest, DOptionLexerDiagnosticUsesCliLocation) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A=(* x"};
+    opts.add_defines({"A=(* x"});
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: error: PP20: Unclosed comment; '(* x'", message());
 }
@@ -243,8 +232,8 @@ TEST_F(JieppCommandTest, UOptionExtraTokensWarns) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A=1"};
-    opts.undef_macros = {"A B"};
+    opts.add_defines({"A=1"});
+    opts.add_undefs({"A B"});
     EXPECT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: warning: PP49: Extra tokens at end of directive; '{#undef A B}'", message());
 }
@@ -254,8 +243,8 @@ TEST_F(JieppCommandTest, WerrorPromotesUOptionExtraTokensWarning) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A=1"};
-    opts.undef_macros = {"A B"};
+    opts.add_defines({"A=1"});
+    opts.add_undefs({"A B"});
     opts.werror = true;
     EXPECT_NE(0, jiepp_command(opts));
 }
@@ -265,8 +254,8 @@ TEST_F(JieppCommandTest, SuppressWarningsSuppressesUOptionExtraTokensWarning) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A=1"};
-    opts.undef_macros = {"A B"};
+    opts.add_defines({"A=1"});
+    opts.add_undefs({"A B"});
     opts.suppress_warnings = true;
     EXPECT_EQ(0, jiepp_command(opts));
     EXPECT_TRUE(empty());
@@ -279,7 +268,7 @@ TEST_F(JieppCommandTest, DOptionMissingWhitespaceWarns) {
     fs::current_path(jiepp_root_dir());
     JieppOptions opts;
     opts.input_filepaths = {(I_DIR / "none.iec").generic_string()};
-    opts.define_macros = {"A.B=1"};
+    opts.add_defines({"A.B=1"});
     EXPECT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: warning: PP38: Missing whitespace after the macro name; 'A.B 1'", message());
 }
@@ -638,23 +627,19 @@ TEST_F(JieppCommandTest, DMOrderStableAcrossUndefRedefine) {
 // ---- New CLI feature tests ----
 
 TEST_F(JieppCommandTest, UndefOption) {
-    run_e2e("U_option/U_option", {}, {}, std::nullopt, false, -1, false, "", {}, {"EXTRA"});
+    run_e2e("U_option/U_option", {}, {}, std::nullopt, false, -1, false, {}, {"EXTRA"});
 }
 
 TEST_F(JieppCommandTest, IncludeOption) {
-    run_e2e("include_option/include_option", {}, {}, std::nullopt, false, -1, false, "", {(I_DIR / "include_option" / "header.iec").generic_string()});
+    run_e2e("include_option/include_option", {}, {}, std::nullopt, false, -1, false, {(I_DIR / "include_option" / "header.iec").generic_string()});
 }
 
 TEST_F(JieppCommandTest, WarnSuppress) {
-    run_e2e("U_option/U_option_warn", {}, {{"FOO", "99"}}, std::nullopt, false, -1, false, "", {}, {}, true);
+    run_e2e("U_option/U_option_warn", {}, {{"FOO", "99"}}, std::nullopt, false, -1, false, {}, {}, true);
 }
 
 TEST_F(JieppCommandTest, Werror) {
-    run_e2e("U_option/U_option_werror.error", {}, {{"FOO", "99"}}, std::nullopt, false, -1, false, "", {}, {}, false, true);
-}
-
-TEST_F(JieppCommandTest, DepOutputM) {
-    run_e2e("include", {I_DIR.generic_string()}, {}, std::nullopt, false, -1, false);
+    run_e2e("U_option/U_option_werror.error", {}, {{"FOO", "99"}}, std::nullopt, false, -1, false, {}, {}, false, true);
 }
 
 // ---- Error format consistency tests ----
@@ -672,47 +657,28 @@ TEST_F(JieppCommandTest, ErrorFormatFileError) {
     EXPECT_EQ("jiepp: error: PP10: An error occurred with the file; '/nonexistent/dir/output.iec'", message());
 }
 
-TEST_F(JieppCommandTest, DepOutputMMExcludesSystem) {
-    run_e2e("sinclude_with_syspath_directive/sinclude_with_syspath_directive_x", {}, {}, std::nullopt, false, -1, false);
-}
-
-// T1a: -M should output dependencies with display paths (not canonical paths)
-TEST_F(JieppCommandTest, DepOutputMDisplayPath) {
-     run_e2e("include", {I_DIR.generic_string()}, {}, std::nullopt, false, -1, false);
-}
-
-// T1b: -MM should also output with display paths
-TEST_F(JieppCommandTest, DepOutputMMDisplayPath) {
-     run_e2e("sinclude_with_syspath_directive/sinclude_with_syspath_directive_x", {}, {}, std::nullopt, false, -1, false);
-}
-
-// T1c: Ensure no duplicate dependencies are output
-TEST_F(JieppCommandTest, DepOutputNoDuplicates) {
-     run_e2e("include_double", {I_DIR.generic_string()}, {}, std::nullopt, false, -1, false);
-}
-
 // T2: -w + -Werror interaction: -Werror takes priority, warning is promoted
 TEST_F(JieppCommandTest, WarnSuppressWithWerror) {
-    run_e2e("U_option/U_option_w_werror.error", {}, {{"FOO", "99"}}, std::nullopt, false, -1, false, "",
+    run_e2e("U_option/U_option_w_werror.error", {}, {{"FOO", "99"}}, std::nullopt, false, -1, false,
             {}, {}, true, true);
 }
 
 // T3: -include with nonexistent file should produce error
 TEST_F(JieppCommandTest, IncludeOptionMissing) {
-    run_e2e("include_option/include_option_missing.error", {}, {}, std::nullopt, false, -1, false, "",
+    run_e2e("include_option/include_option_missing.error", {}, {}, std::nullopt, false, -1, false,
             {"/nonexistent/path/to/header.iec"});
 }
 
 // T4: -U of never-defined macro should be a silent no-op
 TEST_F(JieppCommandTest, UndefOptionNoprior) {
-    run_e2e("U_option/U_option_noprior", {}, {}, std::nullopt, false, -1, false, "",
+    run_e2e("U_option/U_option_noprior", {}, {}, std::nullopt, false, -1, false,
             {}, {"NEVER_DEFINED_MACRO"});
 }
 
 // ---- Additional coverage: multiple -include ----
 
 TEST_F(JieppCommandTest, IncludeOptionMultiple) {
-    run_e2e("include_option/include_option_multi", {}, {}, std::nullopt, false, -1, false, "",
+    run_e2e("include_option/include_option_multi", {}, {}, std::nullopt, false, -1, false,
             {(I_DIR / "include_option" / "header.iec").generic_string(),
              (I_DIR / "include_option" / "header2.iec").generic_string()});
 }
@@ -721,12 +687,8 @@ TEST_F(JieppCommandTest, IncludeOptionMultiple) {
 // ---- Additional coverage: multiple -U ----
 
 TEST_F(JieppCommandTest, UndefMultiple) {
-    run_e2e("dM/dM_undef_multiple", {}, {{"A", "1"}, {"B", "2"}, {"_JIEPP_FULL_VER", "75321"}, {"_JIEPP_VER", "753"}, {"_JIEPP_VERSION", "'7.53.21'"}}, std::nullopt, false, -1, true, "",
+    run_e2e("dM/dM_undef_multiple", {}, {{"A", "1"}, {"B", "2"}, {"_JIEPP_FULL_VER", "75321"}, {"_JIEPP_VER", "753"}, {"_JIEPP_VERSION", "'7.53.21'"}}, std::nullopt, false, -1, true,
             {}, {"A"});
-}
-
-TEST_F(JieppCommandTest, DepOutputMTCustomTarget) {
-    run_e2e("include", {I_DIR.generic_string()}, {}, std::nullopt, false, -1, false);
 }
 
 // ---- Additional coverage: -MF write failure ----
@@ -739,22 +701,6 @@ TEST_F(JieppCommandTest, DepOutputMFWriteFailure) {
     opts.dep_file = "/nonexistent/deeply/nested/path/output.d";
     EXPECT_NE(0, jiepp_command(opts));
     EXPECT_EQ("jiepp: error: PP10: An error occurred with the file; '/nonexistent/deeply/nested/path/output.d'", message());
-}
-
-// -MM Coverage: User includes not excluded
-TEST_F(JieppCommandTest, DepOutputMMIncludesUserIncludes) {
-    run_e2e("include", {I_DIR.generic_string()}, {}, std::nullopt, false, -1, false);
-}
-
-// -MM Coverage: System includes excluded (single quote variant)
-TEST_F(JieppCommandTest, DepOutputMMSingleQuotedSystemExcluded) {
-    run_e2e("sinclude_with_syspath_directive/sinclude_with_syspath_directive_x_single", {}, {}, std::nullopt, false, -1, false);
-}
-
-// -MM Coverage: Custom target with system includes excluded
-TEST_F(JieppCommandTest, DepOutputMMCustomTarget) {
-    // kludge
-    //run_e2e("sinclude_with_syspath_directive/sinclude_with_syspath_directive_x_tag", {}, {}, std::nullopt, false, -1, false, "myapp.output");
 }
 
 // ---- -P flag (no line markers) tests ----
@@ -1397,21 +1343,23 @@ TEST_F(JieppCommandTest, MDWithMFOverridesDepFile) {
     EXPECT_TRUE(fs::exists(dep_custom)) << "custom dep file not created";
     EXPECT_FALSE(fs::exists(tmpdir / "md_mf.d")) << "auto-named dep file should not exist";
 
-    // Target name must be derived from the input file, not from -MF filename.
+    // With -MD and -o the target is the -o path (clang), never the -MF
+    // filename.
     std::string dep_content;
     {
         std::ifstream f(dep_custom);
         ASSERT_TRUE(f) << "cannot open dep file";
         dep_content.assign(std::istreambuf_iterator<char>(f), {});
     }
-    EXPECT_NE(dep_content.find("md_mf.output:"), std::string::npos)
-        << "target should be derived from input file, got: " << dep_content;
-    EXPECT_EQ(dep_content.find("custom_mf.output:"), std::string::npos)
+    EXPECT_EQ(dep_content.rfind(output.generic_string() + ":", 0), 0u)
+        << "target should be the -o path, got: " << dep_content;
+    EXPECT_EQ(dep_content.find("custom_mf"), std::string::npos)
         << "-MF should not affect target name, got: " << dep_content;
 }
 
-TEST_F(JieppCommandTest, MMDExcludesSyspaths) {
-    // -MMD: system include (syspath) deps should NOT appear in the .d file.
+TEST_F(JieppCommandTest, MMDExcludesIsystemHeaders) {
+    // -MMD: a header found under an -isystem directory does NOT appear in the
+    // .d file (gcc/clang). Until -isystem was added, this test used -I.
     fs::current_path(jiepp_root_dir());
     auto tmpdir = fs::temp_directory_path();
 
@@ -1444,7 +1392,7 @@ TEST_F(JieppCommandTest, MMDExcludesSyspaths) {
     opts.output_filepath = output.generic_string();
     opts.MMD = true;
     opts.dep_mode = DepMode::USER;
-    opts.syspaths = {sysdir.generic_string()};
+    opts.system_paths = {sysdir.generic_string()};
     opts.no_line_markers = true;
 
     ASSERT_EQ(0, jiepp_command(opts));
@@ -1453,7 +1401,7 @@ TEST_F(JieppCommandTest, MMDExcludesSyspaths) {
     std::ifstream df(dep_out, std::ios::binary);
     std::string dcontent((std::istreambuf_iterator<char>(df)), std::istreambuf_iterator<char>());
     EXPECT_NE(std::string::npos, dcontent.find("mmd_user.iec")) << "user dep missing";
-    EXPECT_EQ(std::string::npos, dcontent.find("syshdr.iec"))   << "-MMD included syspath dep";
+    EXPECT_EQ(std::string::npos, dcontent.find("syshdr.iec"))   << "-MMD included -isystem dep";
 }
 
 TEST_F(JieppCommandTest, MDDefaultFalse) {
@@ -1536,6 +1484,431 @@ TEST_F(JieppCommandTest, DepMPAddsEmptyRulePerHeader) {
     EXPECT_TRUE(messages().empty());
 }
 
+TEST_F(JieppCommandTest, DepMMExcludesSystemHeadersInEveryOperandForm) {
+    // -MM leaves out every header found under an -isystem directory,
+    // whichever operand form names it ('...', "..." or <...>, {#include},
+    // {#sinclude} or {#include <...>}); -M lists them, each once, under the
+    // -isystem path (gcc/clang: `#include "a.h"` found there is left out too).
+    MpTree t;
+    fs::create_directories(t.dir / "sys");
+    t.write("sys/s1.iec", "1\n");
+    t.write("sys/s2.iec", "2\n");
+    t.write("sys/s3.iec", "3\n");
+    t.write("sys/s4.iec", "4\n");
+    t.write("mm_main.iec", "{#include 'mp_a.iec'}{#sinclude 's1.iec'}{#sinclude \"s2.iec\"}"
+                           "{#include <s3.iec>}{#sinclude <s1.iec>}{#include 's4.iec'}m\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"mm_main.iec"};
+    opts.system_paths = {"sys"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "mm.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mm_main.output: \\\n  mm_main.iec \\\n  mp_a.iec\n", t.read("mm.d"));
+
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = "m.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mm_main.output: \\\n  mm_main.iec \\\n  mp_a.iec \\\n  sys/s1.iec \\\n"
+              "  sys/s2.iec \\\n  sys/s3.iec \\\n  sys/s4.iec\n",
+              t.read("m.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, DepMMListsHeadersFoundUnderIAndSyspath) {
+    // -I and {#syspath} directories are not system directories: -MM lists
+    // what is found there, even when written <...> or with {#sinclude}
+    // (gcc/clang: `#include <a.h>` found through -I is listed). Before
+    // -isystem, -MM left out every <...> and {#sinclude} include.
+    MpTree t;
+    fs::create_directories(t.dir / "inc");
+    fs::create_directories(t.dir / "lib");
+    t.write("inc/a.iec", "a\n");
+    t.write("lib/b.iec", "b\n");
+    t.write("mm_main.iec", "{#syspath 'lib'}{#include <a.iec>}{#sinclude 'b.iec'}m\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"mm_main.iec"};
+    opts.syspaths = {"inc"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "mm.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("mm_main.output: \\\n  mm_main.iec \\\n  inc/a.iec \\\n  lib/b.iec\n", t.read("mm.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, DepMMSystemHeaderRules) {
+    // Measured with clang 22.1 and gcc 13.3 (-MM, the same files, `#include`
+    // for {#include}); every case below gives the same prerequisites there.
+    MpTree t;
+    fs::create_directories(t.dir / "sys");
+    fs::create_directories(t.dir / "inc");
+    auto mm = [&](JieppOptions opts, const std::string& main) {
+        opts.input_filepaths = {main};
+        opts.dep_mode = DepMode::USER;
+        opts.dep_file = "mm.d";
+        EXPECT_EQ(0, jiepp_command(opts)) << main;
+        return t.read("mm.d");
+    };
+    JieppOptions both;
+    both.syspaths = {"inc"};
+    both.system_paths = {"sys"};
+
+    // A header included from a system header is a system header too,
+    // whether it is found next to it ("t") or through -I (<u>).
+    t.write("sys/s.iec", "{#include 't.iec'}{#include <u.iec>}\n");
+    t.write("sys/t.iec", "T\n");
+    t.write("inc/u.iec", "U\n");
+    t.write("m1.iec", "{#include <s.iec>}\n");
+    EXPECT_EQ("m1.output: \\\n  m1.iec\n", mm(both, "m1.iec"));
+
+    // ... but an include of the same file from a user file is listed, also
+    // after one from a system header, and also when {#pragma once} skips it
+    // (clang; gcc lists it only when its first include is a user one).
+    t.write("m2.iec", "{#include <s.iec>}{#include <u.iec>}\n");
+    EXPECT_EQ("m2.output: \\\n  m2.iec \\\n  inc/u.iec\n", mm(both, "m2.iec"));
+    t.write("inc/u.iec", "{#pragma once}U\n");
+    EXPECT_EQ("m2.output: \\\n  m2.iec \\\n  inc/u.iec\n", mm(both, "m2.iec"));
+
+    // A header found in the including user file's own directory is a user
+    // header, even when that directory is also an -isystem one.
+    t.write("a.iec", "A\n");
+    t.write("b.iec", "B\n");
+    t.write("m3.iec", "{#include 'a.iec'}{#include <b.iec>}\n");
+    JieppOptions dot;
+    dot.system_paths = {"."};
+    EXPECT_EQ("m3.output: \\\n  m3.iec \\\n  a.iec\n", mm(dot, "m3.iec"));
+
+    // A directory given to both -I and -isystem is a system directory,
+    // whichever comes first and however it is spelled.
+    t.write("inc/c.iec", "C\n");
+    t.write("m4.iec", "{#include <c.iec>}\n");
+    const std::vector<std::pair<std::string, std::string>> spellings = {
+        {"inc", "inc"}, {"./inc", "inc"}, {"inc/", "inc"}, {"inc", "./inc"}};
+    for (const auto& [i, s] : spellings) {
+        JieppOptions o;
+        o.syspaths = {i};
+        o.system_paths = {s};
+        EXPECT_EQ("m4.output: \\\n  m4.iec\n", mm(o, "m4.iec")) << i;
+    }
+    // A {#syspath} naming an -isystem directory is the same.
+    t.write("m5.iec", "{#syspath 'inc'}{#include <c.iec>}\n");
+    JieppOptions isys_inc;
+    isys_inc.system_paths = {"inc"};
+    EXPECT_EQ("m5.output: \\\n  m5.iec\n", mm(isys_inc, "m5.iec"));
+
+    // A -include file found under -isystem is a system header; the main
+    // input never is one.
+    t.write("sys/p.iec", "P\n");
+    t.write("m6.iec", "M\n");
+    JieppOptions pre = both;
+    pre.include_filepaths = {"p.iec"};
+    EXPECT_EQ("m6.output: \\\n  m6.iec\n", mm(pre, "m6.iec"));
+    t.write("sys/m7.iec", "M\n");
+    EXPECT_EQ("m7.output: \\\n  sys/m7.iec\n", mm(both, "m7.iec"));
+
+    // -MP: the empty rules leave out the same headers.
+    t.write("q.iec", "Q\n");
+    t.write("m8.iec", "{#include <s.iec>}{#include 'q.iec'}\n");
+    JieppOptions mp = both;
+    mp.MP = true;
+    EXPECT_EQ("m8.output: \\\n  m8.iec \\\n  q.iec\nq.iec:\n", mm(mp, "m8.iec"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, DepMMUserSystemUserNesting) {
+    // A user header includes a system header, which includes a header found
+    // through -I ("v") and one the main input includes later (<w>). Measured
+    // with -MM -MP: clang 22.1 lists main.c u.h inc/w.h (w is listed for the
+    // main input's own include); gcc 13.3 lists main.c u.h. jiepp follows
+    // clang.
+    MpTree t;
+    fs::create_directories(t.dir / "sys");
+    fs::create_directories(t.dir / "inc");
+    t.write("n_main.iec", "{#include 'u.iec'}{#include <w.iec>}\n");
+    t.write("u.iec", "{#include <s.iec>}\n");
+    t.write("sys/s.iec", "{#include 'v.iec'}{#include <w.iec>}\n");
+    t.write("inc/v.iec", "V\n");
+    t.write("inc/w.iec", "W\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"n_main.iec"};
+    opts.syspaths = {"inc"};
+    opts.system_paths = {"sys"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "n.d";
+    opts.MP = true;
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("n_main.output: \\\n  n_main.iec \\\n  u.iec \\\n  inc/w.iec\nu.iec:\ninc/w.iec:\n", t.read("n.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, IsystemSameDirectoryByIdentity) {
+    // The same directory spelled so that the text differs (another letter
+    // case on Windows, a symbolic link elsewhere) is still one directory: the
+    // -I entry is dropped and the file is a system header (clang 22.1 and gcc
+    // 13.3 give main.c only for -MM -IINC -isystem inc).
+    MpTree t;
+    fs::create_directories(t.dir / "inc");
+    t.write("inc/c.iec", "C\n");
+    t.write("id_main.iec", "{#include <c.iec>}\n");
+#ifdef _WIN32
+    const std::string other = "INC";
+#else
+    const std::string other = "inc_link";
+    std::error_code ec;
+    fs::create_directory_symlink("inc", t.dir / other, ec);
+    ASSERT_FALSE(ec) << ec.message();
+#endif
+    JieppOptions opts;
+    opts.input_filepaths = {"id_main.iec"};
+    opts.syspaths = {other};
+    opts.system_paths = {"inc"};
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "id.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("id_main.output: \\\n  id_main.iec\n", t.read("id.d"));
+    // The other way round: -isystem names it with the other spelling.
+    opts.syspaths = {"inc"};
+    opts.system_paths = {other};
+    opts.dep_file = "id2.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("id_main.output: \\\n  id_main.iec\n", t.read("id2.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
+TEST_F(JieppCommandTest, EmptyIAndIsystemAreIgnored) {
+    // -I '' and -isystem '' name no directory (gcc/clang ignore them without
+    // a diagnostic): <b.iec> in the working directory is not found.
+    MpTree t;
+    t.write("b.iec", "B\n");
+    t.write("e_main.iec", "{#include <b.iec>}\n");
+    for (int k = 0; k < 2; ++k) {
+        JieppOptions opts;
+        opts.input_filepaths = {"e_main.iec"};
+        opts.output_filepath = "e.piec";
+        (k == 0 ? opts.syspaths : opts.system_paths) = {""};
+        EXPECT_NE(0, jiepp_command(opts)) << k;
+        EXPECT_EQ(Issue::Code::FILE_NOT_FOUND, code()) << k;
+    }
+    // An empty value next to a real one leaves the real one in place.
+    fs::create_directories(t.dir / "inc");
+    t.write("inc/b.iec", "IB\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"e_main.iec"};
+    opts.output_filepath = "e.piec";
+    opts.no_line_markers = true;
+    opts.syspaths = {"", "inc"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("IB\n", t.read("e.piec"));
+}
+
+TEST_F(JieppCommandTest, RepeatedIncludesAddOneDependencyEach) {
+    // Each (file, system header or not) pair is recorded once, also when
+    // {#pragma once} or a guard skips or re-reads it; -M still lists the
+    // first name.
+    MpTree t;
+    t.write("once.iec", "{#pragma once}O\n");
+    t.write("guard.iec", "{#ifndef G}{#define G}G{#endif}\n");
+    t.write("r_main.iec", "{#include 'once.iec'}{#include 'once.iec'}{#include './once.iec'}"
+                          "{#include 'guard.iec'}{#include 'guard.iec'}\n");
+    Env env = setup();
+    std::vector<Token> ots;
+    expand((t.dir / "r_main.iec").generic_string(), Loader::LoadType::INCLUDE, ots, env);
+    ASSERT_EQ(3u, env.dependencies().size());
+    EXPECT_FALSE(env.dependencies()[1].is_system);
+    EXPECT_NE(std::string::npos, env.dependencies()[1].display_path.find("once.iec"));
+    EXPECT_EQ(std::string::npos, env.dependencies()[1].display_path.find("./once.iec"));
+    EXPECT_NE(std::string::npos, env.dependencies()[2].display_path.find("guard.iec"));
+}
+
+TEST_F(JieppCommandTest, IsystemSearchOrderAndNames) {
+    // -isystem directories are searched after every -I directory, whatever
+    // the order written; a directory also given to -I moves to its -isystem
+    // position. A file found there is named under the path as given, like
+    // -I (line markers, __FILE__). clang 22.1 and gcc 13.3 give I1 for both.
+    MpTree t;
+    fs::create_directories(t.dir / "s1");
+    fs::create_directories(t.dir / "i1");
+    t.write("s1/a.iec", "S1 __FILE__\n");
+    t.write("i1/a.iec", "I1 __FILE__\n");
+    t.write("o.iec", "{#include <a.iec>}\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"o.iec"};
+    opts.output_filepath = "o.piec";
+    opts.no_line_markers = true;
+    opts.system_paths = {"s1"};
+    opts.syspaths = {"i1"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("I1 'i1/a.iec'\n", t.read("o.piec"));
+    opts.syspaths = {"s1", "i1"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("I1 'i1/a.iec'\n", t.read("o.piec"));
+    opts.syspaths = {};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("S1 's1/a.iec'\n", t.read("o.piec"));
+    t.write("h.iec", "{#if __has_include(<a.iec>)}yes{#endif}\n");
+    opts.input_filepaths = {"h.iec"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("yes\n", t.read("o.piec"));
+    EXPECT_TRUE(messages().empty());
+}
+
+// A prerequisite is the path the file was reached by, like gcc/clang: the
+// operand as written under the including file's directory (itself a
+// reached-by path, so it composes through nested includes) or under the
+// system path that held it, so a build tool can open every prerequisite from
+// the working directory. Nothing is normalised ("." and ".." stay); only a
+// leading "./" is dropped from a prerequisite.
+TEST_F(JieppCommandTest, DepPathsOpenFromTheWorkingDirectory) {
+    MpTree t;
+    fs::create_directories(t.dir / "sub" / "inc");
+    fs::create_directories(t.dir / "sub" / "lib");
+    t.write("sub/main.iec", "{#include 'inc/a.iec'}{#syspath 'lib'}{#sinclude 's.iec'}m\n");
+    t.write("sub/inc/a.iec", "{#include '../inc/b.iec'}{#include './c.iec'}a\n");
+    t.write("sub/inc/b.iec", "b\n");
+    t.write("sub/inc/c.iec", "c\n");
+    t.write("sub/lib/s.iec", "{#include 't.iec'}s\n");
+    t.write("sub/lib/t.iec", "t\n");
+    JieppOptions opts;
+    opts.input_filepaths = {"sub/main.iec"};
+    opts.dep_mode = DepMode::ALL;
+    opts.dep_file = "x.d";
+    opts.dep_targets = {{"tgt"}};
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("tgt: \\\n  sub/main.iec \\\n  sub/inc/a.iec \\\n  sub/inc/../inc/b.iec \\\n"
+              "  sub/inc/./c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
+              t.read("x.d"));
+    for (const char* dep : {"sub/main.iec", "sub/inc/a.iec", "sub/inc/../inc/b.iec", "sub/inc/./c.iec",
+                            "sub/lib/s.iec", "sub/lib/t.iec"})
+        EXPECT_TRUE(fs::exists(dep)) << dep;
+
+    // The same tree through -I, with the main input one level up.
+    t.write("top.iec", "{#sinclude 's.iec'}{#include 'sub/inc/c.iec'}x\n");
+    opts.input_filepaths = {"top.iec"};
+    opts.syspaths = {"./sub/lib"};
+    opts.dep_file = "y.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("tgt: \\\n  top.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec \\\n  sub/inc/c.iec\n",
+              t.read("y.d"));
+
+    // A file given by the caller is listed by where it was found, too: a
+    // -include file found only under -I, and what it includes. The main
+    // input comes first (gcc/clang), then the others as they were read.
+    t.write("sub/lib/pre.iec", "{#include 't.iec'}p\n");
+    opts.include_filepaths = {"pre.iec"};
+    opts.dep_file = "z.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("tgt: \\\n  top.iec \\\n  sub/lib/pre.iec \\\n  sub/lib/t.iec \\\n  sub/lib/s.iec \\\n"
+              "  sub/inc/c.iec\n",
+              t.read("z.d"));
+    opts.include_filepaths.clear();
+
+    // --disppath renames the main input only; what it includes is listed
+    // where it really is. A leading "./" is dropped from a prerequisite.
+    opts.input_filepaths = {"./sub/main.iec"};
+    opts.syspaths.clear();
+    opts.dep_file = "w.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("tgt: \\\n  sub/main.iec \\\n  sub/inc/a.iec \\\n  sub/inc/../inc/b.iec \\\n"
+              "  sub/inc/./c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
+              t.read("w.d"));
+    opts.disppath = "shown/x.iec";
+    opts.dep_file = "v.d";
+    ASSERT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("tgt: \\\n  shown/x.iec \\\n  sub/inc/a.iec \\\n  sub/inc/../inc/b.iec \\\n"
+              "  sub/inc/./c.iec \\\n  sub/lib/s.iec \\\n  sub/lib/t.iec\n",
+              t.read("v.d"));
+    opts.disppath.reset();
+
+    // An absolute operand, and an absolute {#syspath}, stay absolute.
+    // Skipped when the build tree's path has a character that Make or a
+    // string literal would escape; the expected text is built unescaped.
+    const std::string abs_dir = t.dir.generic_string();
+    if (abs_dir.find_first_of(" #$'\"{}") == std::string::npos) {
+        t.write("abs.iec", "{#include '" + abs_dir + "/sub/inc/c.iec'}{#syspath '" + abs_dir +
+                           "/sub/lib'}{#sinclude 't.iec'}x\n");
+        opts.input_filepaths = {"abs.iec"};
+        opts.dep_file = "u.d";
+        ASSERT_EQ(0, jiepp_command(opts));
+        EXPECT_EQ("tgt: \\\n  abs.iec \\\n  " + abs_dir + "/sub/inc/c.iec \\\n  " + abs_dir +
+                      "/sub/lib/t.iec\n",
+                  t.read("u.d"));
+    }
+    EXPECT_TRUE(messages().empty());
+}
+
+// The name of an included file in its line marker and in __FILE__ is the
+// path it was reached by, joined as gcc/clang join it (SPEC 13 "The Name of
+// an Included File"): nothing is normalised, {#line} does not move the base,
+// and --disppath renames the main input only.
+TEST_F(JieppCommandTest, IncludedFileNamesFollowGccClang) {
+    MpTree t;
+    fs::create_directories(t.dir / "sub" / "inc");
+    fs::create_directories(t.dir / "lib");
+    t.write("sub/main.iec", "{#include 'inc/a.iec'}\n{#line 10 'other.iec'}\n{#include 'inc/c.iec'}\n"
+                            "M __FILE__\n{#sinclude 's.iec'}\n");
+    t.write("sub/inc/a.iec", "{#include './c.iec'}\nA __FILE__\n");
+    t.write("sub/inc/c.iec", "C __FILE__ __FILE_NAME__ __BASE_FILE__\n");
+    t.write("lib/s.iec", "S __FILE__\n");
+    auto has = [](const std::string& out, const std::string& what) {
+        return out.find(what) != std::string::npos;
+    };
+
+    JieppOptions opts;
+    opts.input_filepaths = {"sub/main.iec"};
+    opts.syspaths = {"./lib"};
+    opts.output_filepath = "out.piec";
+    ASSERT_EQ(0, jiepp_command(opts));
+    std::string out = t.read("out.piec");
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/main.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/a.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/./c.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "C 'sub/inc/./c.iec' 'c.iec' 'sub/main.iec'")) << out;
+    EXPECT_TRUE(has(out, "A 'sub/inc/a.iec'")) << out;
+    // After {#line 10 'other.iec'}: the including file is shown as other.iec,
+    // but what it includes is still found and named under sub/.
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/c.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "C 'sub/inc/c.iec' 'c.iec' ")) << out;
+    EXPECT_TRUE(has(out, "M 'other.iec'")) << out;
+    EXPECT_TRUE(has(out, " 'other.iec'}*)")) << out;
+    // A header under -I ./lib keeps the path as given.
+    EXPECT_TRUE(has(out, "(*{#:0 './lib/s.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "S './lib/s.iec'")) << out;
+
+    // --disppath: the main input is shown by that name; nested files are
+    // named by where they are.
+    opts.disppath = "shown/x.iec";
+    ASSERT_EQ(0, jiepp_command(opts));
+    out = t.read("out.piec");
+    EXPECT_TRUE(has(out, "(*{#:0 'shown/x.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/a.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "C 'sub/inc/./c.iec' 'c.iec' 'shown/x.iec'")) << out;
+    opts.disppath.reset();
+
+    // {#syspath ''} is the directory of the file holding it. In a file
+    // whose own name has no directory that is the working directory, and a
+    // header found there is named by its operand alone (never by an
+    // absolute path); in ./sub/dir.iec it is ./sub/.
+    t.write("cwd.iec", "{#syspath ''}{#sinclude 'sub/inc/c.iec'}\n");
+    opts.input_filepaths = {"cwd.iec"};
+    opts.syspaths.clear();
+    opts.dep_mode = DepMode::ALL;
+    opts.MD = true;
+    opts.dep_file = "cwd.d";
+    opts.dep_targets = {{"tgt"}};
+    ASSERT_EQ(0, jiepp_command(opts));
+    out = t.read("out.piec");
+    EXPECT_TRUE(has(out, "(*{#:0 'sub/inc/c.iec'}*)")) << out;
+    EXPECT_TRUE(has(out, "C 'sub/inc/c.iec' 'c.iec' 'cwd.iec'")) << out;
+    EXPECT_EQ("tgt: \\\n  cwd.iec \\\n  sub/inc/c.iec\n", t.read("cwd.d"));
+
+    t.write("sub/dir.iec", "{#syspath ''}{#sinclude 'inc/c.iec'}\n");
+    opts.input_filepaths = {"./sub/dir.iec"};
+    ASSERT_EQ(0, jiepp_command(opts));
+    out = t.read("out.piec");
+    EXPECT_TRUE(has(out, "C './sub/inc/c.iec' 'c.iec' './sub/dir.iec'")) << out;
+    EXPECT_EQ("tgt: \\\n  sub/dir.iec \\\n  sub/inc/c.iec\n", t.read("cwd.d"));
+    EXPECT_TRUE(messages().empty());
+}
+
 TEST_F(JieppCommandTest, DepMPIncludesForceIncludedFile) {
     // A -include file is a prerequisite other than the main input, so it gets
     // an empty rule too (gcc/clang).
@@ -1548,7 +1921,7 @@ TEST_F(JieppCommandTest, DepMPIncludesForceIncludedFile) {
     opts.dep_file = "x.d";
     opts.MP = true;
     ASSERT_EQ(0, jiepp_command(opts));
-    EXPECT_EQ("mp_main.output: \\\n  mp_pre.iec \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\n"
+    EXPECT_EQ("mp_main.output: \\\n  mp_main.iec \\\n  mp_pre.iec \\\n  mp_a.iec \\\n  mp_b.iec\n"
               "mp_pre.iec:\nmp_a.iec:\nmp_b.iec:\n",
               t.read("x.d"));
 }
@@ -1560,7 +1933,7 @@ TEST_F(JieppCommandTest, DepMPWithMTKeepsHeaderNames) {
     opts.input_filepaths = {"mp_main.iec"};
     opts.dep_mode = DepMode::USER;
     opts.dep_file = "x.d";
-    opts.dep_target = "tgt";
+    opts.dep_targets = {{"tgt"}};
     opts.MP = true;
     ASSERT_EQ(0, jiepp_command(opts));
     EXPECT_EQ("tgt: \\\n  mp_main.iec \\\n  mp_a.iec \\\n  mp_b.iec\nmp_a.iec:\nmp_b.iec:\n", t.read("x.d"));
@@ -2132,7 +2505,7 @@ TEST_F(JieppCommandTest, DepTargetFromMTIsVerbatim) {
     opts.input_filepaths = {src.generic_string()};
     opts.dep_mode = DepMode::ALL;
     opts.dep_file = dep_out.generic_string();
-    opts.dep_target = "my$target with space";
+    opts.dep_targets = {{"my$target with space"}};
     opts.no_line_markers = true;
 
     ASSERT_EQ(0, jiepp_command(opts));
@@ -2512,8 +2885,9 @@ AFTER;
     EXPECT_EQ(1, rc);
     EXPECT_NE(std::string::npos, out.find("BEFORE")) << out;
     EXPECT_NE(std::string::npos, out.find("AFTER"))   << out;
-    // {#if 1/0}: division by zero folds to 0 (A3/A4), so this behaves like
-    // any other false {#if} -- its body is skipped, not emitted.
+    // {#if 1/0}: division by zero makes the condition false (SPEC 6.3), so
+    // this behaves like any other false {#if} -- its body is skipped, not
+    // emitted.
     EXPECT_EQ(std::string::npos, out.find("SKIPPED")) << out;
     EXPECT_GE(Issue::error_count_, 2) << "expected #error and 1/0 to both count";
 }
@@ -2965,7 +3339,7 @@ TEST_F(JieppCommandTest, UOptionOnBuiltinWarns) {
 
     JieppOptions opts;
     opts.input_filepaths = {src.generic_string()};
-    opts.undef_macros = {"__assert"};
+    opts.add_undefs({"__assert"});
 
     int rc = 0;
     std::string out = run_capturing_stdout(opts, rc);
@@ -2990,7 +3364,7 @@ TEST_F(JieppCommandTest, HasBuiltinDetectsDisabledAssertCli) {
 
     JieppOptions opts;
     opts.input_filepaths = {src.generic_string()};
-    opts.define_macros = {"__assert="};
+    opts.add_defines({"__assert="});
 
     int rc = 0;
     std::string out = run_capturing_stdout(opts, rc);
@@ -3018,7 +3392,7 @@ TEST_F(JieppCommandTest, DisableAssertFunctionFormRemovesCallCli) {
     opts.input_filepaths = {src.generic_string()};
 
     int rc = 0;
-    opts.define_macros = {"__assert(...)="};
+    opts.add_defines({"__assert(...)="});
     std::string out = run_capturing_stdout(opts, rc);
     EXPECT_EQ(0, rc);
     EXPECT_EQ(std::string::npos, out.find("(0, m)")) << out;
@@ -3027,7 +3401,8 @@ TEST_F(JieppCommandTest, DisableAssertFunctionFormRemovesCallCli) {
     EXPECT_EQ("jiepp: warning: PP35: Macro redefined; '__assert: redefining built-in macro'",
               message());
 
-    opts.define_macros = {"__assert="};
+    opts.macro_options.clear();
+    opts.add_defines({"__assert="});
     out = run_capturing_stdout(opts, rc);
     EXPECT_EQ(0, rc);
     EXPECT_NE(std::string::npos, out.find("(0, m);")) << out;
@@ -3046,7 +3421,7 @@ TEST_F(JieppCommandTest, UOptionOnHasBuiltinWarns) {
 
     JieppOptions opts;
     opts.input_filepaths = {src.generic_string()};
-    opts.undef_macros = {"__has_builtin"};
+    opts.add_undefs({"__has_builtin"});
 
     int rc = 0;
     std::string out = run_capturing_stdout(opts, rc);

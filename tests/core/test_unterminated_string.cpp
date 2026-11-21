@@ -16,26 +16,13 @@ std::vector<std::pair<std::string, bool>> str_marks(const std::string& text) {
     std::vector<std::pair<std::string, bool>> marks;
     for (auto& t : iec3_tokens_from_string(text, /*remove_comments=*/false)) {
         if (t.type == Token::STRING || t.type == Token::WSTRING)
-            marks.emplace_back(t.text, t.unterminated);
+            marks.emplace_back(t.text, static_cast<bool>(t.unterminated));
     }
     return marks;
 }
 
-// The exact PP29 message text at line `line` for context `ctx`, matching
-// PlainTextMessage::message()'s "<unknown location>:L.0: ..." form used by
-// pp()/pp_file() when no real file has been pushed.
-std::string w29(int line, const std::string& ctx) {
-    return "<unknown location>:" + std::to_string(line) +
-           ".0: warning: PP29: Missing terminating quote character; '" + ctx + "'";
-}
-
-// The exact PP49 (EXTRA_TOKENS_AT_END_OF_DIRECTIVE) message text at line
-// `line` for context `ctx`; see test_else_endif_extra_tokens.cpp for the
-// full PP49 coverage this helper is used for here.
-std::string w49(int line, const std::string& ctx) {
-    return "<unknown location>:" + std::to_string(line) +
-           ".0: warning: PP49: Extra tokens at end of directive; '" + ctx + "'";
-}
+// w29() / w49() (test_helper.hpp) give the exact PP29 / PP49 message text;
+// see test_else_endif_extra_tokens.cpp for the full PP49 coverage.
 
 } // namespace
 

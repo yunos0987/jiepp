@@ -1,20 +1,20 @@
 (*{#:0 'tests/jiepp/input/file_macro/file_macro_include.iec'}*)
-(*{#:0 'a.iec'}*)
+(*{#:0 'tests/jiepp/input/file_macro/a.iec'}*)
 
 program a
-'a.iec';
+'tests/jiepp/input/file_macro/a.iec';
 end
 (*{#:1 'tests/jiepp/input/file_macro/file_macro_include.iec'}*)
-(*{#:0 './b.iec'}*)
+(*{#:0 'tests/jiepp/input/file_macro/./b.iec'}*)
 
 program b
-'./b.iec';
+'tests/jiepp/input/file_macro/./b.iec';
 end
 (*{#:2 'tests/jiepp/input/file_macro/file_macro_include.iec'}*)
-(*{#:0 './../file_macro/c.iec'}*)
+(*{#:0 'tests/jiepp/input/file_macro/./../file_macro/c.iec'}*)
 
 program c
-'./../file_macro/c.iec';
+'tests/jiepp/input/file_macro/./../file_macro/c.iec';
 end
 (*{#:3 'tests/jiepp/input/file_macro/file_macro_include.iec'}*)
 

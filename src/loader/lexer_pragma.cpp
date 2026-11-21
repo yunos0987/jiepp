@@ -1,25 +1,14 @@
 #include "lexer_helpers.hpp"
 #include "directive_parser.hpp"
+#include "../util/text.hpp"
 
-#include <cctype>
+#include <algorithm>
 #include <cstddef>
-#include <optional>
-#include <regex>
+#include <string_view>
 
 namespace jiepp::detail {
 
 namespace {
-
-bool is_pragma_hex_digit(char c) {
-    return std::isxdigit(static_cast<unsigned char>(c)) != 0;
-}
-
-unsigned char pragma_hex_value(char c) {
-    unsigned char u = static_cast<unsigned char>(c);
-    if (u >= '0' && u <= '9') return static_cast<unsigned char>(u - '0');
-    if (u >= 'a' && u <= 'f') return static_cast<unsigned char>(u - 'a' + 10);
-    return static_cast<unsigned char>(u - 'A' + 10);
-}
 
 // True for a character that read_pragma_body() only appends to the body and
 // feeds to the directive lexical state as is: not the start of an escape, a
@@ -77,8 +66,10 @@ Token read_pragma_body(const std::string& text,
     // followed by '#', this is a directive-shaped body with intervening
     // whitespace/newlines: treat it as an ordinary pragma (PP28, raised later
     // at expansion) and rewind so the run is preserved verbatim in the body.
-    // Otherwise fall back to the legacy behaviour of only skipping plain
-    // whitespace (not newlines) before deciding.
+    // Otherwise drop the plain whitespace (not newlines) right after '{',
+    // as jiecc's pragma rule does ("{ x}" is the pragma "{x}", SPEC 2
+    // "Ordinary Pragma Normalization"); a '#' can only be found at once
+    // here, since any blank before it took the branch above.
     std::size_t look = pos;
     while (look < len && (is_ws_char(text[look]) || is_nl_char(text[look])))
         ++look;
@@ -220,7 +211,7 @@ Token read_pragma_body(const std::string& text,
                             lc.feed('$', true, off);
                             lc.feed(nc, true, off + 1);
                         }
-                    } else if (is_pragma_hex_digit(nc)) {
+                    } else if (is_directive_hex_digit(static_cast<unsigned char>(nc))) {
                         pending_hex = static_cast<unsigned char>(nc);
                         pending_hex_off = off;
                     } else if (auto decoded = decode_directive_escape(nc)) {
@@ -338,9 +329,10 @@ Token read_pragma_body(const std::string& text,
         }
 
         if (is_directive) {
-            if (pending_hex >= 0 && is_pragma_hex_digit(c)) {
+            if (pending_hex >= 0 && is_directive_hex_digit(static_cast<unsigned char>(c))) {
                 char decoded = static_cast<char>(
-                    (pragma_hex_value(static_cast<char>(pending_hex)) << 4) | pragma_hex_value(c));
+                    (directive_hex_value(static_cast<unsigned char>(pending_hex)) << 4)
+                    | directive_hex_value(static_cast<unsigned char>(c)));
                 lc.feed(decoded, false, pending_hex_off);
                 pending_hex = -1;
             } else {
@@ -353,17 +345,16 @@ Token read_pragma_body(const std::string& text,
     }
 
     if (!closed) {
-        if (is_directive) {
-            report_lex_issue(lineno, opts, pos, [&] {
-                std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
-                ISSUE(INVALID_PP_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
-            });
-        } else {
-            report_lex_issue(lineno, opts, pos, [&] {
-                std::string s = text.substr(start_pos - 1, pos - start_pos + 1);
-                ISSUE(INVALID_PRAGMA_SYNTAX, std::regex_replace(s, std::regex("\n"), "$n"));
-            });
-        }
+        // PP23 for a directive, PP22 for a pragma, with the text from the
+        // opening '{' to the end of the input; each LF is written "$n" (a CR
+        // is kept as is).
+        report_lex_issue(lineno, opts, pos, [&] {
+            // From the opening '{' to the end of the input, but only its
+            // first line is quoted (Util::diag_excerpt()).
+            Issue::happen(is_directive ? Issue::Code::INVALID_PP_SYNTAX
+                                       : Issue::Code::INVALID_PRAGMA_SYNTAX,
+                          Util::diag_excerpt(std::string_view(text).substr(start_pos - 1, pos - start_pos + 1)));
+        });
     }
 
     std::string full_text = "{" + body + "}";
@@ -371,22 +362,11 @@ Token read_pragma_body(const std::string& text,
     if (lines_before != 0 || !breaks.empty())
         line_map = LineMapRef(LineMap{lines_before, std::move(breaks)});
 
-    if (is_directive) {
-        // B1: classifying/diagnosing this directive's key (PP45/PP46 for an
-        // unrecognized name) now happens at dispatch time in
-        // dispatch_directive() (expand.cpp), not here at lex time, so
-        // constructing a DirectiveToken merely to call ready() for its
-        // former diagnostic side effect is no longer needed.
-        Token t;
-        t.type = Token::DIRECTIVE;
-        t.text = std::move(full_text);
-        t.num_of_lines = 0;
-        t.line_map = std::move(line_map);
-        return t;
-    }
-
-    Token t = Token::create(Token::PRAGMA, std::move(full_text));
+    // A directive's key is classified at dispatch time (dispatch_directive(),
+    // expand.cpp), which reports PP45/PP46 for an unrecognized name.
+    Token t = Token::create(is_directive ? Token::DIRECTIVE : Token::PRAGMA, std::move(full_text));
     t.line_map = std::move(line_map);
+    t.unclosed_directive = is_directive && !closed;
     return t;
 }
 

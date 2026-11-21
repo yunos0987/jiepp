@@ -2,11 +2,6 @@
 #include <algorithm>
 #include <vector>
 
-static std::string strip(std::string s) {
-    s.erase(std::remove(s.begin(), s.end(), ' '), s.end());
-    return s;
-}
-
 // ---- #if ----
 
 // NOTE: boolean literals are case-sensitive in this implementation.
@@ -94,6 +89,49 @@ TEST_F(CtrlDirectiveTest, IfSyntaxError) {
     // {#if;} has non-empty raw condition but becomes invalid syntax after parsing.
     EXPECT_THROW(pp("{#if;}1{#endif}e"), Issue::Exception);
     EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, code());
+}
+
+// The message of a closed {#error}/{#warning} is quoted whole, however long
+// (clang and gcc do not cut an #error message); only a directive with no
+// closing '}' is cut (the test below).
+TEST_F(CtrlDirectiveTest, LongMessageOfClosedDirectiveIsNotCut) {
+    Issue::ContinueMode guard({});
+    const std::string a(2000, 'a');
+    {
+        SCOPED_TRACE("no $n");
+        pp("{#error " + a + "}");
+        const auto msgs = messages();
+        ASSERT_EQ(1u, msgs.size());
+        EXPECT_NE(std::string::npos, msgs[0].find(a)) << msgs[0].size();
+    }
+    {
+        SCOPED_TRACE("with $n");
+        pp("{#warning " + std::string(1000, 'a') + "$n" + std::string(1000, 'b') + "}");
+        const auto msgs = messages();
+        ASSERT_EQ(2u, msgs.size());
+        EXPECT_NE(std::string::npos, msgs[0].find(std::string(1000, 'a'))) << msgs[0].size();
+        EXPECT_NE(std::string::npos, msgs[1].find(std::string(1000, 'b'))) << msgs[1].size();
+    }
+}
+
+// A directive with no closing '}' still runs to the end of the input (as a C
+// directive without a newline does), but no diagnostic quotes the rest of the
+// file: each one stays on one short line, however long the input is.
+TEST_F(CtrlDirectiveTest, UnclosedDirectiveDiagnosticsAreShort) {
+    std::string body;
+    for (int i = 0; i < 3000; ++i)
+        body += "x" + std::to_string(i) + " := " + std::to_string(i) + ";\n";
+    const char* const heads[] = {"{#if 1\n", "{#error abc\n", "{#define G(a\n", "{#include 'zz\n"};
+    for (const char* head : heads) {
+        SCOPED_TRACE(head);
+        Issue::ContinueMode guard({});
+        pp(std::string(head) + body);
+        const auto msgs = messages();
+        ASSERT_GE(msgs.size(), 2u);
+        EXPECT_EQ(Issue::Code::INVALID_PP_SYNTAX, PlainTextMessage::parse_code(msgs[0])) << msgs[0];
+        for (const auto& m : msgs)
+            EXPECT_LT(m.size(), 1000u) << m.substr(0, 200);
+    }
 }
 
 // C1: a malformed {#if}/{#elif} expression must raise exactly one
@@ -418,4 +456,84 @@ TEST_F(CtrlDirectiveTest, IfDeadDivisionSilent) {
     EXPECT_TRUE(empty());
     EXPECT_EQ("y", strip(pp("{#if TRUE \\or\\ 1 mod 0 = 1}y{#else}n{#endif}")));
     EXPECT_TRUE(empty());
+}
+
+// SPEC 6.3: a division or modulo by zero in an evaluated operand makes the
+// whole condition false, like clang (gcc only zeroes that operation), not
+// just that operation. Inputs measured with clang and gcc (`#if 1/0 + 5` is
+// false in clang, true in gcc; `#if 1/0 == 0` is false in both).
+TEST_F(CtrlDirectiveTest, IfDivisionByZeroMakesConditionFalse) {
+    Issue::ContinueMode guard({});
+    const std::string div0 = "<unknown location>:1.0: error: PP52: Invalid expression; 'division by zero'";
+    const std::string mod0 = "<unknown location>:1.0: error: PP52: Invalid expression; 'modulo by zero'";
+    EXPECT_EQ("n", strip(pp("{#if 1/0 + 5}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if 1/0 = 0}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if 1 mod 0 + 5}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({mod0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if (2/0) * 0 + 1}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    // In an {#elif}: the group is not taken, a later {#else} is.
+    EXPECT_EQ("n", strip(pp("{#if 0}a{#elif 1/0 + 5}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    // Suppressed, still false.
+    EXPECT_EQ("n", strip(pp("{#ignore PP52}{#if 1/0 + 5}y{#else}n{#endif}")));
+    EXPECT_TRUE(empty());
+}
+
+// clang: one PP24 for each group still open at the end of the file,
+// innermost first, each at the line of the {#if} that opened it -- also
+// after an {#elif}/{#else} of the group, and for a group opened in a
+// skipped group (`#if 1 / x / #if 0 / y` gives two errors, at lines 3 and
+// 1; gcc gives the same two).
+TEST_F(CtrlDirectiveTest, UnclosedGroupsAreReportedAtTheirIf) {
+    Issue::ContinueMode guard({});
+    auto pp24 = [](int line) {
+        return "<unknown location>:" + std::to_string(line) +
+               ".0: error: PP24: Unterminated conditional directive; 'unclosed if'";
+    };
+    pp("{#if 1}\nx\n{#if 0}\ny\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(3), pp24(1)}), messages());
+    pp("a\n{#if 1}\nx\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(2)}), messages());
+    pp("{#if 0}\nq\n{#else}\nz\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(1)}), messages());
+    pp("{#if 0}\n{#elif 1}\nq\n{#elif 0}\nr\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(1)}), messages());
+    pp("{#ifdef A}\n{#ifndef B}\n{#if 1}\nx\n{#endif}\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(2), pp24(1)}), messages());
+    pp("{#if 0}\n{#if 1}\n{#else}\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(2), pp24(1)}), messages());
+    pp("{#if 1}\n{#else}\n{#if 0}\n{#elif 1}\n{#else}\n");
+    EXPECT_EQ(std::vector<std::string>({pp24(3), pp24(1)}), messages());
+}
+
+// The PP24 of a group opened before a {#line N 'file'} is at the file name
+// the {#if} was read under (clang and gcc: `#line 100` / `#if 1` /
+// `#line 200 "bar.c"` / `#if 1` gives bar.c:200 and main.c:100).
+TEST_F(CtrlDirectiveTest, UnclosedGroupKeepsItsFileName) {
+    Issue::ContinueMode guard({});
+    pp("{#line 100}\n{#if 1}\n{#line 200 'bar.iec'}\n{#if 1}\nx\n");
+    EXPECT_EQ(std::vector<std::string>(
+                  {"bar.iec:200.0: error: PP24: Unterminated conditional directive; 'unclosed if'",
+                   "<unknown location>:100.0: error: PP24: Unterminated conditional directive; "
+                   "'unclosed if'"}),
+              messages());
+}
+
+// After a division by zero nothing that depends on values is reported in
+// the same expression (clang: one error for `1/0 + 1/0` and `1/0 || 1/0`;
+// gcc reports each division).
+TEST_F(CtrlDirectiveTest, OneDivisionByZeroPerExpression) {
+    Issue::ContinueMode guard({});
+    const std::string div0 = "<unknown location>:1.0: error: PP52: Invalid expression; 'division by zero'";
+    EXPECT_EQ("n", strip(pp("{#if 1/0 + 1/0}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if 1/0 \\or\\ 1/0}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>({div0}), messages());
+    EXPECT_EQ("n", strip(pp("{#if 1 mod 0 + 2/0}y{#else}n{#endif}")));
+    EXPECT_EQ(std::vector<std::string>(
+                  {"<unknown location>:1.0: error: PP52: Invalid expression; 'modulo by zero'"}),
+              messages());
 }

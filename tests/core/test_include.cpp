@@ -13,22 +13,22 @@ TEST_F(IncludeTest, BasicInclude) {
     std::string o;
     EXPECT_NO_THROW({o = pp_file(DIR / "include.iec");});
     EXPECT_EQ(R"(0;
-(*{#:0 './a.iec'}*)
+(*{#:0 'tests/core/test_include/./a.iec'}*)
 // a.iec begin
 
 
 1;
-'./a.iec';
+'tests/core/test_include/./a.iec';
 6;
 // a.iec end
 (*{#:2 'tests/core/test_include/include.iec'}*)
 a;
-(*{#:0 './b.iec'}*)
+(*{#:0 'tests/core/test_include/./b.iec'}*)
 // b.iec begin
 
 
 2;
-'./b.iec';
+'tests/core/test_include/./b.iec';
 6;
 // b.iec end
 (*{#:4 'tests/core/test_include/include.iec'}*)
@@ -104,22 +104,22 @@ TEST_F(IncludeTest, IncludeSingle) {
     std::string o;
     EXPECT_NO_THROW({o = pp_file(DIR / "include_single.iec");});
     EXPECT_EQ(R"(0;
-(*{#:0 './a.iec'}*)
+(*{#:0 'tests/core/test_include/./a.iec'}*)
 // a.iec begin
 
 
 1;
-'./a.iec';
+'tests/core/test_include/./a.iec';
 6;
 // a.iec end
 (*{#:2 'tests/core/test_include/include_single.iec'}*)
 a;
-(*{#:0 './b.iec'}*)
+(*{#:0 'tests/core/test_include/./b.iec'}*)
 // b.iec begin
 
 
 2;
-'./b.iec';
+'tests/core/test_include/./b.iec';
 6;
 // b.iec end
 (*{#:4 'tests/core/test_include/include_single.iec'}*)
@@ -134,22 +134,22 @@ TEST_F(IncludeTest, IncludeDouble) {
     std::string o;
     EXPECT_NO_THROW({o = pp_file(DIR / "include_double.iec");});
     EXPECT_EQ(R"(0;
-(*{#:0 './a.iec'}*)
+(*{#:0 'tests/core/test_include/./a.iec'}*)
 // a.iec begin
 
 
 1;
-'./a.iec';
+'tests/core/test_include/./a.iec';
 6;
 // a.iec end
 (*{#:2 'tests/core/test_include/include_double.iec'}*)
 a;
-(*{#:0 './b.iec'}*)
+(*{#:0 'tests/core/test_include/./b.iec'}*)
 // b.iec begin
 
 
 2;
-'./b.iec';
+'tests/core/test_include/./b.iec';
 6;
 // b.iec end
 (*{#:4 'tests/core/test_include/include_double.iec'}*)
@@ -177,8 +177,10 @@ TEST_F(IncludeTest, IncludeDirectory) {
     EXPECT_TRUE(empty());
 }
 
-// An empty filename resolves to the directory it is joined onto, so it ends in
-// PP14; the context says so instead of being empty.
+// An empty filename names no file: PP47 with the context 'empty filename',
+// whatever directory it would be joined onto (clang/gcc: "empty filename"). It
+// is an ordinary error, so unlike a missing file (PP11) or a directory (PP14)
+// it does not stop the run in the CLI (see SmokeTest).
 static void expect_include_error(JieppTest& t, const std::string& src,
                                  const std::string& expected_tail) {
     Issue::initialize(t.output());
@@ -188,27 +190,39 @@ static void expect_include_error(JieppTest& t, const std::string& src,
     EXPECT_NE(std::string::npos, m.find(expected_tail)) << src << " -> " << m;
 }
 
-TEST_F(IncludeTest, EmptyFilenameQuotedIsPP14WithContext) {
+TEST_F(IncludeTest, EmptyFilenameQuotedIsPP47WithContext) {
     fs::current_path(jiepp_root_dir());
     for (const char* src : {"{#include ''}", "{#include \"\"}"})
-        expect_include_error(*this, src,
-                             "error: PP14: Include target is a directory; 'empty filename'");
+        expect_include_error(*this, src, "error: PP47: Invalid path; 'empty filename'");
 }
 
-TEST_F(IncludeTest, EmptyFilenameViaSyspathIsPP14WithContext) {
+TEST_F(IncludeTest, EmptyFilenameViaSyspathIsPP47WithContext) {
     fs::current_path(jiepp_root_dir());
     for (const char* directive : {"{#include <>}", "{#sinclude ''}", "{#sinclude <>}",
                                   "{#include ''}"})
         expect_include_error(
             *this, std::string("{#syspath 'tests/core/test_include'}") + directive,
-            "error: PP14: Include target is a directory; 'empty filename'");
+            "error: PP47: Invalid path; 'empty filename'");
 }
 
-// Cases that never reached PP14 with an empty context keep their code.
-TEST_F(IncludeTest, EmptyFilenameWithoutSyspathStaysPP11) {
+// With no directory to join it onto it is the same error (it used to be PP11).
+TEST_F(IncludeTest, EmptyFilenameWithoutSyspathIsPP47) {
     fs::current_path(jiepp_root_dir());
     for (const char* directive : {"{#include <>}", "{#sinclude ''}"})
-        expect_include_error(*this, directive, "error: PP11: No such file or directory");
+        expect_include_error(*this, directive, "error: PP47: Invalid path; 'empty filename'");
+}
+
+// In the CLI's continue mode the run goes on after the empty path.
+TEST_F(IncludeTest, EmptyFilenameContinuesInContinueMode) {
+    fs::current_path(jiepp_root_dir());
+    Issue::ContinueMode guard({});
+    // The text after each rejected directive is still processed (a line
+    // marker stands where the include would have returned).
+    const std::string out = pp("a{#include ''}b{#include <>}c");
+    EXPECT_EQ(0u, out.find('a')) << out;
+    EXPECT_NE(std::string::npos, out.find('b')) << out;
+    EXPECT_EQ('c', out.back()) << out;
+    EXPECT_EQ(2, Issue::error_count_);
 }
 
 // __has_include answers 0 for an empty filename (a directory is not a file), with
@@ -273,7 +287,14 @@ TEST_F(IncludeTest, CircularInclude) {
     Env env = setup();
     env.set_max_include_depth(8);
     EXPECT_THROW(pp_file(DIR / "circular_a.iec", env), Issue::Exception);
-    EXPECT_EQ("circular_b.iec:1.0: error: PP12: Maximum include depth exceeded; 'circular_a.iec'", message());
+    // The PP12 is in the 8th file, so it follows the 7 include points of
+    // its include stack (SPEC 16), outermost first: a, b, a, ... line 1.
+    std::vector<std::string> expected;
+    for (int k = 0; k < 7; ++k)
+        expected.push_back(std::string("In file included from tests/core/test_include/circular_") +
+                           (k % 2 == 0 ? "a" : "b") + ".iec:1:");
+    expected.push_back("tests/core/test_include/circular_b.iec:1.0: error: PP12: Maximum include depth exceeded; 'circular_a.iec'");
+    EXPECT_EQ(expected, messages());
     EXPECT_TRUE(empty());
 }
 
@@ -599,8 +620,8 @@ protected:
         JieppTest::SetUp();
         dir_ = fs::temp_directory_path() / "jiepp_include_count_test";
         fs::create_directories(dir_);
-        write(dir_ / "inc.iec", "X\n");
-        write(dir_ / "once.iec", "{#pragma once}\nO\n");
+        write_file(dir_ / "inc.iec", "X\n");
+        write_file(dir_ / "once.iec", "{#pragma once}\nO\n");
         inc_  = "{#include '" + (dir_ / "inc.iec").generic_string() + "'}\n";
         once_ = "{#include '" + (dir_ / "once.iec").generic_string() + "'}\n";
     }
@@ -608,10 +629,6 @@ protected:
         std::error_code ec;
         fs::remove_all(dir_, ec);
         JieppTest::TearDown();
-    }
-    static void write(const fs::path& p, const std::string& s) {
-        std::ofstream f(p, std::ios::binary);
-        f << s;
     }
     static std::string repeat(const std::string& s, int n) {
         std::string r;

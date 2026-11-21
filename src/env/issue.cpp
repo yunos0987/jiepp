@@ -1,13 +1,9 @@
 #include "issue.hpp"
 
-#include <algorithm>
-#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <set>
-#include <sstream>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 #include "issue_message.hpp"
@@ -41,6 +37,10 @@ bool Issue::silent_ = false;
 bool Issue::suppress_warnings_ = false;
 bool Issue::werror_ = false;
 bool Issue::cli_mode_ = false;
+std::vector<Issue::IncludeFrame> Issue::include_frames_;
+std::uint64_t Issue::include_serial_ = 0;
+std::uint64_t Issue::last_include_serial_ = 0;
+bool Issue::show_include_stack_ = true;
 bool Issue::continue_mode_ = false;
 int Issue::error_count_ = 0;
 int Issue::error_limit_ = 0;
@@ -64,13 +64,13 @@ Issue::Severity Issue::severity_of(Code code) {
 }
 
 std::string_view Issue::codename(Code code) {
-	switch (code) {
+    switch (code) {
 #define JIEPP_ISSUE_CODE(name, id, severity, message) \
     case Issue::Code::name: return #name;
 #include "issue_codes.def"
 #undef JIEPP_ISSUE_CODE
-	}
-	return "";
+    }
+    return "";
 }
 
 // ---------------------------------------------------------------------------
@@ -90,11 +90,14 @@ void Issue::initialize(std::ostream& stream) {
     suppress_warnings_ = false;
     werror_ = false;
     cli_mode_ = false;
+    include_frames_.clear();
+    include_serial_ = 0;
+    last_include_serial_ = 0;
+    show_include_stack_ = true;
     continue_mode_ = false;
     error_count_ = 0;
     error_limit_ = 0;
     continue_abort_codes_.clear();
-    message_ = PlainTextMessage::instance();
 }
 
 void Issue::set_output(std::ostream& stream) {
@@ -198,6 +201,48 @@ bool Issue::is_blocked(Code code) {
     return blockings_.count(code) != 0;
 }
 
+namespace {
+
+// A file path as a diagnostic shows it (see the sandbox strip and the
+// normal-build escape in happen(), which explain the rules): the location
+// of a diagnostic and the files of its "In file included from" lines.
+std::string shown_path(const std::string& path, Util::C1Pairs path_c1) {
+#ifdef JIEPP_SANDBOX
+    return Util::line_breaks_to_spaces(Util::strip_control_chars(path, path_c1));
+#else
+    return Util::escape_control_chars(path, path_c1, /*keep_line_breaks=*/false);
+#endif
+}
+
+} // namespace
+
+// Whether loc_stack_[i] is a location of the command line rather than of a
+// source file: in CLI mode, the bottom dummy entry, or an entry that copies
+// its placeholder name forward (see happen()).
+static bool is_command_line_entry(std::size_t i) {
+    return Issue::cli_mode_ &&
+           (i == 0 || Issue::loc_stack_[i].second == Issue::loc_stack_.front().second);
+}
+
+// The "In file included from" lines of the file of the diagnostic being
+// printed (SPEC 16), outermost first. An include point that is the command
+// line (an -include file) is shown as COMMAND_LINE_LOCATION, with no line;
+// any other is the includer's name (as {#line} left it) and the frame's line.
+static void print_include_stack(std::ostream& out, IssueMessage& message, Util::C1Pairs path_c1) {
+    for (const auto& frame : Issue::include_frames_) {
+        if (frame.command_line) {
+            message.included_from(out, Issue::COMMAND_LINE_LOCATION, std::nullopt);
+        } else {
+            // Defensive: a frame always sits above the bottom dummy entry.
+            if (frame.loc_index == 0 || frame.loc_index > Issue::loc_stack_.size())
+                continue;
+            message.included_from(out, shown_path(Issue::loc_stack_[frame.loc_index - 1].second, path_c1),
+                                  frame.line);
+        }
+        out << '\n';
+    }
+}
+
 void Issue::happen(Code code, std::string context, std::source_location loc) {
     // {#ignore} suppresses the code, except SEVERE and PP10-PP14, which
     // is_ignored() never reports as ignored.
@@ -262,11 +307,14 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // placeholder instead of calling filepath()/lineno() in that case.
         std::string loc_file;
         LineNo loc_line = 0;
+        // Whether the diagnostic is printed at a source location (its file,
+        // or the string input of the library), not as "jiepp:".
+        bool source_location = false;
         if (loc_stack_.empty()) {
             loc_file = "<no location>";
         } else {
-            loc_file = (cli_mode_ && (loc_stack_.size() == 1 ||
-                        filepath() == loc_stack_.front().second)) ? CLI_LOCATION : filepath();
+            source_location = !is_command_line_entry(loc_stack_.size() - 1);
+            loc_file = source_location ? filepath() : CLI_LOCATION;
             loc_line = lineno();
         }
         // Shared by the sandbox strip and the normal-build escape below.
@@ -323,7 +371,6 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         context = Util::strip_control_chars(context, path_code ? path_c1 : Util::C1Pairs::Remove);
         if (!message_code)
             context = Util::line_breaks_to_spaces(context);
-        loc_file = Util::line_breaks_to_spaces(Util::strip_control_chars(loc_file, path_c1));
 #else
         // Normal build (P2-3, SPEC 16): nothing is removed; every control
         // character of the context and of the file path is shown as $XX
@@ -339,8 +386,24 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         // characters and are unchanged.
         context = Util::escape_control_chars(context, path_code ? path_c1 : Util::C1Pairs::Remove,
                                              /*keep_line_breaks=*/message_code);
-        loc_file = Util::escape_control_chars(loc_file, path_c1, /*keep_line_breaks=*/false);
 #endif
+        // The file path: stripped (sandbox) or escaped (normal build) as
+        // described above, by the same rule as the include lines below.
+        loc_file = shown_path(loc_file, path_c1);
+        // "In file included from" (SPEC 16, clang's rule): only before a
+        // diagnostic printed at a source location, and only when its file
+        // (an inclusion, or the main input) is not the one of the last such
+        // diagnostic. A diagnostic that is not printed (ignored, -w,
+        // --silent, beyond --error-limit) never gets here, so it neither
+        // prints the lines nor counts as the last one.
+        if (source_location) {
+            const std::uint64_t serial = include_frames_.empty() ? 0 : include_frames_.back().serial;
+            if (serial != last_include_serial_) {
+                last_include_serial_ = serial;
+                if (show_include_stack_)
+                    print_include_stack(*stream_, message_, path_c1);
+            }
+        }
         message_.message(*stream_, severity, code, context, loc_file, loc_line, 0, loc);
         *stream_ << '\n';
     }
@@ -364,8 +427,8 @@ void Issue::happen(Code code, std::string context, std::source_location loc) {
         return;
     }
 
-    // SEVERE always throws; promoted warnings throw if ERROR is in blockings;
-    // other codes throw if in blockings
+    // SEVERE and a warning promoted to ERROR always throw (promotion does not
+    // consult blockings_); other codes throw if in blockings
     if (is_severe(code) \
         || promoted \
         || is_blocked(code))
@@ -413,6 +476,18 @@ Issue::Ignoring::Ignoring(std::set<Issue::Code> codes) : original_(ignorings_) {
 
 Issue::Ignoring::~Ignoring() {
     ignorings_ = std::move(original_);
+}
+
+Issue::IncludeScope::IncludeScope(const IncludeOrigin& origin)
+    : active_(origin.kind != IncludeOrigin::Kind::none) {
+    if (active_)
+        include_frames_.push_back({loc_stack_.size() - 1, ++include_serial_,
+                                   origin.kind == IncludeOrigin::Kind::command_line, origin.line});
+}
+
+Issue::IncludeScope::~IncludeScope() {
+    if (active_)
+        include_frames_.pop_back();
 }
 
 Issue::CliMode::CliMode() : original_(cli_mode_) {

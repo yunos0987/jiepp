@@ -22,18 +22,20 @@ namespace jiepp::expand_detail {
 // Not part of Prosser's algorithm; jiepp extension for #if/#elif/#else/#endif.
 
 struct CtrlState {
-    bool has_entered = false;
     std::optional<bool> condition;
     bool seen_else = false;
+    // The line of the {#if}/{#ifdef}/{#ifndef} that opened the group: an
+    // unclosed group is reported there (PP24), like clang.
+    LineNo line = 0;
+    // The file name that line belongs to, kept only once a {#line N 'file'}
+    // renames the file while the group is open (empty: the current name, so
+    // an ordinary {#if} copies no string).
+    std::string file;
 };
 
 bool ctrl_is_active(const std::vector<CtrlState>& stack);
 bool ctrl_parent_active(const std::vector<CtrlState>& stack);
 
-// operand_error, when non-null, receives whether the condition's evaluation
-// hit a 'defined' operand/paren error (C3): eval_cond() uses this to treat
-// the whole condition as false without ever calling eval_const_expr on it.
-std::string eval_cond_str(const std::string& raw_cond, Env& env, bool* operand_error = nullptr);
 bool eval_cond(const std::string& raw_cond, Env& env);
 
 // C2: {#ifdef NAME}/{#ifndef NAME}, like clang's HandleIfdefDirective. NAME
@@ -64,6 +66,14 @@ bool has_builtin(std::string_view name, Env& env);
 bool& sandbox_has_include_reported();
 #endif
 
+// An operand error of the __has_builtin/__has_include operator, reported like
+// a 'defined' operand error: the first one of a condition is reported (PP52
+// for `code` INVALID_EXPRESSION, PP39 for INVALID_BUILTIN_OPERAND) and
+// recorded in `defop`, so the caller treats the whole condition as false
+// without evaluating it; "0" is pushed to `ots` in place of the call.
+void fail_operator_operand(DefinedOperator& defop, std::vector<Token>& ots,
+                           Issue::Code code, const std::string& what);
+
 // The __has_builtin operator branch of expand(), called with the operator
 // token already popped from `work` while the transient 'defined' operator is
 // active and not suspended. Pushes "1"/"0" to `ots`; an operand error is
@@ -86,9 +96,10 @@ bool& sandbox_has_include_reported();
 // {#if} operand.
 // failure != SUCCESS when the evaluation itself failed -- PP62 (sandbox
 // __has_include), a 'defined' operand error (PP40, or PP52 for a missing
-// ')'), or a constfold failure (PP50/PP51/PP52, literal errors included) --
+// ')' or '(' after __has_builtin/__has_include), or a constfold failure
+// (PP50/PP51/PP52, literal errors and division/modulo by zero included) --
 // whether or not that diagnostic was shown (it may have been suppressed by
-// {#ignore}). Division/modulo by zero is not a failure (SPEC 6.3).
+// {#ignore}).
 struct CondValue {
     Issue::Code failure = Issue::Code::SUCCESS; // first failing diagnostic code
     cf::ConstValue value;                       // valid only when failure == SUCCESS
@@ -97,12 +108,7 @@ CondValue eval_cond_value_tokens(std::vector<Token> ts, Env& env);
 
 // ── Prosser's algorithm support (expand_subst.cpp) ─────────────────
 // Corresponds to cpp.algo.md: §hsadd, §glue, §Support functions, §subst.
-
-// §hsadd — add HS to every token in ts
-std::vector<Token>& hsadd(const Token::HideSet& hs, std::vector<Token>& ts);
-
-// §glue — paste last of left side with first of right side
-void glue_tokens(std::vector<Token>& src, std::vector<Token>& item);
+// §hsadd and §glue are internal to expand_subst.cpp.
 
 // Leading/trailing whitespace-or-comment presence of one actual argument in
 // the macro call's own source, used to reproduce clang's comma spacing when
@@ -144,7 +150,20 @@ std::vector<Token> select_arg(int idx,
 // actual token: it runs the same join as select_arg() (one definition of the
 // separator rule) and stops at the first token produced (S-01).
 bool va_args_empty(int idx, const std::vector<std::vector<Token>>& actuals, bool is_va);
-int argc_from(int idx, const std::vector<std::vector<Token>>& actuals);
+
+// SPEC §3.7: called after `input` -- a macro argument, or __NOSPLIT's joined
+// arguments -- has been macro-expanded as a whole into ts[from, end). Every
+// macro expanded in it has finished, as in gcc/clang, where a macro is
+// disabled only while its own replacement is rescanned (C17 6.10.3.4): its
+// name is taken out of the hide sets of those tokens, so the argument
+// rescanned again with the replacement can call it (`EXPAND(R())` with
+// R() = `x DEFER(R_I)()()` and R_I() = `R` gives `x x R_I ()()`). A name
+// stays where the token already had it in the call (the union of the
+// input's hide sets) and on a token left unexpanded because of it (a
+// painted identifier keeps its own name: it is never expanded again,
+// C17 6.10.3.4p2). Prosser's algorithm (cpp.algo.md) kept every name.
+void end_argument_expansion(std::vector<Token>& ts, std::size_t from,
+                            const std::vector<Token>& input);
 
 // ── §subst — argument-expansion memoisation (task_slug arg-expand-once, D1/D2) ──
 //
@@ -178,6 +197,9 @@ struct ArgExpansionMemo {
     std::vector<int> remaining;         // copy of FunctionMacro::arg_slot_uses()
     std::vector<std::optional<std::vector<Token>>> expanded; // per slot, lazy
     std::vector<std::optional<std::string>> stringized;      // per slot, lazy
+    // Whether __VA_OPT__ takes its content in this invocation (SPEC §3.4),
+    // once decided (expand_subst.cpp's va_opt_active()).
+    std::optional<bool> va_opt_active;
 };
 
 // §Support functions: stringize
@@ -186,7 +208,6 @@ struct ArgExpansionMemo {
 // space; a run at either end is dropped; every other token is appended
 // verbatim (no quoting/escaping -- the caller encodes the result).
 std::string stringize_text(const std::vector<Token>& ts);
-Token stringize_tokens(const std::vector<Token>& ts);
 
 // §subst — substitute args, handle stringize and paste
 // actual_ws: per-actual-argument leading/trailing whitespace flags, built by

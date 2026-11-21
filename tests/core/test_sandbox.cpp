@@ -1,6 +1,11 @@
 #include "test_helper.hpp"
 
 #include "util/path.hpp"
+#include "jiepp/jiepp.hpp"
+#include "jiepp/option.hpp"
+
+#include <fstream>
+#include <iterator>
 
 // =====================================================================
 // Sandbox mode tests — only active when JIEPP_SANDBOX is defined.
@@ -828,6 +833,85 @@ TEST_F(SandboxDiagnosticStripTest, MessageLineBreakKept) {
     ASSERT_EQ(2u, ms.size());
     EXPECT_NE(std::string::npos, ms[0].find("PP91: 'a")) << ms[0];
     EXPECT_EQ("b'", ms[1].substr(0, 2)) << ms[1];
+}
+
+// ---- -isystem in a sandbox build: accepted like -I ----
+
+class SandboxIsystemTest : public JieppTest {};
+
+TEST_F(SandboxIsystemTest, IsystemIsAcceptedLikeI) {
+    // The option is accepted, a -include file is found under it (as under
+    // -I) and is a system header for -MM; {#include} is still PP62.
+    const fs::path dir = fs::temp_directory_path() / "jiepp_sandbox_isystem";
+    fs::remove_all(dir);
+    fs::create_directories(dir / "sys");
+    auto write = [&](const std::string& name, const std::string& text) {
+        std::ofstream f(dir / name, std::ios::binary);
+        f << text;
+    };
+    auto read = [&](const std::string& name) {
+        std::ifstream f(dir / name, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    write("sys/p.iec", "P\n");
+    write("main.iec", "x\n");
+    write("inc.iec", "{#include <p.iec>}\n");
+    const fs::path cwd = fs::current_path();
+    fs::current_path(dir);
+
+    JieppOptions opts;
+    opts.input_filepaths = {"main.iec"};
+    opts.output_filepath = "out.piec";
+    opts.no_line_markers = true;
+    opts.system_paths = {"sys"};
+    opts.include_filepaths = {"p.iec"};
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("P\nx\n", read("out.piec"));
+    opts.dep_mode = DepMode::USER;
+    opts.dep_file = "d.d";
+    EXPECT_EQ(0, jiepp_command(opts));
+    EXPECT_EQ("main.output: \\\n  main.iec\n", read("d.d"));
+    EXPECT_TRUE(empty());
+
+    JieppOptions inc;
+    inc.input_filepaths = {"inc.iec"};
+    inc.system_paths = {"sys"};
+    inc.output_filepath = "out2.piec";
+    EXPECT_NE(0, jiepp_command(inc));
+    EXPECT_EQ(Issue::Code::SANDBOX_RESTRICTED_DIRECTIVE, code());
+
+    fs::current_path(cwd);
+    fs::remove_all(dir);
+}
+
+// ---- "In file included from" (SPEC 16): the same rule in a sandbox build,
+// where only an -include file can be included ----
+
+class SandboxIncludeStackTest : public JieppTest {};
+
+TEST_F(SandboxIncludeStackTest, CommandLineIncludeGetsItsLine) {
+    const fs::path dir = fs::temp_directory_path() / "jiepp_sandbox_include_stack";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    write_file(dir / "pre.iec", "{#warning pre}\n");
+    write_file(dir / "main.iec", "{#warning main}\n{#include 'x.iec'}\n");
+    {
+        CwdGuard cwd(dir);
+        JieppOptions opts;
+        opts.input_filepaths = {"main.iec"};
+        opts.output_filepath = "out.piec";
+        opts.include_filepaths = {"pre.iec"};
+        EXPECT_NE(0, jiepp_command(opts));
+        EXPECT_EQ((std::vector<std::string>{
+                      "In file included from <command line>:",
+                      "pre.iec:1.0: warning: PP92: 'pre'",
+                      "main.iec:1.0: warning: PP92: 'main'",
+                      "main.iec:2.0: error: PP62: Directive is restricted in sandbox mode; 'include'",
+                  }),
+                  messages());
+    }
+    std::error_code ec;
+    fs::remove_all(dir, ec);
 }
 
 #endif  // JIEPP_SANDBOX

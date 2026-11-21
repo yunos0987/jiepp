@@ -1,22 +1,4 @@
-#include "test_helper.hpp"
-
-#include "loader/lexer.hpp"
-
-// ---- helpers ----
-
-static std::vector<Token> ts(const std::string& text, bool remove_comments = false) {
-    return iec3_tokens_from_string(text, remove_comments);
-}
-
-static Token make(int type, const std::string& text, int line = 0) {
-    return Token::create(type, text, line);
-}
-
-static void expect_tokens(const std::vector<Token>& expected,
-                          const std::string& text,
-                          bool remove_comments = false) {
-    EXPECT_EQ(expected, ts(text, remove_comments));
-}
+#include "lexer_test_helper.hpp"
 
 // ---- comment errors ----
 
@@ -40,13 +22,13 @@ TEST_F(LexerCommentTest, BlockCommentError) {
 // at the line where the input ends (CR-LF, CR and LF all count one line).
 TEST_F(LexerCommentTest, BlockCommentErrorAtOpenerLine) {
     EXPECT_THROW(ts("a\n(* comment\n x\n y\n"), Issue::Exception);
-    EXPECT_EQ("<unknown location>:2.0: error: PP20: Unclosed comment; '(* comment$n x$n y$n'", message());
+    EXPECT_EQ("<unknown location>:2.0: error: PP20: Unclosed comment; '(* comment...'", message());
 
     EXPECT_THROW(ts("a\r\nb\r/* c\r\n d\n"), Issue::Exception);
-    EXPECT_EQ("<unknown location>:3.0: error: PP20: Unclosed comment; '/* c$n d$n'", message());
+    EXPECT_EQ("<unknown location>:3.0: error: PP20: Unclosed comment; '/* c...'", message());
 
     EXPECT_THROW(ts("a\n(*! doc\n x\n"), Issue::Exception);
-    EXPECT_EQ("<unknown location>:2.0: error: PP20: Unclosed comment; '(* doc$n x$n'", message());
+    EXPECT_EQ("<unknown location>:2.0: error: PP20: Unclosed comment; '(*! doc...'", message());
 }
 
 // ---- line comment ----

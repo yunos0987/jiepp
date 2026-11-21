@@ -90,6 +90,27 @@ TEST_F(ConstfoldTest, ExprExactErrorCases) {
     EXPECT_TRUE(empty());
 }
 
+// ---- PP51 / PP52 for a syntax error ----
+
+// PP51 when an operand is missing (the offending token comes after an
+// operator, after '(' or at the start), PP52 when something follows a
+// complete operand; gcc/clang give "1 +" and "(1) +" the same diagnostic. A
+// parenthesised operand earlier in the expression used to turn every later
+// PP51 into PP52.
+TEST_F(ConstfoldTest, MissingOperandIsPP51WhateverCameBefore) {
+    Issue::Blocking guard({});
+    for (const char* expr : {"1 +", "(1) +", "(1) *", "(1) &&", "(1) = = 1", "(1) + (", "((1)) -",
+                             "()", "(", "1 + )", "BYTE#", "(1) + BYTE#", "+", "1 = = 1"}) {
+        eval_const_expr(expr);
+        EXPECT_EQ(Issue::Code::MISSING_EXPRESSION, code()) << expr;
+    }
+    for (const char* expr : {"1 x", "(1) x", "(1 x)", "(1", "(1) (2)", "1 2", "1 )", "TRUE 1",
+                             "BYTE 1", "x y", "1 ! = 2", "(1 +2 3)"}) {
+        eval_const_expr(expr);
+        EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()) << expr;
+    }
+}
+
 // ---- Base-N literal validation ----
 
 TEST_F(ConstfoldTest, BaseNInvalidBase) {
@@ -330,9 +351,9 @@ TEST_F(ConstfoldTest, LintMinMagDoubleMinusWraps) {
     // jiepp lexes "--" as two CF_MINUS tokens (no "--" rule in constfold.l):
     // the inner "-9223372036854775808" is INT64_MIN via CF_MINUS
     // CF_INT_MIN_MAG, and the outer '-' negates it, which wraps back to
-    // INT64_MIN (two's-complement) with no diagnostic.
+    // INT64_MIN (two's-complement). 2^63 is not an Int: PP55 (SPEC 6.3).
     EXPECT_NE(0LL, eval_const_expr("--9223372036854775808 = -9223372036854775807 - 1"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 TEST_F(ConstfoldTest, LintMinMagAfterUnaryPlusOrNotOverflows) {
@@ -356,9 +377,10 @@ TEST_F(ConstfoldTest, LintMinMagAfterBinaryMinusOverflows) {
 TEST_F(ConstfoldTest, LintMinMagAfterUnaryMinusThenBinaryMinusWraps) {
     // "1 - -9223372036854775808": the second '-' is the direct (unary)
     // operand of the literal, giving INT64_MIN; "1 - INT64_MIN" then wraps
-    // (two's-complement) with no diagnostic.
+    // (two's-complement), reported as PP55 (SPEC 6.3). The literal itself
+    // has no diagnostic.
     EXPECT_NE(0LL, eval_const_expr("1 - -9223372036854775808 = -9223372036854775807"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 TEST_F(ConstfoldTest, LintMinMagAfterTypeKeywordMinusOverflows) {
@@ -479,7 +501,7 @@ TEST_F(ConstfoldTest, EvalConstValueReturnsKindAndValue) {
 }
 
 // ---- R1 (H1/M1): failure codes, including literal errors raised inside
-// scanner/grammar actions; division by zero is not a failure ----
+// scanner/grammar actions and division by zero ----
 
 TEST_F(ConstfoldTest, EvalConstValueReportsFailureCode) {
     Issue::ContinueMode guard({});
@@ -497,10 +519,12 @@ TEST_F(ConstfoldTest, EvalConstValueReportsFailureCode) {
     auto cs = codes();
     ASSERT_EQ(7u, cs.size());
 
+    // Division by zero fails the whole expression (SPEC 6.3, clang): the
+    // value is Int 0, not that of "0 + 5".
     auto r = eval_const_value("1 / 0 + 5");
-    EXPECT_EQ(Issue::Code::SUCCESS, r.failure);
+    EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, r.failure);
     EXPECT_EQ(ValueKind::Int, r.value.kind);
-    EXPECT_EQ(5, r.value.i);
+    EXPECT_EQ(0, r.value.i);
     EXPECT_EQ(Issue::Code::INVALID_EXPRESSION, code()); // "division by zero"
 
     // A failure does not leak into the next evaluation.

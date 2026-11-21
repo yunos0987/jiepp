@@ -1,16 +1,4 @@
-#include "test_helper.hpp"
-
-#include "loader/lexer.hpp"
-
-// ---- helpers ----
-
-static std::vector<Token> ts(const std::string& text, bool remove_comments = false) {
-    return iec3_tokens_from_string(text, remove_comments);
-}
-
-static Token make(int type, const std::string& text, int line = 0) {
-    return Token::create(type, text, line);
-}
+#include "lexer_test_helper.hpp"
 
 // ---- remove_comments ----
 
@@ -145,7 +133,7 @@ $
 {
     )";
     EXPECT_THROW(ts(s), Issue::Exception);
-    EXPECT_EQ("<unknown location>:52.0: error: PP22: Invalid syntax for pragma; '{$n    '", message());
+    EXPECT_EQ("<unknown location>:52.0: error: PP22: Invalid syntax for pragma; '{...'", message());
     
     std::string s2 = s;
     for (std::size_t pos = 0; (pos = s2.find("$\n", pos)) != std::string::npos;) {
@@ -153,7 +141,7 @@ $
         ++pos;
     }
     EXPECT_THROW(ts(s2), Issue::Exception);
-    EXPECT_EQ("<unknown location>:52.0: error: PP22: Invalid syntax for pragma; '{$n    '", message());
+    EXPECT_EQ("<unknown location>:52.0: error: PP22: Invalid syntax for pragma; '{...'", message());
 }
 
 // ---- nested brackets ----
@@ -237,4 +225,30 @@ TEST_F(LexerTest, EllipsisIsThreeDotTokens) {
     EXPECT_TRUE(result2[1].type & Token::MASK_WS);
     EXPECT_EQ(Token::ANY, result2[2].type);
     EXPECT_EQ(".", result2[2].text);
+}
+
+// ---- iec3_tokens_from_source(): a last line without a newline ----
+
+TEST_F(LexerTest, SourceLastLineIsEnded) {
+    auto nl_count = [](const std::vector<Token>& v) {
+        int n = 0;
+        for (const auto& t : v)
+            n += t.num_of_lines;
+        return n;
+    };
+    // Ended by LF, CRLF or CR: nothing added.
+    EXPECT_EQ(1, nl_count(iec3_tokens_from_source("a\n", false)));
+    EXPECT_EQ(1, nl_count(iec3_tokens_from_source("a\r\n", false)));
+    EXPECT_EQ(1, nl_count(iec3_tokens_from_source("a\r", false)));
+    // Not ended: one newline token added.
+    auto t = iec3_tokens_from_source("a\r\nb", false);
+    EXPECT_EQ(2, nl_count(t));
+    ASSERT_FALSE(t.empty());
+    EXPECT_EQ(Token::newline(1), t.back());
+    // Empty, or a UTF-8 BOM only: nothing.
+    EXPECT_TRUE(iec3_tokens_from_source("", false).empty());
+    EXPECT_TRUE(iec3_tokens_from_source("\xEF\xBB\xBF", false).empty());
+    // A BOM and text: ended.
+    EXPECT_EQ(1, nl_count(iec3_tokens_from_source("\xEF\xBB\xBF" "a", false)));
+    EXPECT_TRUE(empty());
 }

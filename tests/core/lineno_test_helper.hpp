@@ -27,8 +27,3 @@ inline std::string replace_dollar_newline(const std::string& input) {
     }
     return output;
 }
-
-inline std::string normalize_slashes(std::string text) {
-    std::replace(text.begin(), text.end(), '\\', '/');
-    return text;
-}

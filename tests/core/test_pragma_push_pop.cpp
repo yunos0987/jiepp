@@ -17,7 +17,7 @@ class PragmaPushPopTest : public JieppTest {};
 // ---- [C1] 1-5: basic save and restore ----
 
 TEST_F(PragmaPushPopTest, PopRestoresRedefinedMacro) {
-    EXPECT_EQ("21", pp("{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}X"
+    EXPECT_EQ("2 1", pp("{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}X"
                        "{#pragma pop_macro('X')}X"));
     // [C3]: restoring over another definition is not a redefinition (PP35).
     EXPECT_TRUE(empty());
@@ -29,7 +29,7 @@ TEST_F(PragmaPushPopTest, PopRestoresUndefinedState) {
 }
 
 TEST_F(PragmaPushPopTest, TwoPushesRestoreTwoLevels) {
-    EXPECT_EQ("321", pp("{#define W 1}{#pragma push_macro('W')}"
+    EXPECT_EQ("3 2 1", pp("{#define W 1}{#pragma push_macro('W')}"
                         "{#undef W}{#define W 2}{#pragma push_macro('W')}"
                         "{#undef W}{#define W 3}W"
                         "{#pragma pop_macro('W')}W"
@@ -50,7 +50,7 @@ TEST_F(PragmaPushPopTest, PopWithEmptyStackIsSilentNoOp) {
 }
 
 TEST_F(PragmaPushPopTest, DoubleQuotesBehaveTheSame) {
-    EXPECT_EQ("21", pp("{#define X 1}{#pragma push_macro(\"X\")}{#undef X}{#define X 2}X"
+    EXPECT_EQ("2 1", pp("{#define X 1}{#pragma push_macro(\"X\")}{#undef X}{#define X 2}X"
                        "{#pragma pop_macro(\"X\")}X"));
     // The two quote forms share one stack.
     EXPECT_EQ("1", pp("{#define X 1}{#pragma push_macro(\"X\")}{#undef X}"
@@ -85,19 +85,14 @@ protected:
         JieppTest::TearDown();
     }
 
-    static void write(const fs::path& p, const std::string& text) {
-        std::ofstream f(p, std::ios::binary);
-        f << text;
-    }
-
     fs::path dir_;
 };
 
 } // namespace
 
 TEST_F(PragmaPushPopIncludeTest, PushInIncludedFilePopInIncluder) {
-    write(dir_ / "h.iec", "{#pragma push_macro('X')}{#undef X}{#define X 2}");
-    write(dir_ / "m.iec", "{#define X 1}{#include 'h.iec'}A=X;{#pragma pop_macro('X')}B=X;");
+    write_file(dir_ / "h.iec", "{#pragma push_macro('X')}{#undef X}{#define X 2}");
+    write_file(dir_ / "m.iec", "{#define X 1}{#include 'h.iec'}A=X;{#pragma pop_macro('X')}B=X;");
     const std::string out = pp_file(dir_ / "m.iec");
     EXPECT_NE(std::string::npos, out.find("A=2;")) << out;
     EXPECT_NE(std::string::npos, out.find("B=1;")) << out;
@@ -151,11 +146,31 @@ TEST_F(PragmaPushPopTest, MalformedPopIsPP82AndIgnored) {
                                  "pop_macro('X' (*c*) 'Y')", "pop_macro('X'"}) {
         SCOPED_TRACE(op);
         // The malformed pop changes nothing; the stack still holds 1.
-        EXPECT_EQ("21", pp("{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}"
+        EXPECT_EQ("2 1", pp("{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}"
                            "{#pragma " + op + "}X{#pragma pop_macro('X')}X"));
         auto msgs = messages();
         ASSERT_EQ(1u, msgs.size());
         EXPECT_EQ(Issue::Code::INVALID_PUSH_POP_MACRO, PlainTextMessage::parse_code(msgs[0]));
+    }
+}
+
+// A literal cut short by a line break is PP29 and then a malformed operand:
+// it must not name a macro by its text minus the last character ('XY -> X).
+TEST_F(PragmaPushPopTest, UnterminatedLiteralIsPP82AndIgnored) {
+    Issue::ContinueMode guard({});
+    for (const std::string op : {"push_macro", "pop_macro"}) {
+        SCOPED_TRACE(op);
+        const bool push = op == "push_macro";
+        // A push of X would make the final pop restore 1; a pop of X would
+        // restore 1 before the first X.
+        EXPECT_EQ(push ? "2" : "2 1",
+                  pp(push ? "{#define X 1}{#pragma push_macro('XY$n)}{#undef X}{#define X 2}"
+                            "{#pragma pop_macro('X')}X"
+                          : "{#define X 1}{#pragma push_macro('X')}{#undef X}{#define X 2}"
+                            "{#pragma pop_macro('XY$n)}X{#pragma pop_macro('X')}X"));
+        EXPECT_EQ((std::vector<Issue::Code>{Issue::Code::UNTERMINATED_STRING_LITERAL,
+                                            Issue::Code::INVALID_PUSH_POP_MACRO}),
+                  codes());
     }
 }
 

@@ -248,27 +248,42 @@ TEST_F(DirectiveTest, IgnoreRetiredCodeAccepted) {
     EXPECT_TRUE(empty());
 }
 
-TEST_F(DirectiveTest, OperationNotAllowedDefine) {
+// 'defined' is not a macro name: PP30, an error that does not stop the run
+// (it used to be a severe PP02), and nothing is defined.
+TEST_F(DirectiveTest, DefineDefinedIsInvalidMacroName) {
     EXPECT_THROW(pp("{#define defined}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
 }
 
-TEST_F(DirectiveTest, OperationNotAllowedDefineWithBody) {
+TEST_F(DirectiveTest, DefineDefinedWithBodyIsInvalidMacroName) {
     // Not just the bare {#define defined} form: any redefinition of the
     // "defined" operator (object-like with a body, or function-like) must be
     // rejected at the define site, not silently accepted (which would corrupt
     // every later {#if defined(...)} in the file).
     EXPECT_THROW(pp("{#define defined 1}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
     EXPECT_THROW(pp("{#define defined(x) x}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
     // A later {#if defined(...)} must still work using the real operator.
     EXPECT_EQ(";yes;", pp("{#define FOO 1};{#if defined(FOO)}yes;{#endif}"));
 }
 
-TEST_F(DirectiveTest, OperationNotAllowedUndef) {
+TEST_F(DirectiveTest, UndefDefinedIsInvalidMacroName) {
     EXPECT_THROW(pp("{#undef defined}"), Issue::Exception);
-    EXPECT_EQ(Issue::Code::OPERATION_NOT_ALLOWED, code());
+    EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, code());
+}
+
+// gcc/clang report 'defined' as an error and carry on with the rest of the
+// input (the run ends with exit code 1): so does the continue mode of the
+// CLI, and 'defined' keeps its meaning in conditions.
+TEST_F(DirectiveTest, DefineAndUndefDefinedContinueInContinueMode) {
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("\ndefined\n\ndefined\n;yes;",
+              pp("{#define defined 1}\ndefined\n{#undef defined}\ndefined\n"
+                 "{#define FOO 1};{#if defined(FOO)}yes;{#endif}"));
+    EXPECT_EQ(2, Issue::error_count_);
+    for (Issue::Code c : codes())
+        EXPECT_EQ(Issue::Code::INVALID_DEFINE_SYNTAX, c);
 }
 
 TEST_F(DirectiveTest, DirectiveInsideMacroArgumentExecutedOnce) {
@@ -923,9 +938,9 @@ TEST_F(DirectiveTest, LineCommentRewriteEscapesCommentCloser) {
     // "//!" document comment in a macro body.
     EXPECT_EQ("a /*!doc *| z*/ b;", pp("{#define X a //!doc */ z}X b;"));
     EXPECT_TRUE(empty());
-    // A trailing ordinary '//' comment of a {#define} body is trimmed with
-    // the trailing whitespace, so only "//!" reaches the rewrite there.
-    EXPECT_EQ("a b;", pp("{#define Y a // c */ x}Y b;"));
+    // An ordinary '//' comment ending a {#define} body is kept and rewritten
+    // the same way.
+    EXPECT_EQ("a /* c *| x*/ b;", pp("{#define Y a // c */ x}Y b;"));
     EXPECT_TRUE(empty());
     // "//!" in a {#token} operand.
     EXPECT_EQ("a /*!d *| e*/ b;", pp("{#token a //!d */ e} b;"));
@@ -1395,7 +1410,7 @@ TEST_F(DirectiveTest, IecEscapesInDirectiveStringsKeptAsWritten) {
 TEST_F(DirectiveTest, LineCommentTrackingFollowsRawStrings) {
     EXPECT_EQ("\n'a$'b' +2;", pp("{#define B 'a$'b' // c\n+2}B;"));
     EXPECT_EQ("\n'x$'//y' +2;", pp("{#define B 'x$'//y'\n+2}B;"));
-    EXPECT_EQ("\n'x$ny' +1;", pp("{#define B (* it's *) 'x$ny' // c\n+1}B;"));
+    EXPECT_EQ("\n(* it's *) 'x$ny' +1;", pp("{#define B (* it's *) 'x$ny' // c\n+1}B;"));
     EXPECT_TRUE(empty());
 }
 
@@ -1452,4 +1467,19 @@ TEST_F(DirectiveTest, WstringQuotesUseFourDigitHex) {
                   "<unknown location>:1.0: warning: PP29: Missing terminating quote character; '\'s'",
                   "<unknown location>:1.0: warning: PP29: Missing terminating quote character; '\'s'"}),
               messages());
+}
+
+// {#D} and {#I} are the short names of {#define} and {#syspath} (SPEC 2
+// "Directive Name Aliases"); only the upper-case letters are names.
+TEST_F(DirectiveTest, ShortNamesDAndI) {
+    EXPECT_EQ("1 2,3", pp("{#D X 1}{#D F(a, r...) r}X F(0,2,3)"));
+    EXPECT_EQ(pp("{#syspath 'lib'}"), pp("{#I 'lib'}"));
+    EXPECT_NE(std::string::npos, pp("{#I 'lib'}").find("syspath:'lib'"));
+    EXPECT_TRUE(empty());
+
+    Issue::ContinueMode guard({});
+    EXPECT_EQ("X", pp("{#d X 1}X"));
+    EXPECT_EQ((std::vector<Issue::Code>{Issue::Code::UNKNOWN_DIRECTIVE}), codes());
+    (void)pp("{#i 'lib'}");
+    EXPECT_EQ((std::vector<Issue::Code>{Issue::Code::UNKNOWN_DIRECTIVE}), codes());
 }

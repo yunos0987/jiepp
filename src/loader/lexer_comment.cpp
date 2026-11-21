@@ -1,4 +1,5 @@
 #include "lexer_helpers.hpp"
+#include "../util/text.hpp"
 
 namespace jiepp::detail {
 
@@ -14,6 +15,11 @@ Token read_block_comment(const std::string& text, std::size_t& pos,
     body.reserve(128);
     body += opener1;
     body += '*';
+    // A document comment's '!' belongs to the opener: the caller has
+    // consumed it, and both the token and an unclosed-comment diagnostic
+    // (PP20) show the comment as written.
+    if (type == Token::DOCUMENT)
+        body += '!';
     int lines_in_comment = 0;
 
     while (pos < text.size()) {
@@ -52,7 +58,8 @@ Token read_block_comment(const std::string& text, std::size_t& pos,
         *opts.found_unclosed_comment = true;
     if (opts.report_unclosed_comment) {
         report_lex_issue(start_lineno, opts, start_pos, [&] {
-            ISSUE(UNCLOSED_COMMENT, body);
+            // Not the whole rest of the input: only where the comment starts.
+            ISSUE(UNCLOSED_COMMENT, Util::diag_excerpt(body));
         });
     }
     return Token::create(type, std::move(body), lines_in_comment);

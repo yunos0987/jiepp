@@ -2,7 +2,6 @@
 
 #include <string>
 #include <string_view>
-#include <filesystem>
 
 namespace Util {
 
@@ -23,6 +22,32 @@ bool narrow_paths_are_utf8();
 // file disappears between the existence check and this call), falls back to
 // absolute_path()'s purely lexical normalisation.
 std::string canonical_path(std::string_view path_text);
+
+// The path a file was reached by: `name` as written, under the directory
+// `dir` it was found in (the including file's own reached-by path minus
+// its file name, or a system path as given), like gcc/clang. It is the
+// name shown in line markers, __FILE__ and diagnostics, and it opens the
+// file from the working directory. The two are joined with '/' (none is
+// added after a `dir` that ends with one, so "lib/" and "lib//" stay as
+// written) and a name with a root stands alone; "." and ".." components and
+// a run of '/' in either part stay, as in gcc/clang. The text is handled as a
+// string, not as a std::filesystem::path (libstdc++ would join a run of '/'
+// into one); on Windows a backslash becomes '/'.
+// e.g. ("tests/in", "./a.iec") -> "tests/in/./a.iec"; ("", "a.iec") -> "a.iec";
+// ("lib//", "a.iec") -> "lib//a.iec"; ("lib", "x//a.iec") -> "lib/x//a.iec"
+std::string reached_path(std::string_view dir, std::string_view name);
+
+// A reached-by path as a prerequisite of a dependency rule (-M ...): the
+// leading "./" runs are dropped, like gcc/clang; the rest is kept.
+// e.g. "././x.iec" -> "x.iec"; "./lib/./t.iec" -> "lib/./t.iec"
+std::string dependency_path(std::string_view reached);
+
+// The directory part of a reached-by path ("" when it has none): the text
+// before its last '/', with a run of '/' kept whole so that reached_path()
+// joins it back as written.
+// e.g. "tests/in/main.iec" -> "tests/in"; "./main.iec" -> "."; "main.iec" -> "";
+// "lib//a.iec" -> "lib//"
+std::string reached_dir(std::string_view path);
 
 // Identity of a file on disk, independent of how its path is spelled: (volume
 // serial number, file index) on Windows, (st_dev, st_ino) on POSIX. Two paths

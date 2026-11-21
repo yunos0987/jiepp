@@ -250,3 +250,147 @@ TEST_F(UtilTest, EscapeControlCharsPropertyNoForbiddenBytes) {
         }
     }
 }
+
+// The path a file was reached by: name under dir, joined as gcc/clang join
+// them -- nothing is normalised, an absolute name stands alone.
+TEST_F(UtilTest, reached_path) {
+    EXPECT_EQ("a.iec", Util::reached_path("", "a.iec"));
+    EXPECT_EQ("./a.iec", Util::reached_path("", "./a.iec"));
+    EXPECT_EQ("tests/in/a.iec", Util::reached_path("tests/in", "a.iec"));
+    EXPECT_EQ("tests/in/./a.iec", Util::reached_path("tests/in", "./a.iec"));
+    EXPECT_EQ("././x.iec", Util::reached_path(".", "./x.iec"));
+    EXPECT_EQ("./lib/./t.iec", Util::reached_path("./lib", "./t.iec"));
+    EXPECT_EQ("sub/inc/../inc/b.iec", Util::reached_path("sub/inc", "../inc/b.iec"));
+    EXPECT_EQ("../a.iec", Util::reached_path("", "../a.iec"));
+    EXPECT_EQ("tests/in/a.iec", Util::reached_path("tests/in/", "a.iec"));
+    EXPECT_EQ("/abs/a.iec", Util::reached_path("tests/in", "/abs/a.iec"));
+    EXPECT_EQ("/a.iec", Util::reached_path("/", "a.iec"));
+#ifdef _WIN32
+    EXPECT_EQ("C:/abs/a.iec", Util::reached_path("tests/in", "C:/abs/a.iec"));
+    EXPECT_EQ("C:/s.iec", Util::reached_path("C:/", "s.iec"));
+    EXPECT_EQ("tests/in/x/a.iec", Util::reached_path("tests\\in", "x\\a.iec"));
+    // A bare drive is not joined with '/': the file stays drive-relative.
+    EXPECT_EQ("C:a.iec", Util::reached_path("C:", "a.iec"));
+    EXPECT_EQ("C:", Util::reached_dir("C:main.iec"));
+    EXPECT_EQ("C:a.iec", Util::reached_path(Util::reached_dir("C:main.iec"), "a.iec"));
+    // A file in the root of a drive: its directory is the root, "C:/", not
+    // the drive-relative "C:".
+    EXPECT_EQ("C:/", Util::reached_dir("C:/main.iec"));
+    EXPECT_EQ("C:/", Util::reached_dir("C:\\main.iec"));
+    EXPECT_EQ("C:/h.iec", Util::reached_path(Util::reached_dir("C:/main.iec"), "h.iec"));
+    EXPECT_EQ("C:/sub", Util::reached_dir("C:/sub/main.iec"));
+#else
+    // Elsewhere "C:" is an ordinary directory name.
+    EXPECT_EQ("C:/a.iec", Util::reached_path("C:", "a.iec"));
+    EXPECT_EQ("", Util::reached_dir("C:main.iec"));
+    // Elsewhere a backslash is an ordinary file-name character.
+    EXPECT_EQ("tests/in/x\\a.iec", Util::reached_path("tests/in", "x\\a.iec"));
+#endif
+}
+
+// A run of '/' stays as written on every platform: with libstdc++
+// std::filesystem::path joins it into one, so the text is handled as a string.
+TEST_F(UtilTest, reached_path_keeps_runs_of_slashes) {
+    EXPECT_EQ("x//a.h", Util::reached_path("", "x//a.h"));
+    EXPECT_EQ("lib/x//a.h", Util::reached_path("lib", "x//a.h"));
+    EXPECT_EQ("lib//a.h", Util::reached_path("lib//", "a.h"));
+    EXPECT_EQ("lib/a.h", Util::reached_path("lib/", "a.h"));
+    EXPECT_EQ("lib/.//b.h", Util::reached_path("lib", ".//b.h"));
+    EXPECT_EQ("lib//.//b.h", Util::reached_path("lib//", ".//b.h"));
+    EXPECT_EQ("a//b/../a.h", Util::reached_path("a//b", "../a.h"));
+    EXPECT_EQ("//abs//a.h", Util::reached_path("lib", "//abs//a.h"));
+}
+
+TEST_F(UtilTest, reached_dir_keeps_runs_of_slashes) {
+    EXPECT_EQ("lib//", Util::reached_dir("lib//a.h"));
+    EXPECT_EQ("a//b", Util::reached_dir("a//b/c.h"));
+    EXPECT_EQ("/", Util::reached_dir("/a.h"));
+    EXPECT_EQ("//", Util::reached_dir("//a.h"));
+    // Joined back, the file next to it is named the way gcc/clang name it.
+    EXPECT_EQ("lib//c.h", Util::reached_path(Util::reached_dir("lib//a.h"), "c.h"));
+    EXPECT_EQ("lib/c.h", Util::reached_path(Util::reached_dir("lib/a.h"), "c.h"));
+}
+
+TEST_F(UtilTest, reached_dir) {
+    EXPECT_EQ("", Util::reached_dir(""));
+    EXPECT_EQ("", Util::reached_dir("main.iec"));
+    EXPECT_EQ("", Util::reached_dir("<stdin>"));
+    EXPECT_EQ(".", Util::reached_dir("./main.iec"));
+    EXPECT_EQ("tests/in", Util::reached_dir("tests/in/main.iec"));
+    EXPECT_EQ("sub/inc/../inc", Util::reached_dir("sub/inc/../inc/b.iec"));
+}
+
+// __DATE__, __TIME__ and __TIMESTAMP__: gcc/clang write the day padded with a
+// space to two characters ("Mar  9 2020"), and the names do not follow the
+// locale.
+namespace {
+std::tm make_tm(int year, int mon, int mday, int hour, int min, int sec, int wday) {
+    std::tm t{};
+    t.tm_year = year - 1900;
+    t.tm_mon = mon - 1;
+    t.tm_mday = mday;
+    t.tm_hour = hour;
+    t.tm_min = min;
+    t.tm_sec = sec;
+    t.tm_wday = wday;
+    return t;
+}
+} // namespace
+
+TEST_F(UtilTest, format_date) {
+    EXPECT_EQ("Mar  9 2020", Util::format_date(make_tm(2020, 3, 9, 1, 2, 3, 1)));
+    EXPECT_EQ("Mar 19 2020", Util::format_date(make_tm(2020, 3, 19, 1, 2, 3, 4)));
+    EXPECT_EQ("Jan  1 1999", Util::format_date(make_tm(1999, 1, 1, 0, 0, 0, 5)));
+    EXPECT_EQ("Dec 31 2026", Util::format_date(make_tm(2026, 12, 31, 23, 59, 59, 4)));
+    // Always 11 characters.
+    EXPECT_EQ(11u, Util::format_date(make_tm(2020, 2, 3, 0, 0, 0, 1)).size());
+}
+
+TEST_F(UtilTest, format_time) {
+    EXPECT_EQ("01:02:03", Util::format_time(make_tm(2020, 3, 9, 1, 2, 3, 1)));
+    EXPECT_EQ("00:00:00", Util::format_time(make_tm(2020, 3, 9, 0, 0, 0, 1)));
+    EXPECT_EQ("23:59:59", Util::format_time(make_tm(2020, 3, 9, 23, 59, 59, 1)));
+}
+
+TEST_F(UtilTest, format_timestamp) {
+    EXPECT_EQ("Mon Mar  9 01:02:03 2020", Util::format_timestamp(make_tm(2020, 3, 9, 1, 2, 3, 1)));
+    EXPECT_EQ("Thu Mar 19 10:20:30 2020", Util::format_timestamp(make_tm(2020, 3, 19, 10, 20, 30, 4)));
+    EXPECT_EQ("Sun Jan  1 00:00:00 2023", Util::format_timestamp(make_tm(2023, 1, 1, 0, 0, 0, 0)));
+}
+
+// What a diagnostic quotes of a construct that runs to the end of the input.
+TEST_F(UtilTest, diag_excerpt) {
+    EXPECT_EQ("", Util::diag_excerpt(""));
+    EXPECT_EQ("(* x", Util::diag_excerpt("(* x"));
+    // Only line breaks after the first line: nothing was left out.
+    EXPECT_EQ("(* x", Util::diag_excerpt("(* x\n"));
+    EXPECT_EQ("(* x", Util::diag_excerpt("(* x\r\n"));
+    // Later lines are left out.
+    EXPECT_EQ("(* x...", Util::diag_excerpt("(* x\ny\n"));
+    EXPECT_EQ("{...", Util::diag_excerpt("{\n    "));
+    // A long first line is cut at the limit.
+    EXPECT_EQ(std::string(64, 'a') + "...", Util::diag_excerpt(std::string(100, 'a')));
+    EXPECT_EQ(std::string(64, 'a'), Util::diag_excerpt(std::string(64, 'a')));
+    EXPECT_EQ("abc...", Util::diag_excerpt("abcdef", 3));
+    // Never in the middle of a UTF-8 character.
+    EXPECT_EQ("a\xE3\x81\x82...", Util::diag_excerpt("a\xE3\x81\x82\xE3\x81\x84", 5));
+    EXPECT_EQ("a...", Util::diag_excerpt("a\xE3\x81\x82\xE3\x81\x84", 3));
+}
+
+// A prerequisite of a dependency rule: the reached-by path without its
+// leading "./" runs (gcc/clang); everything after them is kept.
+TEST_F(UtilTest, dependency_path) {
+    EXPECT_EQ("x.iec", Util::dependency_path("x.iec"));
+    EXPECT_EQ("x.iec", Util::dependency_path("./x.iec"));
+    EXPECT_EQ("x.iec", Util::dependency_path("././x.iec"));
+    EXPECT_EQ("x.iec", Util::dependency_path(".//x.iec"));
+    EXPECT_EQ("lib/./t.iec", Util::dependency_path("./lib/./t.iec"));
+    EXPECT_EQ("../x.iec", Util::dependency_path("../x.iec"));
+    EXPECT_EQ("../x.iec", Util::dependency_path("./../x.iec"));
+    EXPECT_EQ(".x.iec", Util::dependency_path(".x.iec"));
+    EXPECT_EQ("/abs/./x.iec", Util::dependency_path("/abs/./x.iec"));
+    EXPECT_EQ("", Util::dependency_path(""));
+    EXPECT_EQ(".", Util::dependency_path("."));
+    EXPECT_EQ("", Util::dependency_path("./"));
+    EXPECT_EQ("..", Util::dependency_path(".."));
+}

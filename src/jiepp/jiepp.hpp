@@ -1,6 +1,5 @@
 ﻿#pragma once
 #include "option.hpp"
-#include <iostream>
 
 /**
  * @brief Execute jiepp preprocessing.

@@ -30,16 +30,6 @@ protected:
         }
     }
 
-    static std::string read_file(const fs::path& p) {
-        std::ifstream f(p, std::ios::binary);
-        return {std::istreambuf_iterator<char>(f), {}};
-    }
-
-    static void write_file(const fs::path& p, const std::string& content) {
-        std::ofstream f(p, std::ios::binary);
-        f << content;
-    }
-
     // Shared input/output shape for the deeply-nested function-macro tests
     // below: I(I(...I(0)...)) at the given depth, inside a program body.
     static std::string nested_macro_source(int depth) {
@@ -167,6 +157,76 @@ TEST_F(SmokeTest, StdinPipe) {
     EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
     EXPECT_NE(r.out.find("99"), std::string::npos)
         << "stdout: " << r.out;
+}
+
+// ---- 5b. A file's last line without a newline is ended by one ----
+//
+// Measured with clang and gcc: an included `a.h` of just `A` followed by
+// `b` gives "A" and "b" on two lines, `__LINE__` after it is still the next
+// line, and a main input or standard input `a\nb` ends with a newline. No
+// diagnostic. An empty file adds nothing.
+
+TEST_F(SmokeTest, LastLineWithoutNewlineIsEnded) {
+    write_file(tmp_dir_ / "nonl_a.iec", "A\n__LINE__");
+    write_file(tmp_dir_ / "nonl_e.iec", "");
+    fs::path input = tmp_dir_ / "nonl_main.iec";
+    write_file(input, "{#include 'nonl_a.iec'}\n__LINE__\n{#include 'nonl_e.iec'}b\n{#include "
+                      "'nonl_a.iec'}");
+
+    auto r = run("-P \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_EQ(r.out, "A\n2\n2\nb\nA\n2\n") << "stdout: " << r.out;
+    EXPECT_EQ(r.err, "");
+
+    // With line markers, the marker back to the main input is on a line of
+    // its own.
+    write_file(input, "{#include 'nonl_a.iec'}\nb");
+    r = run("\"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 0) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("\n2\n(*{#:1 '"), std::string::npos) << "stdout: " << r.out;
+    EXPECT_TRUE(r.out.ends_with("}*)\nb\n")) << "stdout: " << r.out;
+
+    // -include, and the standard input.
+    write_file(input, "b");
+    r = run("-P -include \"" + (tmp_dir_ / "nonl_a.iec").generic_string() + "\" \"" +
+            input.generic_string() + "\"");
+    EXPECT_EQ(r.out, "A\n2\nb\n") << "stdout: " << r.out;
+    write_file(input, "a\nb");
+    r = run("-P -", input.generic_string());
+    EXPECT_EQ(r.out, "a\nb\n") << "stdout: " << r.out;
+}
+
+// ---- 5c. An unclosed group in an included or -include file ----
+//
+// Measured with clang and gcc: the groups left open in the included file are
+// reported at that file's {#if} lines (innermost first), and the including
+// file's {#endif} does not close them (#endif without #if).
+
+TEST_F(SmokeTest, UnclosedGroupInIncludedFile) {
+    write_file(tmp_dir_ / "pp24_a.iec", "{#if 1}\n{#if 0}\nh\n");
+    fs::path input = tmp_dir_ / "pp24_main.iec";
+    write_file(input, "{#include 'pp24_a.iec'}\n{#endif}\nend\n");
+
+    auto r = run("-P \"" + input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    const auto a2 = r.err.find("pp24_a.iec:2.0: error: PP24");
+    const auto a1 = r.err.find("pp24_a.iec:1.0: error: PP24");
+    const auto m2 = r.err.find("pp24_main.iec:2.0: error: PP27");
+    EXPECT_NE(a2, std::string::npos) << r.err;
+    EXPECT_NE(a1, std::string::npos) << r.err;
+    EXPECT_NE(m2, std::string::npos) << r.err;
+    EXPECT_LT(a2, a1) << r.err;
+    EXPECT_LT(a1, m2) << r.err;
+
+    // -include: reported at the -include file's line, and the main input
+    // goes on.
+    write_file(input, "end\n");
+    r = run("-P -include \"" + (tmp_dir_ / "pp24_a.iec").generic_string() + "\" \"" +
+            input.generic_string() + "\"");
+    EXPECT_EQ(r.exit_code, 1);
+    EXPECT_NE(r.err.find("pp24_a.iec:2.0: error: PP24"), std::string::npos) << r.err;
+    EXPECT_NE(r.err.find("pp24_a.iec:1.0: error: PP24"), std::string::npos) << r.err;
+    EXPECT_EQ(r.out, "end\n") << r.out;
 }
 
 // ---- 5a. stdin is read in binary mode (B2) ----
@@ -555,7 +615,7 @@ TEST_F(SmokeTest, ArgCountMismatchDoesNotExpandUnderDD) {
 
     auto r = run("-dD -P \"" + input.generic_string() + "\"");
     EXPECT_EQ(r.exit_code, 1);
-    EXPECT_EQ(r.out, "{#define P(x) x}{#define Q 9}P 9");
+    EXPECT_EQ(r.out, "{#define P(x) x}{#define Q 9}P 9\n"); // the file has no last newline
     EXPECT_NE(r.err.find("PP34"), std::string::npos) << "stderr: " << r.err;
     EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1)
         << "stderr should have exactly one PP34 line: " << r.err;
@@ -867,9 +927,10 @@ TEST_F(RobustnessTestSmoke, NestedVaOptContinueModeReportsOnePP37) {
     EXPECT_NE(r.out.find("M(1) after_m"), std::string::npos) << "stdout: " << r.out.substr(0, 2000);
 }
 
-// -D goes through the same {#define} check, and a -D error stops the command
-// like the other -D errors (no output, rc 1): exactly one PP37 line, after the
-// PP80 warnings for the __VA_OPT__ tokens of a non-variadic macro up to the
+// -D goes through the same {#define} check, and a -D error is reported and
+// counted like one in the source: the input is still processed (the macro is
+// not defined) and the exit code is 1. Exactly one PP37 line, after the PP80
+// warnings for the __VA_OPT__ tokens of a non-variadic macro up to the
 // problem.
 TEST_F(RobustnessTestSmoke, RejectedVaOptDefinitionOnCommandLine) {
     fs::path input = tmp_dir_ / "d_va_opt.iec";
@@ -898,7 +959,7 @@ TEST_F(RobustnessTestSmoke, RejectedVaOptDefinitionOnCommandLine) {
             expected += "jiepp: warning: PP80: __VA_OPT__ outside a variadic macro; 'F'\n";
         expected += std::string("jiepp: error: PP37: Invalid __VA_OPT__; '") + c.text + "'\n";
         EXPECT_EQ(err, expected);
-        EXPECT_TRUE(r.out.empty()) << "stdout: " << r.out;
+        EXPECT_NE(r.out.find("M(1) after_d"), std::string::npos) << "stdout: " << r.out;
     }
 }
 
@@ -971,7 +1032,8 @@ TEST_F(RobustnessTestSmoke, VaOptOutsideVariadicIsAWarning) {
 }
 
 // -D goes through the same definition: a warning on the command line, and
-// with -Werror an error that stops the command like a promoted PP35 does.
+// with -Werror an error (exit code 1; the input is still processed, as for a
+// promoted PP35).
 TEST_F(RobustnessTestSmoke, VaOptOutsideVariadicOnCommandLine) {
     fs::path input = tmp_dir_ / "d_vo_warn.iec";
     write_file(input, "[F(1)]\n");
@@ -987,7 +1049,7 @@ TEST_F(RobustnessTestSmoke, VaOptOutsideVariadicOnCommandLine) {
     EXPECT_EQ(rw.exit_code, 1) << "stderr: " << rw.err;
     EXPECT_EQ(plain_stderr(rw.err),
               "jiepp: error: PP80: __VA_OPT__ outside a variadic macro; 'F'\n");
-    EXPECT_TRUE(rw.out.empty()) << "stdout: " << rw.out;
+    EXPECT_NE(rw.out.find("[]"), std::string::npos) << "stdout: " << rw.out;
 }
 
 // The same macro on the command line and in the source: still no PP35, but
@@ -1162,7 +1224,13 @@ TEST_F(SmokeTest, IncludeFanOutStopsAtDefaultCount) {
     EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err.substr(0, 2000);
     EXPECT_EQ(count_lines_with(r.err, ": PP66: Maximum include count exceeded"), 1u)
         << "stderr: " << r.err.substr(0, 2000);
-    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 1) << "stderr: " << r.err.substr(0, 2000);
+    // The PP66 is in a nested inclusion, so its include stack (SPEC 16)
+    // comes first: every other line is an "In file included from" line.
+    EXPECT_EQ(static_cast<std::size_t>(std::count(r.err.begin(), r.err.end(), '\n')) -
+                  count_lines_with(r.err, "In file included from "),
+              1u) << "stderr: " << r.err.substr(0, 2000);
+    EXPECT_EQ(r.err.find("In file included from ", r.err.find(": PP66:")), std::string::npos)
+        << "stderr: " << r.err.substr(0, 2000);
     EXPECT_NE(r.err.find("limit 10000; use --max-include-count N to raise it (0 = no limit)"),
               std::string::npos) << "stderr: " << r.err.substr(0, 2000);
 }
@@ -1260,7 +1328,10 @@ TEST_F(SmokeTest, RelexDiagnosticInIncludedFileAtPragmaLine) {
         << "stderr: " << r.err;
     EXPECT_NE(r.err.find("o.iec:3.0: error: PP20: Unclosed comment; '(* top '"), std::string::npos)
         << "stderr: " << r.err;
-    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 2) << "stderr: " << r.err;
+    // The included file's diagnostic follows its include point (SPEC 16).
+    EXPECT_EQ(plain_stderr(r.err).find("In file included from " + input.generic_string() + ":2:\n"), 0u)
+        << "stderr: " << r.err;
+    EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 3) << "stderr: " << r.err;
 }
 #endif
 
@@ -1313,16 +1384,18 @@ TEST_F(SmokeTest, IgnoredPP14CannotHideDirectoryInclude) {
     EXPECT_NE(r.err.find("PP14"), std::string::npos) << "stderr: " << r.err;
 }
 
-// An empty -include operand resolves to the current directory: PP14 whose
-// context says the filename is empty.
-TEST_F(SmokeTest, EmptyForceIncludeOperandIsPP14WithContext) {
+// An empty -include operand names no file: PP47 whose context says the
+// filename is empty, and the main input is still processed (clang reports
+// "empty filename" and goes on). Exit code 1.
+TEST_F(SmokeTest, EmptyForceIncludeOperandIsPP47AndContinues) {
     fs::path input = tmp_dir_ / "empty_fi.iec";
     write_file(input, "x := 1;\n");
 
     auto r = run("-include \"\" \"" + input.generic_string() + "\"");
     EXPECT_EQ(r.exit_code, 1) << "stderr: " << r.err;
-    EXPECT_NE(r.err.find("PP14: Include target is a directory; 'empty filename'"),
+    EXPECT_NE(r.err.find("PP47: Invalid path; 'empty filename'"),
               std::string::npos) << "stderr: " << r.err;
+    EXPECT_NE(r.out.find("x := 1;"), std::string::npos) << "stdout: " << r.out;
 }
 
 TEST_F(SmokeTest, IgnoredPP12CannotHideIncludeDepthExceeded) {
@@ -1364,8 +1437,8 @@ bool has_forbidden_diagnostic_byte(const std::string& s) {
 
 }  // namespace
 
-// Before the fix the raw ESC, DEL, C2 9B and the LF of the unclosed comment
-// reached stderr as they were.
+// Before the fix the raw ESC, DEL and C2 9B reached stderr as they were (and
+// the LF of the unclosed comment, which the PP20 now quotes only up to).
 TEST_F(SmokeTest, DiagnosticsHaveNoControlBytes) {
     fs::path input = tmp_dir_ / "ctl_bytes.iec";
     write_file(input, "{#line a\x1B[31mX}\n"
@@ -1379,7 +1452,7 @@ TEST_F(SmokeTest, DiagnosticsHaveNoControlBytes) {
     EXPECT_FALSE(has_forbidden_diagnostic_byte(r.err)) << "stderr: " << r.err;
     // One diagnostic per line: PP20, PP41, PP38, PP41, PP91.
     EXPECT_EQ(std::count(r.err.begin(), r.err.end(), '\n'), 5) << "stderr: " << r.err;
-    EXPECT_NE(r.err.find("PP20: Unclosed comment; '(* unclosed$nmore$n'"), std::string::npos)
+    EXPECT_NE(r.err.find("PP20: Unclosed comment; '(* unclosed...'"), std::string::npos)
         << "stderr: " << r.err;
     EXPECT_NE(r.err.find("'a$1B[31mX'"), std::string::npos) << "stderr: " << r.err;
     EXPECT_NE(r.err.find("'A$7Fb 1'"), std::string::npos) << "stderr: " << r.err;
@@ -1715,7 +1788,9 @@ TEST_F(RobustnessTestSmoke, OutputSymlinkToRegularFileRemovedAsLink) {
 namespace {
 
 // The diagnostic lines of `err`, without a CR and without the "@file:line"
-// suffix of a Debug build.
+// suffix of a Debug build. "In file included from" lines (a PP10 for an
+// -include file has "In file included from <command line>:") are not
+// diagnostics and are skipped.
 std::vector<std::string> c11_diag_lines(const std::string& err) {
     std::vector<std::string> lines;
     std::istringstream in(err);
@@ -1723,6 +1798,8 @@ std::vector<std::string> c11_diag_lines(const std::string& err) {
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
+        if (DiagBox::is_include_stack_line(line))
+            continue;
         lines.push_back(PlainTextMessage::strip_source_location(line));
     }
     return lines;
@@ -1897,6 +1974,276 @@ TEST_F(RobustnessTestSmoke, FileReadErrorReportsPP10) {
     }
 }
 #endif // __linux__
+
+// ---- Command line: gcc/clang compatible forms (WP1) ----
+
+namespace {
+
+// stdout of a run with CR LF folded to LF (Windows text-mode redirection).
+std::string lf_only(std::string s) {
+    s.erase(std::remove(s.begin(), s.end(), '\r'), s.end());
+    return s;
+}
+
+} // namespace
+
+// -oFILE, -MFFILE, -MTTARGET, -MQTARGET and -includeFILE: the value may follow
+// the option directly, as in gcc/clang.
+TEST_F(SmokeTest, GluedOptionValues) {
+    fs::path in = tmp_dir_ / "glue_main.iec";
+    write_file(in, "main\n");
+    fs::path pre = tmp_dir_ / "glue_pre.iec";
+    write_file(pre, "pre\n");
+    const std::string out = (tmp_dir_ / "glue_out.iec").generic_string();
+    const std::string dep = (tmp_dir_ / "glue_dep.d").generic_string();
+
+    auto r = run("-P \"-o" + out + "\" \"-include" + pre.generic_string() + "\" \"" +
+                 in.generic_string() + "\"");
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("", r.out);
+    EXPECT_EQ("pre\nmain\n", lf_only(read_file(out)));
+
+    // -MF/-MT/-MQ glued; -MP, -MD, -MM, -MMD and -M are still the options of
+    // those names.
+    r = run("-M -MP \"-MF" + dep + "\" -MTt1 \"-MQa b\" \"" + in.generic_string() + "\"");
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    const std::string d = lf_only(read_file(dep));
+    EXPECT_EQ(0u, d.rfind("t1 a\\ b: \\\n  " + in.generic_string() + "\n", 0)) << d;
+    EXPECT_EQ("", r.out);
+}
+
+// -D and -U apply in the order written.
+TEST_F(SmokeTest, DefineAndUndefineInCommandLineOrder) {
+    fs::path in = tmp_dir_ / "order.iec";
+    write_file(in, "X\n");
+    const std::string q = " -P \"" + in.generic_string() + "\"";
+
+    auto r = run("-UX -DX=1" + q);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("1\n", lf_only(r.out));
+
+    r = run("-DX=1 -UX" + q);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("X\n", lf_only(r.out));
+
+    r = run("-DX=1 -UX -DX=2" + q);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("2\n", lf_only(r.out));
+}
+
+// A -D/-U that is rejected is an error but not the end of the run: the other
+// options and the input are processed and the exit code is 1 (gcc/clang).
+// A malformed option (PP70-PP73) still ends the run at once.
+TEST_F(SmokeTest, RejectedDefineAndUndefineOptionsContinue) {
+    fs::path in = tmp_dir_ / "rejected.iec";
+    write_file(in, "X\n");
+    const std::string q = " -P \"" + in.generic_string() + "\"";
+
+    auto r = run("-D1X=1 -DX=2" + q);
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_EQ("2\n", lf_only(r.out));
+    EXPECT_NE(r.err.find("PP30: Invalid define syntax; 'macro name must be an identifier: 1X 1'"),
+              std::string::npos) << r.err;
+
+    r = run("-Udefined" + q);
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_EQ("X\n", lf_only(r.out));
+    EXPECT_NE(r.err.find("PP30: Invalid define syntax; 'defined cannot be used as a macro name'"),
+              std::string::npos) << r.err;
+
+    r = run("-Ddefined=1 -DX=3" + q);
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_EQ("3\n", lf_only(r.out));
+
+    r = run("\"-DF(a,a)=1\" -DX=4" + q);
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_EQ("4\n", lf_only(r.out));
+    EXPECT_NE(r.err.find("PP36"), std::string::npos) << r.err;
+
+    // Malformed options: no output, nothing processed.
+    r = run("-D=1 -DX=2" + q);
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_EQ("", r.out);
+    EXPECT_NE(r.err.find("PP73"), std::string::npos) << r.err;
+}
+
+// {#define defined ...} and {#undef defined} are errors that do not stop the run.
+TEST_F(SmokeTest, DefineDefinedInSourceContinues) {
+    fs::path in = tmp_dir_ / "defined.iec";
+    write_file(in, "{#define defined 1}\ndefined\n{#undef defined}\ndefined\n");
+
+    auto r = run("-P \"" + in.generic_string() + "\"");
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_EQ("defined\ndefined\n", lf_only(r.out));
+    EXPECT_EQ(std::string::npos, r.err.find("PP02")) << r.err;
+    EXPECT_NE(r.err.find(":1.0: error: PP30: Invalid define syntax; 'defined cannot be used as a macro name'"),
+              std::string::npos) << r.err;
+    EXPECT_NE(r.err.find(":3.0: error: PP30"), std::string::npos) << r.err;
+}
+
+// Several -MT/-MQ come out in the order written, separated by a space; -MT
+// text is verbatim and -MQ text is Make-escaped.
+TEST_F(SmokeTest, DependencyTargetsMTAndMQ) {
+    fs::path in = tmp_dir_ / "mt_main.iec";
+    write_file(in, "x\n");
+    const std::string a = "\"" + in.generic_string() + "\"";
+
+    auto r = run("-M -MT t1 -MT t2 " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("t1 t2: \\\n  " + in.generic_string() + "\n", lf_only(r.out));
+
+    // The operand is a b$c#d on both platforms: cmd.exe passes $ as is,
+    // while sh expands $c inside double quotes unless it is written \$.
+#ifdef _WIN32
+    const std::string mq = "\"a b$c#d\"";
+#else
+    const std::string mq = "\"a b\\$c#d\"";
+#endif
+    r = run("-M -MQ " + mq + " " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("a\\ b$$c\\#d: \\\n  " + in.generic_string() + "\n", lf_only(r.out));
+
+    r = run("-M -MT t1 -MQ \"a b\" -MT t3 " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("t1 a\\ b t3: \\\n  " + in.generic_string() + "\n", lf_only(r.out));
+
+    // -MP's empty rules do not depend on the targets.
+    r = run("-M -MP -MT t1 -MT t2 " + a);
+    EXPECT_EQ("t1 t2: \\\n  " + in.generic_string() + "\n", lf_only(r.out));
+}
+
+// -MF - writes the rules to stdout, not to a file named "-" (like -o -).
+TEST_F(SmokeTest, DependencyFileDashIsStdout) {
+    fs::path in = tmp_dir_ / "mfdash.iec";
+    write_file(in, "x\n");
+    const std::string a = "\"" + in.generic_string() + "\"";
+    const std::string rule = "mfdash.output: \\\n  " + in.generic_string() + "\n";
+    const fs::path stray = fs::current_path() / "-";
+    fs::remove(stray);
+
+    auto r = run("-M -MF - " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ(rule, lf_only(r.out));
+    EXPECT_FALSE(fs::exists(stray));
+
+    // With -MD the preprocessed output comes first.
+    r = run("-MD -MF - -P " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("x\n" + rule, lf_only(r.out));
+    EXPECT_FALSE(fs::exists(stray));
+    EXPECT_FALSE(fs::exists(fs::current_path() / "mfdash.d"));
+}
+
+// The main input is the first prerequisite even when -include files are read
+// before it.
+TEST_F(SmokeTest, DependencyMainInputComesFirstWithForceInclude) {
+    fs::path in = tmp_dir_ / "dm_main.iec";
+    write_file(in, "x\n");
+    fs::path pre = tmp_dir_ / "dm_pre.iec";
+    write_file(pre, "p\n");
+    const std::string a = "-include \"" + pre.generic_string() + "\" \"" + in.generic_string() + "\"";
+
+    auto r = run("-M " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("dm_main.output: \\\n  " + in.generic_string() + " \\\n  " + pre.generic_string() + "\n",
+              lf_only(r.out));
+
+    // -MP leaves out the main input only.
+    r = run("-M -MP " + a);
+    EXPECT_EQ("dm_main.output: \\\n  " + in.generic_string() + " \\\n  " + pre.generic_string() +
+                  "\n" + pre.generic_string() + ":\n",
+              lf_only(r.out));
+}
+
+// The target of a rule without -MT/-MQ: the input's name with ".output" (a
+// stdin input is "-.output", like clang's "-.o"); with -MD/-MMD and -o FILE it
+// is FILE (clang).
+TEST_F(SmokeTest, DefaultDependencyTarget) {
+    fs::path in = tmp_dir_ / "tgt_main.iec";
+    write_file(in, "x\n");
+    fs::path stdin_file = tmp_dir_ / "tgt_stdin.iec";
+    write_file(stdin_file, "x\n");
+    const std::string a = "\"" + in.generic_string() + "\"";
+
+    auto r = run("-M -", stdin_file.generic_string());
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("-.output:\n", lf_only(r.out));
+
+    // -M does not derive the target from -o (clang: "main.o").
+    const std::string out = (tmp_dir_ / "tgt_out.piec").generic_string();
+    r = run("-M -o \"" + out + "\" " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("tgt_main.output: \\\n  " + in.generic_string() + "\n", lf_only(read_file(out)));
+
+    const std::string dep = (tmp_dir_ / "tgt_out.d").generic_string();
+    r = run("-MD -P -o \"" + out + "\" " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ(out + ": \\\n  " + in.generic_string() + "\n", lf_only(read_file(dep)));
+
+    // The -o path is escaped like a prerequisite.
+    const std::string spaced = (tmp_dir_ / "tgt out.piec").generic_string();
+    const std::string spaced_dep = (tmp_dir_ / "tgt out.d").generic_string();
+    r = run("-MMD -P -o \"" + spaced + "\" " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ(0u, lf_only(read_file(spaced_dep)).find(tmp_dir_.generic_string() + "/tgt\\ out.piec: ")) << read_file(spaced_dep);
+
+    // "-o -" is stdout: the target comes from the input name.
+    const fs::path dash_dep = fs::current_path() / "-.d";
+    fs::remove(dash_dep);
+    r = run("-MD -P -o - " + a);
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ(0u, lf_only(read_file(dash_dep)).find("tgt_main.output: ")) << read_file(dash_dep);
+    fs::remove(dash_dep);
+}
+
+// __INCLUDE_LEVEL__ in a -include file is 1, and 2 in what it includes (the
+// main input is 0): gcc/clang include it from the command line.
+TEST_F(SmokeTest, IncludeLevelOfForceIncludedFile) {
+    fs::path in = tmp_dir_ / "il_main.iec";
+    write_file(in, "M __INCLUDE_LEVEL__\n");
+    fs::path inner = tmp_dir_ / "il_inner.iec";
+    write_file(inner, "I __INCLUDE_LEVEL__\n");
+    fs::path pre = tmp_dir_ / "il_pre.iec";
+    write_file(pre, "P __INCLUDE_LEVEL__\n{#include 'il_inner.iec'}\n");
+
+    auto r = run("-P -include \"" + pre.generic_string() + "\" \"" + in.generic_string() + "\"");
+    EXPECT_EQ(0, r.exit_code) << r.err;
+    EXPECT_EQ("P 1\nI 2\nM 0\n", lf_only(r.out));
+}
+
+// A multi-line unclosed comment quotes only its first line: the diagnostic
+// does not carry the rest of the file.
+TEST_F(SmokeTest, UnclosedCommentDiagnosticIsShort) {
+    std::string text = "(* never closed\n";
+    for (int i = 0; i < 2000; ++i)
+        text += "a line of the rest of the file " + std::to_string(i) + "\n";
+    fs::path in = tmp_dir_ / "unclosed_long.iec";
+    write_file(in, text);
+
+    auto r = run("-P \"" + in.generic_string() + "\"");
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_NE(r.err.find("PP20: Unclosed comment; '(* never closed...'"), std::string::npos) << r.err;
+    EXPECT_LT(r.err.size(), 400u) << r.err.size();
+}
+
+// An empty include path is an error that does not stop the run.
+TEST_F(SmokeTest, EmptyIncludePathContinues) {
+    fs::path in = tmp_dir_ / "empty_inc.iec";
+    write_file(in, "a\n{#include ''}\nb\n{#include <>}\nc\n");
+
+    auto r = run("-P \"" + in.generic_string() + "\"");
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_EQ("a\nb\nc\n", lf_only(r.out));
+    EXPECT_NE(r.err.find(":2.0: error: PP47: Invalid path; 'empty filename'"), std::string::npos) << r.err;
+    EXPECT_NE(r.err.find(":4.0: error: PP47: Invalid path; 'empty filename'"), std::string::npos) << r.err;
+
+    // A missing file and a directory still stop the run.
+    write_file(in, "a\n{#include 'no_such_file.iec'}\nb\n");
+    r = run("-P \"" + in.generic_string() + "\"");
+    EXPECT_EQ(1, r.exit_code);
+    EXPECT_EQ("a\n", lf_only(r.out));
+    EXPECT_NE(r.err.find("PP11"), std::string::npos) << r.err;
+}
 
 // ---- Windows: UTF-8 application manifest (activeCodePage) ----
 //

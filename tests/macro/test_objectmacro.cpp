@@ -40,7 +40,7 @@ TEST_F(ObjectMacroTest, At2) {
     EXPECT_EQ(";xyzw;", pp("{#define N   xy  @@  zw  };N;"));
     EXPECT_EQ(";a  b  cd  e  f;", pp("{#define N a  b  c@@d  e  f};N;"));
     EXPECT_EQ(";a bc d;", pp("{#define N a b  @@  c d };N;"));
-    EXPECT_EQ(";xy+-zw;", pp("{#define N xy+@@-zw};N;"));
+    EXPECT_EQ(";xy:=zw;", pp("{#define N xy:@@=zw};N;"));
     EXPECT_EQ(";ab ab ab ab;", pp("{#define N a@@b a  @@b a@@  b a  @@  b};N;"));
     EXPECT_EQ(";ab;", pp("{#define N a@@b};N;"));
     EXPECT_EQ(";abc;", pp("{#define N a@@b@@c};N;"));
@@ -66,9 +66,11 @@ TEST_F(ObjectMacroTest, Recursive) {
 
 TEST_F(ObjectMacroTest, Whitespace) {
     EXPECT_EQ(";2;", pp("{#define N   2  };N;"));
-    EXPECT_EQ(";2;", pp("{#define N /*~*/  2};N;"));
-    EXPECT_EQ(";2;", pp("{#define N 2/*~*/   };N;"));
-    EXPECT_EQ(";2;", pp("{#define N /*~*/  2/*~*/   };N;"));
+    // A comment at either end of the body is kept (clang -CC: `/*~*/ 2`);
+    // the whitespace outside it goes.
+    EXPECT_EQ(";/*~*/  2;", pp("{#define N /*~*/  2};N;"));
+    EXPECT_EQ(";2/*~*/;", pp("{#define N 2/*~*/   };N;"));
+    EXPECT_EQ(";/*~*/  2/*~*/;", pp("{#define N /*~*/  2/*~*/   };N;"));
     EXPECT_EQ("\n\n\n2", pp("{#define N $\n$\n2}\nN"));
     EXPECT_EQ("\n\n\n2", pp("{#define N \n\n2}\nN"));
     EXPECT_TRUE(empty());

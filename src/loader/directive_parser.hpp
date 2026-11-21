@@ -1,4 +1,5 @@
 #pragma once
+#include <cctype>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -8,6 +9,21 @@
 
 #include "../env/issue.hpp"
 #include "token.hpp"
+
+// Whether c is a hex digit of a "$XX" directive escape, and the value of
+// such a digit (c must be a hex digit). Shared between
+// decode_directive_text() and read_pragma_body() (lexer_pragma.cpp).
+inline bool is_directive_hex_digit(unsigned char c) {
+    return std::isxdigit(c) != 0;
+}
+
+inline unsigned char directive_hex_value(unsigned char c) {
+    if (c >= '0' && c <= '9')
+        return static_cast<unsigned char>(c - '0');
+    if (c >= 'a' && c <= 'f')
+        return static_cast<unsigned char>(c - 'a' + 10);
+    return static_cast<unsigned char>(c - 'A' + 10);
+}
 
 // Character a two-character "$<nc>" directive escape decodes to, or
 // std::nullopt when nc is a hex digit (first half of "$XX") or invalid.

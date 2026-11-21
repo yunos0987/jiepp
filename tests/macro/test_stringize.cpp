@@ -15,7 +15,8 @@ TEST_F(StringizeTest, Basic) {
     EXPECT_TRUE(empty());
 }
 
-// NOTE: C++ validates @ at call time, not definition time.
+// `@` not followed by a parameter is PP31 at {#define}, which then defines
+// nothing (clang/gcc: "'#' is not followed by a macro parameter").
 TEST_F(StringizeTest, Error) {
     EXPECT_THROW(pp("{#define F(a) @};F(x)"), Issue::Exception);
     EXPECT_EQ(Issue::Code::INVALID_STRINGIZING, code());

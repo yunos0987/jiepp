@@ -254,18 +254,13 @@ protected:
         std::error_code ec;
         fs::remove_all(dir_, ec);
         fs::create_directories(dir_);
-        write(dir_ / "a.inc", A_TEXT);
+        write_file(dir_ / "a.inc", A_TEXT);
     }
 
     void TearDown() override {
         std::error_code ec;
         fs::remove_all(dir_, ec);
         JieppTest::TearDown();
-    }
-
-    static void write(const fs::path& p, const std::string& text) {
-        std::ofstream f(p, std::ios::binary);
-        f << text;
     }
 
     // preprocess() of the file `main` (pushed as the current file, so a
@@ -289,7 +284,7 @@ protected:
 TEST_F(InputBytesTest, IncludesCounted) {
     const std::string main_text = "{#include 'a.inc'}\n";
     fs::path main = dir_ / "main.iec";
-    write(main, main_text);
+    write_file(main, main_text);
     const int total = static_cast<int>(main_text.size() + A);
 
     {
@@ -302,15 +297,21 @@ TEST_F(InputBytesTest, IncludesCounted) {
     env.set_max_input_bytes(total - 1);
     EXPECT_EQ(Issue::Code::MAX_INPUT_BYTES_EXCEEDED, run_main(main, env));
     auto lines = messages();
-    ASSERT_EQ(1u, lines.size());
-    EXPECT_EQ(0u, lines[0].rfind("a.inc:1.0: error: PP67: Maximum input size exceeded; 'limit " +
-                                 std::to_string(total - 1) + " bytes;", 0)) << lines[0];
+    ASSERT_EQ(2u, lines.size());
+    // a.inc is in the file it is reported in, so its include point comes
+    // first (SPEC 16).
+    EXPECT_EQ("In file included from " + main.generic_string() + ":1:", lines[0]);
+    // a.inc is shown under the directory of the main input, which is given
+    // by an absolute path here.
+    EXPECT_NE(std::string::npos,
+              lines[1].find("/a.inc:1.0: error: PP67: Maximum input size exceeded; 'limit " +
+                            std::to_string(total - 1) + " bytes;")) << lines[1];
 }
 
 TEST_F(InputBytesTest, RepeatedIncludeCountedOnce) {
     const std::string main_text = "{#include 'a.inc'}\n{#include 'a.inc'}\n";
     fs::path main = dir_ / "main2.iec";
-    write(main, main_text);
+    write_file(main, main_text);
 
     Env env = setup();
     env.set_max_input_bytes(static_cast<int>(main_text.size() + A));
@@ -323,7 +324,7 @@ TEST_F(InputBytesTest, RepeatedIncludeCountedOnce) {
 TEST_F(InputBytesTest, CachedFileFromEarlierCallNotCounted) {
     const std::string main_text = "{#include 'a.inc'}\n";
     fs::path main = dir_ / "main3.iec";
-    write(main, main_text);
+    write_file(main, main_text);
 
     Env env = setup();
     EXPECT_EQ(std::nullopt, run_main(main, env));
@@ -335,7 +336,7 @@ TEST_F(InputBytesTest, CachedFileFromEarlierCallNotCounted) {
 TEST_F(InputBytesTest, HasIncludeNotCounted) {
     const std::string main_text = "{#if __has_include('a.inc')}x{#endif}\n";
     fs::path main = dir_ / "main4.iec";
-    write(main, main_text);
+    write_file(main, main_text);
 
     Env env = setup();
     env.set_max_input_bytes(static_cast<int>(main_text.size()));

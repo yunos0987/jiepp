@@ -1,12 +1,4 @@
-#include "test_helper.hpp"
-
-#include "loader/lexer.hpp"
-
-// ---- helpers ----
-
-static std::vector<Token> ts(const std::string& text, bool remove_comments = false) {
-    return iec3_tokens_from_string(text, remove_comments);
-}
+#include "lexer_test_helper.hpp"
 
 // ---- pragma errors ----
 

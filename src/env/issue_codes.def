@@ -69,6 +69,7 @@ JIEPP_ISSUE_CODE(MISSING_EXPRESSION,          51, ERROR,   "Missing expression")
 JIEPP_ISSUE_CODE(INVALID_EXPRESSION,          52, ERROR,   "Invalid expression")
 JIEPP_ISSUE_CODE(COUNTER_OVERFLOW,            53, ERROR,   "Counter value exceeds 2147483647")
 JIEPP_ISSUE_CODE(UNDEFINED_IDENTIFIER,        54, WARNING, "Identifier is not defined, evaluates to 0")
+JIEPP_ISSUE_CODE(INTEGER_OVERFLOW,            55, WARNING, "Integer overflow in preprocessor expression")
 
 // --- Runtime/Limit (60-69) ---
 JIEPP_ISSUE_CODE(MAX_EXPANSION_DEPTH_EXCEEDED, 60, ERROR,  "Maximum expansion depth exceeded")

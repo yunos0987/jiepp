@@ -15,20 +15,7 @@
 namespace {
 class ElseEndifExtraTokensTest : public JieppTest {};
 
-// The exact PP49 message text at line `line` for context `ctx`, matching
-// PlainTextMessage::message()'s "<unknown location>:L.0: ..." form used by
-// pp()/pp_file() when no real file has been pushed.
-std::string w49(int line, const std::string& ctx) {
-    return "<unknown location>:" + std::to_string(line) +
-           ".0: warning: PP49: Extra tokens at end of directive; '" + ctx + "'";
-}
-
-// The exact PP29 message text, matching test_unterminated_string.cpp's
-// w29() helper (duplicated here to keep this file self-contained).
-std::string w29(int line, const std::string& ctx) {
-    return "<unknown location>:" + std::to_string(line) +
-           ".0: warning: PP29: Missing terminating quote character; '" + ctx + "'";
-}
+// w49() / w29() (test_helper.hpp) give the exact PP49 / PP29 message text.
 
 } // namespace
 

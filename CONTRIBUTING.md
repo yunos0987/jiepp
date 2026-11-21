@@ -50,7 +50,7 @@ CMake Tools 拡張を使用している場合、CMakePresets.json が自動検�
 
 ## Adding Tests
 
-Tests live in `tests/` and use Google Test. Group related tests in the appropriate subdirectory (`constfold/`, `core/`, `env/`, `jiepp/`, `loader/`, `macro/`, `util/`). The shared e2e/assertion helpers live directly at `tests/test_helper.hpp` (not in its own subdirectory).
+Tests live in `tests/` and use Google Test. Group related tests in the appropriate subdirectory (`constfold/`, `core/`, `env/`, `jiepp/`, `loader/`, `macro/`, `util/`). The shared assertion helpers live directly at `tests/test_helper.hpp` (not in its own subdirectory); the e2e helper `run_e2e()` is in `tests/jiepp/test_jiepp_command.cpp`. Helpers for one module live in that subdirectory's `*_test_helper.hpp`; add a helper there (or to `tests/test_helper.hpp`) instead of copying it into a second test file.
 
 ## Boost.Preprocessor テスト入力の更新 / Updating the Boost Test Corpus
 
@@ -66,6 +66,15 @@ python tools/convert_boost_pp.py --check <dir>/include/boost/preprocessor tests/
 
 更新後は Release の ctest で `BoostPreprocessorIntegration` を実行し、出力が変わった場合は「テスト期待値（ゴールデン）の更新」の手順で `tests/jiepp/output/boost.*` を更新します。
 
+## アイコンの更新 / Updating the Icon
+
+`jiepp.exe` のアイコン `src/jiepp/jiepp.ico`（`src/jiepp/jiepp.rc` で Windows のビルドに組み込む）と `docs/jiepp-icon.svg` は、`tools/make_icon.py` の中の図から生成します。手で編集せず、スクリプトの図（16・20・24 px は手描きのピクセル図 `PIXELS_16`・`PIXELS_20`・`PIXELS_24`）を直して再生成してください。Pillow が必要です。
+
+```bash
+python tools/make_icon.py          # 2 つのファイルを書き直す
+python tools/make_icon.py --check  # 生成結果と違えば終了コード 1
+```
+
 ## サンプルの更新 / Updating Samples
 
 `iec_61131-3/samples/` 配下の `.iec` ファイルを変更した場合、`.piec` ファイルを再生成する必要があります。また、ドキュメント内でのサンプル引用と `.piec` 出力が一致することを確認してください。
@@ -79,7 +88,7 @@ python tools/convert_boost_pp.py --check <dir>/include/boost/preprocessor tests/
 powershell .\tools\pp_iec61131-3_samples.ps1
 
 # 特定のサンプルのみ再生成
-powershell .\tools\pp_iec61131-3_samples.ps1 example
+powershell .\tools\pp_iec61131-3_samples.ps1 define
 ```
 
 **手動での個別再生成:**
@@ -87,7 +96,7 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 リポジトリルートから jiepp を直接実行することもできます：
 
 ```powershell
-.\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/example.iec -o iec_61131-3/samples/example.piec
+.\build\windows-clang-ninja-debug\jiepp.exe iec_61131-3/samples/define.iec -o iec_61131-3/samples/define.piec
 ```
 
 `{#syspath 'lib'}` はディレクティブを含むファイル自身のディレクトリ（この場合 `iec_61131-3/samples`）を基準に解決されるため、`{#syspath}` や `{#sinclude}` を使うサンプルでも追加のフラグは不要です。
@@ -112,7 +121,7 @@ powershell .\tools\pp_iec61131-3_samples.ps1 example
 
 - **make フェーズ**: `perftest.py make` がケース生成器を実行し、ビルドディレクトリ配下（ソースツリー外）にテスト入力ファイル一式を生成します（実行のたびに出力先ディレクトリをクリアしてから生成）。
 - **run フェーズ**: `perftest.py run` が各ケースに対して `jiepp.exe` を `--repeat` 回実行し、実行時間（プロセス起動オーバーヘッドを含む壁時計時間。旧 jiecc の計測方式を踏襲）を TSV に記録します。
-- CMake ターゲット: `perf_make`（ケース生成のみ）と `bench`（`perf_make` + `jiepp` に依存し、生成とベンチ実行の両方を行う）。どちらも `ALL` ビルドには含まれず、CI でも実行されません（`perftest_smoke` という高速な自己診断テストのみ `ctest -L perf` で実行されます）。
+- CMake ターゲット: `perf_make`（ケース生成のみ）と `bench`（`perf_make` + `jiepp` に依存し、生成とベンチ実行の両方を行う）。どちらも `ALL` ビルドには含まれず、CI でも実行されません（`perftest_smoke` という高速な自己診断テストだけは通常のテストとして登録してあり、素の `ctest` と CI で実行されます。`ctest -L perf` でこれだけを実行できます）。
   ```powershell
   cmake --build --preset windows-clang-ninja-release --target bench
   ```

@@ -35,10 +35,7 @@ static double cf_strtod_c(const char* text, char** endp)
 %option noyywrap nodefault 8bit nounistd never-interactive nounput noinput
 %option prefix="cf"
 
-DIGIT   [0-9]
 DIGITS  [0-9](_?[0-9])*
-ALNUM   [0-9A-Za-z_]
-ALPHA   [A-Za-z_]
 
 %%
 

@@ -6,7 +6,7 @@
 #include "../env/env.hpp"
 #include "../env/issue.hpp"
 #include "../util/iec_61131-3.hpp"
-#include "../core/preprocessor_internal.hpp"
+#include "../util/text.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -18,6 +18,21 @@
 #include <limits>
 #include <string>
 #include <vector>
+
+namespace {
+
+// Local time of `t` (the C runtime's localtime, thread-safe form).
+[[maybe_unused]] std::tm local_time(std::time_t t) {
+    std::tm tm_buf{};
+#if defined(_WIN32)
+    localtime_s(&tm_buf, &t);
+#else
+    localtime_r(&t, &tm_buf);
+#endif
+    return tm_buf;
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // CounterMacro
@@ -70,22 +85,9 @@ bool FileMacro::equal(const Macro& other) const {
 // DateMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> DateMacro::replacement(Env& /*env*/) const {
-    auto now  = std::chrono::system_clock::now();
-    auto tt   = std::chrono::system_clock::to_time_t(now);
-    std::tm tm_buf{};
-#if defined(_WIN32)
-    localtime_s(&tm_buf, &tt);
-#else
-    localtime_r(&tt, &tm_buf);
-#endif
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%b %d %Y", &tm_buf);
-#if defined(__cpp_lib_format)
-    return {Token::create(Token::STRING, std::format("'{}'", buf))};
-#else
-    return {Token::create(Token::STRING, std::string("'") + buf + "'")};
-#endif
+std::vector<Token> DateMacro::replacement(Env& env) const {
+    // The Env's start time, not the clock: every __DATE__ of a run is the same.
+    return {Token::create(Token::STRING, "'" + Util::format_date(local_time(env.start_time())) + "'")};
 }
 
 bool DateMacro::equal(const Macro& other) const {
@@ -96,22 +98,8 @@ bool DateMacro::equal(const Macro& other) const {
 // TimeMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> TimeMacro::replacement(Env& /*env*/) const {
-    auto now  = std::chrono::system_clock::now();
-    auto tt   = std::chrono::system_clock::to_time_t(now);
-    std::tm tm_buf{};
-#if defined(_WIN32)
-    localtime_s(&tm_buf, &tt);
-#else
-    localtime_r(&tt, &tm_buf);
-#endif
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%H:%M:%S", &tm_buf);
-#if defined(__cpp_lib_format)
-    return {Token::create(Token::STRING, std::format("'{}'", buf))};
-#else
-    return {Token::create(Token::STRING, std::string("'") + buf + "'")};
-#endif
+std::vector<Token> TimeMacro::replacement(Env& env) const {
+    return {Token::create(Token::STRING, "'" + Util::format_time(local_time(env.start_time())) + "'")};
 }
 
 bool TimeMacro::equal(const Macro& other) const {
@@ -142,20 +130,8 @@ std::vector<Token> TimeStampMacro::replacement([[maybe_unused]] Env& env) const 
     auto sys_now  = std::chrono::system_clock::now();
     auto sctp = sys_now + std::chrono::duration_cast<std::chrono::system_clock::duration>(lwt - file_now);
 #endif
-    auto tt   = std::chrono::system_clock::to_time_t(sctp);
-    std::tm tm_buf{};
-#if defined(_WIN32)
-    localtime_s(&tm_buf, &tt);
-#else
-    localtime_r(&tt, &tm_buf);
-#endif
-    char buf[64];
-    std::strftime(buf, sizeof(buf), "%a %b %d %H:%M:%S %Y", &tm_buf);
-#if defined(__cpp_lib_format)
-    return {Token::create(Token::STRING, std::format("'{}'", buf))};
-#else
-    return {Token::create(Token::STRING, std::string("'") + buf + "'")};
-#endif
+    const std::tm tm_buf = local_time(std::chrono::system_clock::to_time_t(sctp));
+    return {Token::create(Token::STRING, "'" + Util::format_timestamp(tm_buf) + "'")};
 #endif  // !JIEPP_SANDBOX
 }
 

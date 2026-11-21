@@ -201,6 +201,14 @@ bool try_push_number(std::vector<Token>& result,
             p = exp_end;
     }
 
+    // Letters, digits and '_' written right after the number belong to the
+    // same token ("12abc", "10ms", "1e", "1.5f"), so no macro is expanded
+    // inside it, as with a C pp-number. Unlike a pp-number, '.' and a sign
+    // are not taken here: "1..N" and "ARRAY[0..MAX]" still end the number
+    // before the "..", and a name after it is still expanded.
+    while (p < text.size() && is_ident_cont(text[p]))
+        ++p;
+
     result.push_back(Token::create(Token::ANY, text.substr(start, p - start)));
     pos = p;
     return true;

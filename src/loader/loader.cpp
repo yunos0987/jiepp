@@ -51,7 +51,10 @@ bool try_resolve(const fs::path& candidate, bool* found_directory, std::string& 
 } // namespace
 
 std::string Loader::fullpath(const std::string& filepath, LoadType load_type, Env& env,
-                              bool* found_directory) {
+                              bool* found_directory, std::string* reached_path,
+                              bool* in_system_dir) {
+    if (in_system_dir)
+        *in_system_dir = false;
     // A9: defense in depth. The filesystem calls below take C strings, so a
     // NUL would silently shorten the path; no file has a NUL in its name.
     // {#include} / {#syspath} reject such a path with PP47 before this, and
@@ -60,9 +63,14 @@ std::string Loader::fullpath(const std::string& filepath, LoadType load_type, En
         return "";
     fs::path p(filepath);
     std::string out;
+    auto found_under = [&](std::string_view dir) {
+        if (reached_path)
+            *reached_path = Util::reached_path(dir, filepath);
+        return out;
+    };
     if (p.is_absolute()) {
         if (try_resolve(p, found_directory, out, env))
-            return out;
+            return found_under("");
     } else {
         if (load_type == LoadType::INCLUDE) {
             const std::string& cur_file = env.current_file();
@@ -70,17 +78,32 @@ std::string Loader::fullpath(const std::string& filepath, LoadType load_type, En
                 fs::path base_dirpath = fs::path(cur_file).parent_path();
                 fs::path candidate = base_dirpath / filepath;
                 if (try_resolve(candidate, found_directory, out, env))
-                    return out;
+                    return found_under(Util::reached_dir(env.current_reached_path()));
             } else {
                 fs::path candidate = fs::current_path() / p;
                 if (try_resolve(candidate, found_directory, out, env))
-                    return out;
+                    return found_under("");
             }
         }
-        for (const auto& sp : env.syspaths()) {
-            fs::path candidate = fs::path(sp) / filepath;
+        // -I / {#syspath}, then -isystem (gcc/clang). A directory that is
+        // both is searched only at its -isystem position.
+        const auto& syspaths = env.syspaths();
+        const auto& shadowed = env.syspath_shadowed();
+        for (std::size_t i = 0; i < syspaths.size(); ++i) {
+            if (shadowed[i])
+                continue;
+            fs::path candidate = fs::path(syspaths[i]) / filepath;
             if (try_resolve(candidate, found_directory, out, env))
-                return out;
+                return found_under(env.syspath_reached_paths()[i]);
+        }
+        const auto& system_paths = env.system_paths();
+        for (std::size_t i = 0; i < system_paths.size(); ++i) {
+            fs::path candidate = fs::path(system_paths[i]) / filepath;
+            if (try_resolve(candidate, found_directory, out, env)) {
+                if (in_system_dir)
+                    *in_system_dir = true;
+                return found_under(env.system_path_reached_paths()[i]);
+            }
         }
     }
     return "";
@@ -94,7 +117,7 @@ std::shared_ptr<const std::vector<Token>> Loader::tokens(const std::string& path
         std::optional<std::string> text = read_file(path, env);
         if (!text)
             return std::make_shared<const std::vector<Token>>();
-        std::vector<Token> raw = iec3_tokens_from_string(*text, false, 1);
+        std::vector<Token> raw = iec3_tokens_from_source(*text, false);
         env.set_cache(path, std::move(raw));
         cached = env.get_cache(path);
     }
@@ -105,9 +128,7 @@ std::shared_ptr<const std::vector<Token>> Loader::tokens(const std::string& path
     // can flip it mid-run), so the cache always stores RAW tokens; materialise a
     // filtered copy here instead of baking the filter into the cached entry.
     auto filtered = std::make_shared<std::vector<Token>>(*cached);
-    for (auto& t : *filtered)
-        if (t.type == Token::C)
-            t = (t.num_of_lines > 0) ? Token::newline(t.num_of_lines) : Token::create(Token::WS, " ");
+    iec3_remove_comments(*filtered);
     return filtered;
 }
 

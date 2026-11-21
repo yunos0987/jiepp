@@ -353,3 +353,14 @@ TEST_F(WundefTest, CastsAcceptAnyCase) {
     EXPECT_EQ("y", pp("{#if lword#3 = LWORD#3}y{#endif}", env));
     EXPECT_TRUE(empty());
 }
+
+// After a division by zero, PP54 is not reported for the rest of the
+// expression; before it, it is (clang -Wundef: `1/0 + FOO` gives only the
+// division error, `FOO + 1/0` the warning, then the error).
+TEST_F(WundefTest, NothingAfterDivisionByZero) {
+    Issue::ContinueMode guard({});
+    enable();
+    EXPECT_THAT(undefs("1/0 + FOO + BAR"), ElementsAre("PP52"));
+    EXPECT_THAT(undefs("FOO + 1/0"), ElementsAre("PP54 FOO", "PP52"));
+    EXPECT_THAT(undefs("(1/0) && FOO"), ElementsAre("PP52"));
+}

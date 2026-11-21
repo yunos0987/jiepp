@@ -6,7 +6,7 @@ Guards the "output-only newline" mechanism (Token::newline()/num_of_lines,
 and expand.cpp's advance_lineno() plus its sum_num_of_lines/sum_uncounted
 bookkeeping) that marks a macro-body newline as belonging to the *output*
 stream without it having consumed a line of *input* -- the same mechanism
-commit aa73ca5 (this session's "core: expand directive operands and pragma
+commit aa73ca5 ("core: expand directive operands and pragma
 bodies without blank-line compaction") relies on to keep an operand's
 embedded newlines from being spliced with a line marker. Every use of M/F
 below re-triggers this line-marker resync path and then reads it back out

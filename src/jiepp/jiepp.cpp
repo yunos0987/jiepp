@@ -10,12 +10,12 @@
 #include "../env/issue.hpp"
 
 #include <algorithm>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -35,25 +35,6 @@ bool output_is_stdout(const JieppOptions& opts) {
     return opts.output_filepath.has_value() && *opts.output_filepath == "-";
 }
 
-std::string dep_target(const JieppOptions& opts) {
-    if (opts.dep_target) {
-        return *opts.dep_target;
-    }
-    // Derive from input file for all dep modes (-M/-MM/-MD/-MMD).
-    // -MF only controls the destination file; it does not affect the target name.
-    if (!opts.input_filepaths.empty() && opts.input_filepaths[0] != "-") {
-        fs::path p(opts.input_filepaths[0]);
-        p.replace_extension(".output");
-        return p.filename().generic_string();
-    } else if (opts.output_filepath.has_value() && !output_is_stdout(opts)) {
-        fs::path p(*opts.output_filepath);
-        p.replace_extension(".output");
-        return p.filename().generic_string();
-    } else {
-        return "output.output";
-    }
-}
-
 // Escape a dependency prerequisite/target path for Makefile syntax, mirroring
 // gcc/clang's mkdeps munge(): '$' doubles to "$$"; '#' and whitespace (space,
 // tab) get a backslash prefix followed by the *original* character itself
@@ -61,10 +42,9 @@ std::string dep_target(const JieppOptions& opts) {
 // actual tab byte, exactly like a space becomes backslash + an actual space
 // byte. The colon is deliberately left unescaped (gcc does not escape it
 // either, and escaping it would break Windows drive-letter paths such as
-// "C:/..."). This function is only ever applied to auto-derived paths
-// (prerequisites, and the target when -MT is not given); a user-supplied
-// -MT target is passed through verbatim (see dep_target()/format_dep_target()
-// below), matching real gcc/clang where only the unimplemented -MQ escapes.
+// "C:/..."). It is applied to prerequisites, to a target derived from the
+// input/-o name and to -MQ values; an -MT target is passed through verbatim
+// (see format_dep_target() below), matching real gcc/clang.
 std::string escape_make_path(const std::string& path) {
     std::string out;
     out.reserve(path.size());
@@ -80,41 +60,72 @@ std::string escape_make_path(const std::string& path) {
     return out;
 }
 
-// Format the dependency-rule target: a user-supplied -MT value is emitted
-// verbatim (gcc/clang convention -- only -MQ, which jiepp does not
-// implement, escapes the target), while an auto-derived target (from the
-// input/output filename) is Make-escaped like every prerequisite path.
+// Format the dependency-rule target, the text before the ':'. -MT and -MQ
+// values come in the order written, separated by a space: an -MT value
+// verbatim, an -MQ value Make-escaped like a prerequisite (gcc/clang). Without
+// either, the target is derived and Make-escaped:
+//   - -MD/-MMD with -o FILE: FILE as written (clang; gcc uses the input name).
+//     "-o -" is stdout, not a file, so it is not used;
+//   - otherwise the input file's name without its directory and with its
+//     extension replaced by ".output" (gcc/clang use ".o": a deliberate
+//     difference, SPEC 17), or "-.output" for stdin (clang: "-.o").
+// -MF only controls the destination file; it never affects the target.
 std::string format_dep_target(const JieppOptions& opts) {
-    std::string raw = dep_target(opts);
-    return opts.dep_target ? raw : escape_make_path(raw);
+    if (!opts.dep_targets.empty()) {
+        std::string text;
+        for (const auto& t : opts.dep_targets) {
+            if (!text.empty())
+                text += ' ';
+            text += t.escape ? escape_make_path(t.text) : t.text;
+        }
+        return text;
+    }
+    if ((opts.MD || opts.MMD) && opts.output_filepath.has_value() && !output_is_stdout(opts))
+        return escape_make_path(*opts.output_filepath);
+    if (!opts.input_filepaths.empty() && opts.input_filepaths[0] != "-") {
+        fs::path p(opts.input_filepaths[0]);
+        p.replace_extension(".output");
+        return escape_make_path(p.filename().generic_string());
+    }
+    return "-.output";
 }
 
 // Write Makefile-style dependency rules. `target_text` must already be in
-// its final, rule-ready form (see format_dep_target()): verbatim for a
-// user-supplied -MT value, or pre-escaped for an auto-derived target. It is
-// written as-is here, never re-escaped. With `phony` (-MP), an empty rule
-// follows for each prerequisite except the main input, whose resolved path is
-// `main_resolved` (empty when the main input is stdin), like gcc/clang -MP.
+// its final, rule-ready form (see format_dep_target()); it is written as-is
+// here, never re-escaped. The main input comes first among the prerequisites
+// (gcc/clang: `main.c pre.h` for -include pre.h), the others in the order they
+// were read; `main_index` is its index in env.dependencies() (out of range
+// for stdin, which has none). With `phony` (-MP), an empty rule follows for
+// each prerequisite except the main input, like gcc/clang -MP.
 void write_dep_rules(const std::string& target_text, DepMode dep_mode, std::ostream& output, const Env& env,
-                     bool phony, const std::string& main_resolved) {
+                     bool phony, std::size_t main_index) {
     // Collect dependencies with deduplication by resolved_path
     // Track resolved paths we've already seen (only first display_path is output)
     std::unordered_set<std::string> seen_resolved;
     std::vector<std::string> deps;
     std::vector<std::string> phony_targets;
+    const auto& all = env.dependencies();
+    const bool has_main = main_index < all.size();
+    const std::string main_resolved = has_main ? all[main_index].resolved_path : std::string();
 
-    for (const auto& dep : env.dependencies()) {
-        // Skip system includes if -MM mode
+    auto add = [&](const FileContext::Dependency& dep) {
+        // -MM: skip an include of a system header (found under -isystem or
+        // included from one). The same file included again from elsewhere
+        // is listed there (clang).
         if (dep_mode == DepMode::USER && dep.is_system)
-            continue;
+            return;
         // Deduplicate by resolved_path (only add first occurrence of each resolved path)
-        if (seen_resolved.find(dep.resolved_path) == seen_resolved.end()) {
-            seen_resolved.insert(dep.resolved_path);
+        if (seen_resolved.insert(dep.resolved_path).second) {
             deps.push_back(escape_make_path(dep.display_path));
-            if (phony && dep.resolved_path != main_resolved)
+            if (phony && !(has_main && dep.resolved_path == main_resolved))
                 phony_targets.push_back(deps.back());
         }
-    }
+    };
+    if (has_main)
+        add(all[main_index]);
+    for (std::size_t i = 0; i < all.size(); ++i)
+        if (!(has_main && i == main_index))
+            add(all[i]);
 
     // Format output
     output << target_text << ":";
@@ -170,23 +181,6 @@ void report_output_failure(const std::string& context) {
     }
 }
 
-// Flushes stdout and reports whether everything written to it so far got
-// out: std::cout's state (a failed write or a failed flush through its
-// streambuf sets badbit), then the C stdio stream it is synced with
-// (fflush(stdout), ferror(stdout)). std::cout is flushed first so its
-// buffered bytes reach stdout before stdout itself is flushed. stdout is
-// never closed here, so an error that only close(2) at exit reports (NFS)
-// is not seen (SPECIFICATION.md section 16).
-bool flush_stdout() {
-    std::cout.flush();
-    bool ok = !std::cout.fail();
-    if (std::fflush(stdout) != 0)
-        ok = false;
-    if (std::ferror(stdout))
-        ok = false;
-    return ok;
-}
-
 // Removes an output file this run opened for writing, after a failure. The
 // stream is closed first (its result is ignored: Windows cannot delete an
 // open file, and the failure is already being reported). Only a regular
@@ -221,14 +215,14 @@ int jiepp_command(const JieppOptions& opts)
     bool output_file_opened = false;
     // Path of a separate dependency file (-MF / -MD / -MMD auto-named) that
     // this run has opened for writing, if any (set as soon as the open
-    // succeeds) -- remembered so the catch blocks below can remove it if its
+    // succeeds) -- remembered so the E4b catch below can remove it if its
     // own write/close fails or a *later* step (opening or writing -o,
     // writing stdout) fails: otherwise a truncated .d file, or a
     // correctly-written one naming an output that was never produced (or
     // never updated), would be left behind for a Make-based build to trust
     // incorrectly. See the "remove only what this run wrote" rule documented
     // at the catch site. Declared here, not inside the try, so the catch
-    // blocks can close it before removing the file (remove_if_regular()).
+    // can close it before removing the file (remove_if_regular()).
     std::ofstream dep_output;
     std::string dep_file_opened;
     // A8: set before anything is written to std::cout, so an error path
@@ -314,9 +308,9 @@ int jiepp_command(const JieppOptions& opts)
         };
 
         // U4: --silent/-w/-Werror must be in effect before -D/-U are
-        // processed below (setup()'s predefine_macros loop and
-        // apply_undef_option() can both raise diagnostics -- a malformed
-        // -D/-U name, a redefinition warning, ...), not only for the main
+        // processed below (apply_define_option() and apply_undef_option()
+        // can both raise diagnostics -- an invalid -D/-U name, a
+        // redefinition warning, ...), not only for the main
         // input's own expansion. Previously these three were set after the
         // -D/-U block, so e.g. `--silent -D=1` still printed its PP73.
         if (opts.silent)
@@ -325,6 +319,8 @@ int jiepp_command(const JieppOptions& opts)
             Issue::suppress_warnings_ = true;
         if (opts.werror)
             Issue::werror_ = true;
+        if (opts.no_include_stack)
+            Issue::show_include_stack_ = false;
         // --error-limit: the CLI's default (1000, or 100 in a sandbox build)
         // applies when the option is absent; the library's default is 0.
         Issue::error_limit_ = opts.error_limit.value_or(DEFAULT_ERROR_LIMIT);
@@ -362,16 +358,33 @@ int jiepp_command(const JieppOptions& opts)
                 Issue::remove_werror(code);
         }
 
-        std::vector<std::pair<std::string,std::string>> predefine_macros;
-        for (const auto& dm : opts.define_macros)
-            predefine_macros.push_back(define_macro_option(dm));
+        // A -D whose NAME is empty (-D=1) is a malformed option, not a bad
+        // definition: PP73 stops the run before any -D/-U is applied, like a
+        // missing value (PP72) does in parse_args().
+        std::vector<std::pair<std::string, std::string>> defines(opts.macro_options.size());
+        for (std::size_t k = 0; k < opts.macro_options.size(); ++k)
+            if (opts.macro_options[k].kind == MacroOption::Kind::DEFINE)
+                defines[k] = define_macro_option(opts.macro_options[k].arg);
 
         // U5: -D's macro bodies follow the same -nC policy as {#define}
         // (setup() sets Env's remove_comments before processing -D below).
-        Env env = setup(predefine_macros, opts.remove_comments);
+        Env env = setup({}, opts.remove_comments);
 
-        for (const auto& name : opts.undef_macros) // -U: undefine macros (applied after -D)
-            apply_undef_option(name, env);
+        // -D and -U apply in the order written (-UX -DX=1 defines X; -DX=1
+        // -UX does not). Like a {#define} / {#undef} in the source, one that
+        // is rejected (an invalid name, a duplicate parameter, 'defined', ...)
+        // is reported and counted, then the rest of the options and the input
+        // are processed: the run ends with exit code 1 (gcc/clang). Only a
+        // code that stops processing outright aborts here.
+        {
+            Issue::ContinueMode continue_guard(jiepp_continue_abort_codes());
+            for (std::size_t k = 0; k < opts.macro_options.size(); ++k) {
+                if (opts.macro_options[k].kind == MacroOption::Kind::DEFINE)
+                    apply_define_option(defines[k], env);
+                else
+                    apply_undef_option(opts.macro_options[k].arg, env);
+            }
+        }
 
         if (opts.remove_comments)
             env.fix_remove_comments(true);
@@ -396,8 +409,17 @@ int jiepp_command(const JieppOptions& opts)
         if (opts.pp_output_pragma_style)
             env.fix_pragma_style(*opts.pp_output_pragma_style);
 
+        // Dependencies are recorded only when they are written.
+        env.set_record_dependencies(opts.dep_mode != DepMode::NONE);
+
+        // An empty -I / -isystem value names no directory and is ignored
+        // without a diagnostic (gcc/clang); it is not the working directory.
         for (const auto& sp : opts.syspaths)
-            env.add_syspath(sp);
+            if (!sp.empty())
+                env.add_syspath(sp);
+        for (const auto& sp : opts.system_paths)
+            if (!sp.empty())
+                env.add_system_path(sp);
 
         // G: -MD/-MMD auto-derive dep file if not explicitly set by -MF,
         // matching the gcc *driver*'s own rule (gcc manual: "If [-o] is
@@ -447,8 +469,9 @@ int jiepp_command(const JieppOptions& opts)
         // the -include/top-level-expansion phase below, not the whole
         // function: everything before this point (the multiple-input-files
         // check above, -D/-U, env fixups, the stdin+-MD/-MMD-without--MF
-        // check just above) is CLI-shaped misuse that should keep aborting
-        // unconditionally, the way it always has; everything after it (E4b's
+        // check just above) is CLI-shaped misuse that still aborts (except
+        // -D/-U, which run in their own continue mode above: only a code in
+        // the abort set or SEVERE stops them); everything after it (E4b's
         // -o/dep-file open, write and close, the stdout checks) raises only
         // PP10, already in the abort set regardless of continue_mode_, so
         // where this guard's scope ends
@@ -460,11 +483,18 @@ int jiepp_command(const JieppOptions& opts)
         {
             Issue::ContinueMode continue_guard(jiepp_continue_abort_codes());
             try {
-                // -include: force-include files before main input
+                // -include: force-include files before main input. They are
+                // included from the command line, one level below the main
+                // input's own (__INCLUDE_LEVEL__ is 1 in such a file, 2 in
+                // what it includes; gcc/clang).
+                env.set_include_level_base(1);
                 for (const auto& include_filepath : opts.include_filepaths) {
-                    auto include_disppath = fs::path(include_filepath).generic_string();
-                    expand(include_filepath, Loader::LoadType::INCLUDE, ots, env, include_disppath);
+                    // Included from the command line (SPEC 16).
+                    expand(include_filepath, Loader::LoadType::INCLUDE, ots, env, std::nullopt,
+                           /*main_input=*/false,
+                           Issue::IncludeOrigin{Issue::IncludeOrigin::Kind::command_line, 0});
                 }
+                env.set_include_level_base(0);
 
                 // H: gcc/clang both display "<stdin>" for the sole input
                 // being "-" (no input argument at all is the same case, see
@@ -498,8 +528,8 @@ int jiepp_command(const JieppOptions& opts)
                     // std::ferror(stdin), is PP10 '<stdin>' at this location.
                     const std::optional<std::string> text =
                         Loader::read_stream(std::cin, env, "<stdin>", /*check_stdio_stdin=*/true);
-                    auto its = iec3_tokens_from_string(text ? *text : std::string(),
-                                                       env.get_remove_comments(), 1);
+                    auto its = iec3_tokens_from_source(text ? *text : std::string(),
+                                                       env.get_remove_comments());
                     expand(its, ots, env);
                 } else {
                     // Exactly one input file here: more than one was already
@@ -507,7 +537,13 @@ int jiepp_command(const JieppOptions& opts)
                     // -MP leaves the main input out of the empty rules: it is
                     // the dependency expand() records first for this file.
                     main_dep_index = env.dependencies().size();
-                    expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env, dispath);
+                    // Only --disppath names the file; otherwise it is shown by
+                    // the path it is reached by, which is dispath unless the
+                    // file is found under a system path.
+                    expand(opts.input_filepaths[0], Loader::LoadType::INCLUDE, ots, env,
+                           opts.disppath.has_value() ? std::optional<std::string>(dispath)
+                                                     : std::nullopt,
+                           /*main_input=*/true);
                 }
             } catch (const Issue::Exception&) {
                 // E4a: a code in jiepp_continue_abort_codes() (or SEVERE)
@@ -581,19 +617,19 @@ int jiepp_command(const JieppOptions& opts)
             return 1;
         }
 
-        bool dep_has_separate_file = dep && effective_dep_file.has_value() && !effective_dep_file->empty();
-        const std::string main_dep_resolved = main_dep_index < env.dependencies().size()
-                                                  ? env.dependencies()[main_dep_index].resolved_path
-                                                  : std::string();
+        // -MF - writes the rules to stdout (like -o -), not to a file named
+        // "-" (gcc/clang).
+        const bool dep_to_stdout = dep && effective_dep_file.has_value() && *effective_dep_file == "-";
+        bool dep_has_separate_file = dep && effective_dep_file.has_value() && !effective_dep_file->empty()
+                                     && !dep_to_stdout;
 
         // E4b: the dependency-file write and the -o open and write are
         // wrapped in their own try -- gcc has already flushed its
         // preprocessed output before any of these can fail, so a PP10 here
-        // gets the same partial-output treatment as E4/E4a (plus the same
-        // "remove only what this run wrote" cleanup as the outer catch
-        // below, duplicated here rather than shared with it: by the time the
-        // outer catch runs, `ots`/`env` are already out of scope, so it
-        // cannot print anything itself). A8: besides open failures this
+        // gets the same partial-output treatment as E4/E4a, plus the "remove
+        // only what this run wrote" cleanup (see the catch). -o and the
+        // dependency file are opened only inside this try, so this catch is
+        // the only place that removes them. A8: besides open failures this
         // covers a failed write/close of the dependency file or -o and a
         // failed write/flush of stdout.
         try {
@@ -611,7 +647,7 @@ int jiepp_command(const JieppOptions& opts)
                     ISSUE(FILE_ERROR, *effective_dep_file);
                 if (dep_output.is_open())
                     dep_file_opened = *effective_dep_file;
-                write_dep_rules(dep_target_text, opts.dep_mode, dep_output, env, opts.MP, main_dep_resolved);
+                write_dep_rules(dep_target_text, opts.dep_mode, dep_output, env, opts.MP, main_dep_index);
                 // A8: close() flushes; a failed write leaves badbit and a
                 // failed flush or close sets failbit.
                 dep_output.close();
@@ -627,7 +663,7 @@ int jiepp_command(const JieppOptions& opts)
             // left to put in -o, so -o is deliberately left unopened/unwritten
             // (matching gcc, whose -M/-MM never touch the compiler's normal
             // output file either).
-            bool need_dep_to_stream = dep && !dep_has_separate_file;
+            bool need_dep_to_stream = dep && !dep_has_separate_file && !dep_to_stdout;
             bool need_output_stream = !not_out || opts.dM || need_dep_to_stream;
 
             if (need_output_stream) {
@@ -644,7 +680,7 @@ int jiepp_command(const JieppOptions& opts)
                 if (need_dep_to_stream) {
                     // No dep file: write dep rules to main output stream (-M / -MM without -MF)
                     write_dep_rules(format_dep_target(opts), opts.dep_mode, *output_stream, env, opts.MP,
-                                    main_dep_resolved);
+                                    main_dep_index);
                 }
 
                 // A8: check that everything got out. -o is closed here (not
@@ -658,13 +694,36 @@ int jiepp_command(const JieppOptions& opts)
                         output_failure(*opts.output_filepath);
                 }
             }
+
+            // -MF -: the rules go to stdout after whatever the main output
+            // put there (-o is not involved: with -M it is not even opened).
+            if (dep_to_stdout) {
+                stdout_attempted = true;
+                write_dep_rules(format_dep_target(opts), opts.dep_mode, std::cout, env, opts.MP,
+                                main_dep_index);
+                if (!flush_stdout())
+                    output_failure(STDOUT_CONTEXT);
+            }
         } catch (const Issue::Exception&) {
             // E4b: -o or the dependency file could not be opened, written or
             // closed, or stdout could not be written (PP10). Remove what this
             // run opened for writing (regular files only, see
-            // remove_if_regular()).
+            // remove_if_regular()). Do not leave a truncated/empty -o target
+            // behind: a Make-based build system must reprocess the file on
+            // the next run, not treat a 0-byte, freshly-mtime'd file as an
+            // up-to-date target.
             if (output_file_opened)
                 remove_if_regular(output_file, *opts.output_filepath);
+            // Likewise the separate dependency file: if it was written
+            // earlier in this same run but a later step (e.g. opening -o)
+            // then failed, the .d file either references an output that was
+            // never (re)produced, or -- if it already existed -- was just
+            // truncated with content that was never paired with a matching
+            // successful output. Either way it is this run's own write, so
+            // it is removed; a dep file from an *earlier*, unrelated run
+            // that this run never touched is left alone, matching gcc's
+            // convention of not scrubbing stale files it did not itself
+            // just write.
             if (!dep_file_opened.empty())
                 remove_if_regular(dep_output, dep_file_opened);
             // A stdout destination still gets the full output when the
@@ -680,28 +739,14 @@ int jiepp_command(const JieppOptions& opts)
         }
         return 0;
     } catch (const Issue::Exception&) {
-        // Do not leave a truncated/empty -o target behind on failure: a
-        // Make-based build system must reprocess the file on the next run,
-        // not treat a 0-byte, freshly-mtime'd file as an up-to-date target.
         // Reached only by exceptions from *before* the E4a -include/expand
-        // guard above (e.g. a malformed -D/-U, an env-fixup failure, or the
-        // stdin+-MD/-MMD-without--MF check): `ots` is always still empty
-        // here, unlike the E4a/E4b catches above, so there is nothing to
-        // print. Removal is regular-files-only, as in the E4b catch.
-        if (output_file_opened)
-            remove_if_regular(output_file, *opts.output_filepath);
-        // Likewise, remove only what *this run* wrote: if a separate
-        // dependency file was successfully written earlier in this same run
-        // but a later step (e.g. opening -o) then failed, the .d file now
-        // either references an output that was never (re)produced, or -- if
-        // it already existed -- was just truncated with content that was
-        // never paired with a matching successful output. Either way it is
-        // this run's own write, so it is removed here; a dep file from an
-        // *earlier*, unrelated run that this run never touched is left
-        // alone, matching gcc's convention of not scrubbing stale files it
-        // did not itself just write.
-        if (!dep_file_opened.empty())
-            remove_if_regular(dep_output, dep_file_opened);
+        // guard above (e.g. PP73 for -D=1, a SEVERE or abort-set code raised
+        // while -D/-U are applied, an env-fixup failure, or the
+        // stdin+-MD/-MMD-without--MF check): the E4a and E4b catches above
+        // handle every Issue::Exception raised inside their own try blocks.
+        // `ots` is still empty, so there is nothing to print, and neither
+        // -o nor a dependency file has been opened (both are opened only
+        // inside the E4b try), so there is nothing to remove.
         return 1;
     }
 }

@@ -10,8 +10,8 @@
 // eval_const_value(), constfold.hpp); reset to SUCCESS at the start of each
 // evaluation. Defined in constfold.y. cf_note_failure() is called right
 // BEFORE the ISSUE() of every failure site (the ISSUE may throw, and a
-// suppressed one returns), except division/modulo by zero. The value
-// dependent failure site (float value out of integer range) goes through
+// suppressed one returns). The value dependent failure sites (division and
+// modulo by zero, float value out of integer range) go through
 // cf_value_diag() below, so a diagnostic suppressed in an unevaluated operand
 // records no failure.
 extern Issue::Code cf_failure_code;
@@ -19,6 +19,11 @@ inline void cf_note_failure(Issue::Code code) {
     if (cf_failure_code == Issue::Code::SUCCESS)
         cf_failure_code = code;
 }
+
+// Set when an evaluated operand divided by zero ('/' or 'mod'): the whole
+// expression is false (evaluate() in constfold.cpp drops the value), like
+// clang. Defined in constfold.y, reset by evaluate().
+extern bool cf_zero_divisor;
 
 // Depth of dead (unevaluated) operands the parser is currently inside: the
 // right operand of \and\ whose left side is false/0, or of \or\ whose left
@@ -29,14 +34,18 @@ inline void cf_note_failure(Issue::Code code) {
 extern int cf_unevaluated_depth;
 
 // Report a value-dependent diagnostic of the grammar: nothing is reported
-// (and no failure is recorded) inside an unevaluated operand. `failure` says
+// (and no failure is recorded) inside an unevaluated operand, nor after a
+// division by zero in the same expression (cf_zero_divisor). `failure` says
 // whether it counts as an evaluation failure (cf_note_failure() is called
 // right before the report, as at every other failure site). `loc` is the
 // caller's source location, so the debug "@file:line" suffix names the
 // grammar action and not this helper.
 inline void cf_value_diag(Issue::Code code, std::string ctx, bool failure,
                           std::source_location loc = std::source_location::current()) {
-    if (cf_unevaluated_depth > 0)
+    // After a division by zero the expression has no value: like clang,
+    // which stops evaluating there, nothing further that depends on values
+    // is reported (a second zero divisor, -Wundef's PP54).
+    if (cf_unevaluated_depth > 0 || cf_zero_divisor)
         return;
     if (failure)
         cf_note_failure(code);

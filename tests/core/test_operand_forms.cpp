@@ -74,7 +74,7 @@ protected:
         CwdGuard cwd(dir_);
         Issue::ContinueMode cont({});
         Env env = setup();
-        env.add_syspath((dir_ / "sys").generic_string());
+        env.add_syspath("sys");
         out = pp(src, env);
         msgs = messages();
         return env;
@@ -92,7 +92,8 @@ protected:
 };
 
 const std::string kF = "(*{#:0 'f.iec'}*)\nF\n";
-const std::string kS = "(*{#:0 's.iec'}*)\nS\n";
+// A header found under the system path is shown under it (gcc/clang).
+const std::string kS = "(*{#:0 'sys/s.iec'}*)\nS\n";
 const std::string kA = "(*{#:1 '<unknown location>'}*)A";
 const std::string kAt = "<unknown location>:1.0: ";
 
@@ -402,12 +403,19 @@ TEST_F(OperandFormTest, HasIncludeOperandIsMacroExpanded) {
     });
 }
 
+// The operator needs its '(' (gcc/clang "missing '(' after '__has_include'",
+// like __has_builtin): PP52, and the condition is false without evaluating
+// the rest. Outside a condition the word is plain text.
 TEST_F(OperandFormTest, HasIncludeWithoutParentheses) {
-    const std::string pp52 = kAt + "error: PP52: Invalid expression; '__has_include 'f.iec''";
+    const std::string pp52 = kAt + "error: PP52: Invalid expression; 'missing '(' after '__has_include''";
     check({
-        {"{#if __has_include}Y{#else}N{#endif}", "N", {}},
+        {"{#if __has_include}Y{#else}N{#endif}", "N", {pp52}},
         {"{#if __has_include 'f.iec'}Y{#else}N{#endif}", "N", {pp52}},
+        {"{#if 1 \\or\\ __has_include}Y{#else}N{#endif}", "N", {pp52}},
+        {"{#define H __has_include}{#if H}Y{#else}N{#endif}", "N", {pp52}},
+        {"{#if 0}{#elif __has_include + 1}Y{#else}N{#endif}", "N", {pp52}},
         {"__assert(__has_include 'f.iec', m)A", "A", {pp52}},
+        {"__has_include x", "__has_include x", {}},
     });
 }
 
@@ -451,13 +459,13 @@ TEST_F(OperandFormTest, HeaderNameKeepsCommentOpenersUnderNC) {
     CwdGuard cwd(dir_);
     Issue::ContinueMode cont({});
     Env env = setup({}, /*remove_comments=*/true);
-    env.add_syspath((dir_ / "sys").generic_string());
+    env.add_syspath("sys");
     // The include itself is the check; the marker spells the path the way
-    // the platform resolves ".//" (Windows keeps ".//s.iec", Linux gives
-    // "./s.iec").
+    // the platform resolves ".//" (Windows keeps "sys/.//s.iec", Linux
+    // gives "sys/./s.iec").
     const std::string out = pp("{#include <.//s.iec>}A", env);
-    EXPECT_TRUE(out == "(*{#:0 './/s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A" ||
-                out == "(*{#:0 './s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A")
+    EXPECT_TRUE(out == "(*{#:0 'sys/.//s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A" ||
+                out == "(*{#:0 'sys/./s.iec'}*)\nS\n(*{#:1 '<unknown location>'}*)A")
         << out;
     EXPECT_EQ("Y", pp("{#if __has_include(<.//s.iec>) && 1}Y{#else}N{#endif}", env));
     EXPECT_EQ("Y", pp("{#if __has_include( (* c *) <.(*x*)/s.iec>) || (* d *) 1}Y{#else}N{#endif}",
@@ -493,6 +501,9 @@ TEST_F(SandboxOperandFormTest, DefinedHasIncludeIsNotPP62) {
         {"{#ifdef __has_include}Y{#else}N{#endif}", "N", {}},
         // Nothing inside a comment is read as __has_include (decision 4).
         {"{#if (* __has_include(x) *) 1}Y{#else}N{#endif}", "Y", {}},
+        // Without '(' the word is an undefined identifier here (0), not the
+        // PP52 of a normal build.
+        {"{#if __has_include}Y{#else}N{#endif}", "N", {}},
     });
 }
 

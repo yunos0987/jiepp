@@ -377,6 +377,24 @@ TEST_F(ExpansionStepsTest, VaOptArgsChargedOnce) {
                      "{#define M(...) __VA_ARGS__}\n", "M(a b c d e f g h)\n", 64);
 }
 
+// Variable arguments that hold a macro name are macro-expanded once to see
+// whether __VA_OPT__ takes its content (SPEC §3.4); arguments without one
+// (all the cases above) expand to themselves and are not expanded for it.
+TEST_F(ExpansionStepsTest, VaOptExpandsArgumentsWithAMacroOnce) {
+    const std::string defs = "{#define ONE 1}\n";
+    const std::uint64_t plain =
+        call_cost(defs + "{#define M(...) a b c d e f g h}\n", "M(ONE)\n");
+    const std::uint64_t with_va_opt =
+        call_cost(defs + "{#define M(...) __VA_OPT__(a b c d e f g h)}\n", "M(ONE)\n");
+    // The expansion of ONE costs a few steps more than the plain body.
+    EXPECT_GT(with_va_opt, plain);
+    // Shared with __VA_ARGS__: no step more than the body without
+    // __VA_OPT__, whose __VA_ARGS__ expands ONE anyway.
+    EXPECT_EQ(call_cost(defs + "{#define M(...) a __VA_ARGS__}\n", "M(ONE)\n"),
+              call_cost(defs + "{#define M(...) __VA_OPT__(a) __VA_ARGS__}\n", "M(ONE)\n"));
+    expect_exact_budget(defs + "{#define M(...) __VA_OPT__(a b c d e f g h)}\nM(ONE)\n");
+}
+
 // Guard (passes before and after the change): the stringize form and skipped
 // content were already charged once.
 TEST_F(ExpansionStepsTest, StringizeAndSkippedVaOptCostUnchanged) {

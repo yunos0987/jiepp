@@ -210,16 +210,6 @@ protected:
         JieppTest::TearDown();
     }
 
-    static std::string read_file(const fs::path& p) {
-        std::ifstream f(p, std::ios::binary);
-        return {std::istreambuf_iterator<char>(f), {}};
-    }
-
-    static void write_file(const fs::path& p, const std::string& content) {
-        std::ofstream f(p, std::ios::binary);
-        f << content;
-    }
-
     struct RunResult {
         int exit_code;
         std::string out;

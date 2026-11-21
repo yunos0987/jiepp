@@ -1,8 +1,9 @@
 #pragma once
 #include "lineno.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <exception>
-#include <functional>
 #include <optional>
 #include <ostream>
 #include <set>
@@ -155,6 +156,56 @@ public:
     static bool suppress_warnings_;
     static bool werror_;
     static bool cli_mode_;
+
+    // ---- Include stack ("In file included from", SPEC 16) ----
+    // Where a file being read was included from, as the caller of
+    // expand(filepath, ...) knows it: none (a top-level file -- the CLI's main
+    // input, or a file a library caller reads directly), an {#include}/
+    // {#sinclude} directive whose path is written at `line` of the current
+    // location (the line of the path's first token, like clang; the
+    // directive's own line when the path is on it), or the command line
+    // (-include).
+    struct IncludeOrigin {
+        enum class Kind { none, directive, command_line };
+        Kind kind = Kind::none;
+        LineNo line = 0;  // Kind::directive only
+    };
+    // One frame per file read with an origin other than none, pushed by
+    // IncludeScope right after the file's own loc_stack_ entry: loc_index is
+    // that entry, so loc_stack_[loc_index - 1] is the location of the
+    // includer (its name after {#line}; the line is the frame's own `line`).
+    // serial numbers each inclusion (one file read twice gets two), like
+    // clang's include location of the file. happen() prints the "In file
+    // included from" lines before a diagnostic it prints when the innermost
+    // frame's serial (0 when there is none) differs from that of the last
+    // diagnostic it printed with a source location (clang's LastIncludeLoc);
+    // a diagnostic printed as "jiepp:" leaves it as it is. Nothing here
+    // builds text until a diagnostic is printed. show_include_stack_
+    // (default true, --no-include-stack) turns the lines off; initialize()
+    // resets all of it.
+    struct IncludeFrame {
+        std::size_t loc_index;
+        std::uint64_t serial;
+        bool command_line;   // an -include file: "<command line>", no line
+        LineNo line;         // otherwise the line of the include point
+    };
+    static std::vector<IncludeFrame> include_frames_;
+    static std::uint64_t include_serial_;        // the last serial handed out
+    static std::uint64_t last_include_serial_;   // see above; 0 = no frame
+    static bool show_include_stack_;
+    // Pushes a frame for the file whose loc_stack_ entry is on top (when the
+    // origin is not none), pops it on scope exit. Declared after the file's
+    // LineGuard.
+    struct IncludeScope {
+        explicit IncludeScope(const IncludeOrigin& origin);
+        ~IncludeScope();
+        IncludeScope(const IncludeScope&) = delete;
+        IncludeScope& operator=(const IncludeScope&) = delete;
+    private:
+        bool active_;
+    };
+    // The text shown for a command-line include point (an -include file).
+    static constexpr const char* COMMAND_LINE_LOCATION = "<command line>";
     // ---- E0: continue-after-error mode (set only by jiepp_command, via
     // ContinueMode below; the library's own default -- every ERROR/SEVERE
     // throws -- is unaffected when this is false) ----

@@ -323,9 +323,11 @@ TEST_F(HasIncludeTest, TokenPathResolutionEdgeCases) {
         {"__has_include (* c *) ('existing.iec')",
          ";|",
          "1|"},
+        // A document comment is a token, not whitespace: no '(' follows
+        // the operator.
         {"__has_include (*! d *) ('existing.iec')",
-         ";|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include (*! d *) ('existing.iec')'\n",
-         "0|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include (*! d *) ('existing.iec')'\n"},
+         ";|<unknown location>:1.0: error: PP52: Invalid expression; 'missing '(' after '__has_include''\n",
+         "0|<unknown location>:1.0: error: PP52: Invalid expression; 'missing '(' after '__has_include''\n"},
         {"__has_include(existing)",
          ";|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(existing)'\n",
          "0|<unknown location>:1.0: error: PP52: Invalid expression; '__has_include(existing)'\n"},
@@ -347,9 +349,11 @@ TEST_F(HasIncludeTest, TokenPathResolutionEdgeCases) {
         {"x__has_include('existing.iec')",
          ";|<unknown location>:1.0: error: PP52: Invalid expression; 'x__has_include('existing.iec')'\n",
          "0|<unknown location>:1.0: error: PP52: Invalid expression; 'x__has_include('existing.iec')'\n"},
+        // Without its '(' the operator is PP52 and the expression is not
+        // evaluated (like __has_builtin; gcc/clang report it too).
         {"__has_include",
-         ";|<unknown location>:1.0: error: PP91: 'm'\n",
-         "0|"},
+         ";|<unknown location>:1.0: error: PP52: Invalid expression; 'missing '(' after '__has_include''\n",
+         "0|<unknown location>:1.0: error: PP52: Invalid expression; 'missing '(' after '__has_include''\n"},
         {"__has_include('existing.iec') + __has_include(<missing_hi.iec>)",
          ";|",
          "1|"},
@@ -835,5 +839,21 @@ TEST_F(HasIncludeTest, TextPathAngleOperands_TimingGuard) {
 }
 
 #endif  // NDEBUG
+
+// SPEC §3.9: a path made by a macro is its expansion joined without the
+// spaces put at macro-expansion edges, like the C `#include INC` of clang 22
+// and gcc 13 (`#define INC3 <DIR/MAJOR.MINOR.h>` reaches lib/1.2.h,
+// `<DIR/F(a)b.h>` lib/ab.h). The space would give `lib/1. 2.iec`.
+TEST_F(HasIncludeTest, MacroMadeAngledPathHasNoEdgeSpaces) {
+    fs::create_directories(tmp_dir_ / "lib");
+    std::ofstream(tmp_dir_ / "lib" / "1.2.iec") << "one_two\n";
+    std::ofstream(tmp_dir_ / "lib" / "ab.iec") << "ab_file\n";
+    const std::string defs = "{#define MAJOR 1}{#define MINOR 2}{#define DIR lib}{#define F(a) a}"
+                             "{#define INC3 <DIR/MAJOR.MINOR.iec>}{#define INC4 <DIR/F(a)b.iec>}";
+    EXPECT_NE(std::string::npos, pp_hi(defs + "{#include INC3}").find("one_two"));
+    EXPECT_NE(std::string::npos, pp_hi(defs + "{#sinclude INC4}").find("ab_file"));
+    EXPECT_EQ("YES", pp_hi(defs + "{#if __has_include(INC3) && __has_include(INC4)}YES{#endif}"));
+    EXPECT_TRUE(empty());
+}
 
 #endif  // !JIEPP_SANDBOX

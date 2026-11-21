@@ -1,6 +1,4 @@
-#include "test_helper.hpp"
-#include "jiepp/jiepp.hpp"
-#include "jiepp/option.hpp"
+#include "jiepp_command_test_helper.hpp"
 
 // jiepp command-line output of __xmlattr / __xmltext (SPECIFICATION.md 12.12)
 // inside {ld}...{end}, the way rungiec writes IEC 61131-10 LD XML, under the
@@ -11,22 +9,9 @@ class XmlattrCommandTest : public JieppTest {};
 
 std::string run_jiepp_on(const std::string& content, JieppOptions opts,
                          const std::string& name = "xmlattr_cmd.iec") {
-    const fs::path dir = fs::temp_directory_path();
-    CwdGuard cwd(dir);
-    {
-        std::ofstream f(dir / name, std::ios::binary);
-        f << content;
-    }
-    const fs::path out = dir / (name + ".piec");
-    opts.input_filepaths = {name};
-    opts.output_filepath = out.generic_string();
-    EXPECT_EQ(0, jiepp_command(opts));
-    std::ifstream i(out, std::ios::binary);
-    std::string r((std::istreambuf_iterator<char>(i)), std::istreambuf_iterator<char>());
-    std::error_code ec;
-    fs::remove(dir / name, ec);
-    fs::remove(out, ec);
-    return r;
+    JieppCommandResult r = run_jiepp_command_on(content, std::move(opts), name);
+    EXPECT_EQ(0, r.rc);
+    return r.out;
 }
 
 const std::string kInput =

@@ -15,14 +15,26 @@ struct yy_buffer_state;
 typedef struct yy_buffer_state *YY_BUFFER_STATE;
 extern YY_BUFFER_STATE cf_scan_expr(const char*, std::size_t);  // constfold.l
 extern void cf_delete_buffer(YY_BUFFER_STATE);
-extern bool cf_expr_complete;  // set by bison grammar when expr is fully reduced
-// C1: code chosen by cf::CfParser::error() (constfold.y) from cf_expr_complete
-// at the moment of the parse error; used below instead of unconditionally
-// raising MISSING_EXPRESSION, so a case like "1 x" (a complete expression
-// followed by more) is reported as INVALID_EXPRESSION, not MISSING_EXPRESSION.
+// Token history kept by yylex() (constfold.y); reset before every parse.
+extern bool cf_last_token_ends_operand;
+extern bool cf_prev_token_ends_operand;
+// C1: code chosen by cf::CfParser::error() (constfold.y) at the moment of
+// the parse error; used below instead of unconditionally raising
+// MISSING_EXPRESSION, so a case like "1 x" (a complete operand followed by
+// more) is reported as INVALID_EXPRESSION, not MISSING_EXPRESSION.
 extern Issue::Code cf_error_code;
+// The expression quoted by the PP55 report (constfold.y); points at
+// evaluate()'s argument only while it parses.
+extern const std::string* cf_expr_text;
 
 namespace {
+
+struct ExprTextScope {
+    explicit ExprTextScope(const std::string& expr) { cf_expr_text = &expr; }
+    ~ExprTextScope() { cf_expr_text = nullptr; }
+    ExprTextScope(const ExprTextScope&) = delete;
+    ExprTextScope& operator=(const ExprTextScope&) = delete;
+};
 
 cf::ConstValue to_const_value(const CfValue& v) {
     cf::ConstValue out;
@@ -36,12 +48,14 @@ cf::ConstValue to_const_value(const CfValue& v) {
 }
 
 // The one evaluation behind eval_const_expr() and eval_const_value(). On an
-// empty expression, a parse failure or a type error, value stays Int 0 (the
-// old 0 result of eval_const_expr()); a literal error raised inside a scanner
-// or grammar action records a failure but keeps the parsed value.
+// empty expression, a parse failure, a type error or a division by zero,
+// value stays Int 0 (the old 0 result of eval_const_expr()); a literal error
+// raised inside a scanner or grammar action records a failure but keeps the
+// parsed value.
 cf::EvalResult evaluate(const std::string& expr) {
     cf::EvalResult r;
     cf_failure_code = Issue::Code::SUCCESS;
+    cf_zero_divisor = false;
     // A parse aborted by an exception (PP50, a throwing diagnostic) never
     // runs the action that lowers the depth; start every evaluation at 0.
     cf_unevaluated_depth = 0;
@@ -80,10 +94,12 @@ cf::EvalResult evaluate(const std::string& expr) {
     }
 
     YY_BUFFER_STATE buf = cf_scan_expr(expr.data(), expr.size());
+    ExprTextScope expr_text(expr);
     int rc = 0;
     CfValue result;
     try {
-        cf_expr_complete = false;
+        cf_last_token_ends_operand = false;
+        cf_prev_token_ends_operand = false;
         cf_error_code = Issue::Code::MISSING_EXPRESSION;
         cf::CfParser parser(result);
         rc = parser.parse();
@@ -109,12 +125,15 @@ cf::EvalResult evaluate(const std::string& expr) {
         // cf::CfParser::error() chose (cf_error_code) instead of
         // unconditionally MISSING_EXPRESSION.
         cf_note_failure(cf_error_code);
-        Issue::happen(cf_error_code, Util::escape_line_breaks(expr));
+        Issue::happen(cf_error_code, Util::diag_clip(Util::escape_line_breaks(expr)));
         r.failure = cf_failure_code;
         return r;
     }
     r.failure = cf_failure_code;
-    r.value = to_const_value(result);
+    // A division or modulo by zero makes the whole expression false (value
+    // Int 0), like a type error, not just that operation (SPEC 6.3).
+    if (!cf_zero_divisor)
+        r.value = to_const_value(result);
     return r;
 }
 

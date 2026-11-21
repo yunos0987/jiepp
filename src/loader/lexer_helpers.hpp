@@ -44,12 +44,16 @@ int consume_one_nl(const std::string& s, std::size_t& pos);
 //   the current Issue location, and the PRAGMA/DIRECTIVE tokens and
 //   unterminated literals lexed from the text get the part of the map that
 //   covers them (Token::line_map).
+// quiet: no diagnostic at all; for the token-boundary checks of macro
+//   expansion (iec3_needs_space(), iec3_pasted_token_type()), which lex
+//   text that is never output as lexed.
 struct LexOptions {
     bool report_nested_brace = true;
     bool at_current_location = false;
     bool report_unclosed_comment = true;
     bool* found_unclosed_comment = nullptr;
     const LineMap* line_map = nullptr;
+    bool quiet = false;
 };
 
 // Runs fn, which raises a lexer diagnostic about the character at offset
@@ -59,6 +63,8 @@ struct LexOptions {
 // before `pos` when the text has one.
 template <typename F>
 void report_lex_issue(LineNo lineno, LexOptions o, std::size_t pos, F&& fn) {
+    if (o.quiet)
+        return;
     if (o.at_current_location) {
         const std::size_t below = o.line_map ? o.line_map->line_of(pos) : 0;
         if (below == 0) {

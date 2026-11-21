@@ -61,6 +61,26 @@ bool is_va_opt(const Token& t) {
     return t.type == Token::ANY && t.text == FunctionMacro::VA_OPT;
 }
 
+// Whether whitespace (a comment included) is written before and after each
+// `@@` and `@` of a trimmed replacement list: bit 0 before, bit 1 after, one
+// entry per such token in order. normalize_glue() and FunctionMacro::
+// normalize() remove that whitespace, which subst() never needs, but C17
+// 6.10.3p2 compares its presence between every two tokens of a redefinition
+// (gcc/clang warn for `a ## b` -> `a##b` and `# a` -> `#a`), so it is kept
+// here for Macro::equal(). Whitespace the normalization keeps is compared
+// with the body as well; that is harmless.
+std::vector<std::uint8_t> operator_spacing(const std::vector<Token>& ts) {
+    std::vector<std::uint8_t> r;
+    for (std::size_t i = 0; i < ts.size(); ++i) {
+        if (ts[i].type != Token::GLUE && ts[i].type != Token::STRINGIZE)
+            continue;
+        const bool before = i > 0 && (ts[i - 1].type & Token::MASK_WS);
+        const bool after = i + 1 < ts.size() && (ts[i + 1].type & Token::MASK_WS);
+        r.push_back(static_cast<std::uint8_t>((before ? 1 : 0) | (after ? 2 : 0)));
+    }
+    return r;
+}
+
 // Compare two replacement-list token sequences the way C17 6.10.3p2 requires
 // for macro redefinition: "identical" ignores the AMOUNT of white-space
 // between tokens, only whether a separation is present or absent. Each
@@ -69,17 +89,28 @@ bool is_va_opt(const Token& t) {
 // hide-sets via Token::operator==) is compared exactly as before.
 // Token::operator== itself is left untouched (tests/loader/test_token.cpp
 // depends on its current exact-text semantics).
+//
+// A comment counts as whitespace here, also at either end of the list, where
+// normalize() keeps it for the output: like whitespace there, it is not part
+// of the replacement list, so `{#define O 1 (*c*)}` and `{#define O 1}` are
+// the same definition. (clang -CC, which keeps comments as tokens, warns.)
 bool token_lists_equal_ignoring_ws_amount(const std::vector<Token>& a,
                                           const std::vector<Token>& b) {
+    auto is_ws = [](const Token& t) { return (t.type & Token::MASK_WS) != 0; };
     std::size_t ia = 0, ib = 0;
-    while (ia < a.size() && ib < b.size()) {
+    std::size_t na = a.size(), nb = b.size();
+    while (ia < na && is_ws(a[ia])) ++ia;
+    while (ib < nb && is_ws(b[ib])) ++ib;
+    while (na > ia && is_ws(a[na - 1])) --na;
+    while (nb > ib && is_ws(b[nb - 1])) --nb;
+    while (ia < na && ib < nb) {
         bool a_ws = (a[ia].type & Token::MASK_WS) != 0;
         bool b_ws = (b[ib].type & Token::MASK_WS) != 0;
         if (a_ws || b_ws) {
             if (!a_ws || !b_ws)
                 return false; // whitespace present on only one side
-            while (ia < a.size() && (a[ia].type & Token::MASK_WS)) ++ia;
-            while (ib < b.size() && (b[ib].type & Token::MASK_WS)) ++ib;
+            while (ia < na && is_ws(a[ia])) ++ia;
+            while (ib < nb && is_ws(b[ib])) ++ib;
             continue;
         }
         if (!(a[ia] == b[ib]))
@@ -87,7 +118,7 @@ bool token_lists_equal_ignoring_ws_amount(const std::vector<Token>& a,
         ++ia;
         ++ib;
     }
-    return ia == a.size() && ib == b.size();
+    return ia == na && ib == nb;
 }
 
 } // anonymous namespace
@@ -148,14 +179,18 @@ std::vector<VaOptSpan> compute_va_opt_spans(std::span<const Token> body) {
 // UserDefinedObjectMacro
 // ---------------------------------------------------------------------------
 
-std::vector<Token> UserDefinedObjectMacro::normalize(std::vector<Token> ts) {
-    ts = ts_trim(std::move(ts));
+std::vector<Token> UserDefinedObjectMacro::normalize(std::vector<Token> ts,
+                                                      std::vector<std::uint8_t>& op_spacing) {
+    // A comment at either end stays (SPEC §2: kept like gcc/clang -CC);
+    // with -nC it is whitespace already and goes.
+    ts = ts_trim_spaces(std::move(ts));
+    op_spacing = operator_spacing(ts);
     ts = normalize_glue(std::move(ts));
     return ts;
 }
 
-UserDefinedObjectMacro::UserDefinedObjectMacro(std::vector<Token> ts)
-    : ts_(normalize(std::move(ts))) {
+UserDefinedObjectMacro::UserDefinedObjectMacro(std::vector<Token> ts) {
+    ts_ = normalize(std::move(ts), op_spacing_);
     assert(glue_is_normalized(ts_));
     va_opt_spans_ = compute_va_opt_spans(ts_);
 }
@@ -168,7 +203,7 @@ bool UserDefinedObjectMacro::equal(const Macro& other) const {
     auto* p = dynamic_cast<const UserDefinedObjectMacro*>(&other);
     if (!p)
         return false;
-    return token_lists_equal_ignoring_ws_amount(ts_, p->ts_);
+    return op_spacing_ == p->op_spacing_ && token_lists_equal_ignoring_ws_amount(ts_, p->ts_);
 }
 
 std::string UserDefinedObjectMacro::str() const {
@@ -210,7 +245,7 @@ FunctionMacro::FunctionMacro(std::vector<std::string> args_list, std::vector<Tok
         num_params_max_ = regular_count;
     }
 
-    body_ = normalize(std::move(body), args_);
+    body_ = normalize(std::move(body), args_, op_spacing_);
     assert(glue_is_normalized(body_));
     const int num_formals = regular_count + (has_va ? 1 : 0);
     compute_arg_slots(body_, args_, num_formals, arg_slots_, arg_slot_uses_);
@@ -224,11 +259,22 @@ void FunctionMacro::compute_arg_slots(
     std::vector<int>& out_slots,
     std::vector<int>& out_slot_uses) {
     std::vector<int> use_count(static_cast<std::size_t>(num_formals), 0);
+    // A __VA_OPT__ asks for the expansion of the variable arguments too (it
+    // is left out when they expand to nothing, expand_subst.cpp's
+    // va_opt_active()), so it counts as a use of them: the expansion is
+    // then made once and shared with __VA_ARGS__.
+    const auto va = args.find(VA_SYM);
     for (const auto& t : body) {
         if (t.type != Token::ANY)
             continue;
         if (t.text == VA_ARGC)
             continue; // __VA_ARGC__ is substituted as a count, never expanded
+        if (t.text == VA_OPT && va != args.end()) {
+            const int pidx = va->second.first;
+            if (pidx >= 0 && pidx < num_formals)
+                ++use_count[static_cast<std::size_t>(pidx)];
+            continue;
+        }
         auto it = args.find(t.text);
         if (it == args.end())
             continue;
@@ -249,9 +295,12 @@ void FunctionMacro::compute_arg_slots(
 
 std::vector<Token> FunctionMacro::normalize(
     std::vector<Token> ts,
-    const std::unordered_map<std::string, std::pair<int, bool>>& args) {
+    const std::unordered_map<std::string, std::pair<int, bool>>& args,
+    std::vector<std::uint8_t>& op_spacing) {
 
-    ts = ts_trim(std::move(ts));
+    // As UserDefinedObjectMacro::normalize(): a comment at either end stays.
+    ts = ts_trim_spaces(std::move(ts));
+    op_spacing = operator_spacing(ts);
     ts = normalize_glue(std::move(ts));
 
     // For Token::STRINGIZE (@): remove whitespace between @ and its argument.
@@ -294,6 +343,8 @@ bool FunctionMacro::equal(const Macro& other) const {
     if (named_variadic_ != p->named_variadic_)
         return false;
     if (args_ != p->args_)
+        return false;
+    if (op_spacing_ != p->op_spacing_)
         return false;
     return token_lists_equal_ignoring_ws_amount(body_, p->body_);
 }

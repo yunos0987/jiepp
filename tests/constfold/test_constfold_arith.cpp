@@ -75,6 +75,9 @@ TEST_F(ConstfoldTest, ExprMod) {
 }
 
 // ---- A3: wraparound arithmetic (2's complement, no crash / UB) ----
+// SPEC 6.3: the value wraps, and each operation whose mathematical result is
+// not an Int reports PP55 (a warning, so the value is still used), like
+// clang's "integer overflow in preprocessor expression".
 
 TEST_F(ConstfoldTest, WraparoundAddOverflowsToIntMin) {
     // INT64_MAX + 1 wraps to INT64_MIN. INT64_MIN itself cannot be spelled
@@ -82,25 +85,25 @@ TEST_F(ConstfoldTest, WraparoundAddOverflowsToIntMin) {
     // "-9223372036854775807 - 1" (safe: no operand overflows) on both sides.
     EXPECT_NE(0LL, eval_const_expr(
         "9223372036854775807 + 1 = (-9223372036854775807 - 1)"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 TEST_F(ConstfoldTest, WraparoundSubOverflowsToIntMax) {
     EXPECT_NE(0LL, eval_const_expr(
         "(-9223372036854775807 - 1) - 1 = 9223372036854775807"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 TEST_F(ConstfoldTest, WraparoundMulIntMinTimesNeg1) {
     EXPECT_NE(0LL, eval_const_expr(
         "(-9223372036854775807 - 1) * -1 = (-9223372036854775807 - 1)"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 TEST_F(ConstfoldTest, WraparoundUnaryNegIntMin) {
     EXPECT_NE(0LL, eval_const_expr(
         "-(-9223372036854775807 - 1) = (-9223372036854775807 - 1)"));
-    EXPECT_TRUE(empty());
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 // ---- A3 / N1: INT64_MIN / -1 and INT64_MIN mod -1 must not crash ----
@@ -111,11 +114,13 @@ TEST_F(ConstfoldTest, IntMinDivNeg1WrapsInsteadOfTrapping) {
     // complement wraparound defines the result as INT64_MIN itself.
     EXPECT_NE(0LL, eval_const_expr(
         "(-9223372036854775807 - 1) / -1 = (-9223372036854775807 - 1)"));
-    EXPECT_TRUE(empty());
+    // 2^63 is not an Int: PP55 (clang warns too).
+    EXPECT_EQ(Issue::Code::INTEGER_OVERFLOW, code());
 }
 
 TEST_F(ConstfoldTest, IntMinModNeg1IsZero) {
-    // Same hardware trap as division; the remainder is mathematically 0.
+    // Same hardware trap as division; the remainder is mathematically 0,
+    // which fits: no PP55 (clang does not warn either).
     EXPECT_NE(0LL, eval_const_expr("(-9223372036854775807 - 1) mod -1 = 0"));
     EXPECT_TRUE(empty());
 }

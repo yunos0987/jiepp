@@ -68,7 +68,12 @@ public:
 private:
     std::vector<Token> ts_;
     std::vector<VaOptSpan> va_opt_spans_;
-    static std::vector<Token> normalize(std::vector<Token> ts);
+    // Whether whitespace was written before/after each `@@` and `@` of the
+    // replacement list, which normalize() removes from ts_ (see
+    // operator_spacing() in macro.cpp); part of equal().
+    std::vector<std::uint8_t> op_spacing_;
+    static std::vector<Token> normalize(std::vector<Token> ts,
+                                        std::vector<std::uint8_t>& op_spacing);
 };
 
 class CounterMacro : public ObjectMacro {
@@ -228,6 +233,8 @@ private:
     std::vector<int> arg_slots_;     // size == number of formals; -1 or slot index
     std::vector<int> arg_slot_uses_; // size == number of slots; spelling count
     std::vector<VaOptSpan> va_opt_spans_;
+    // As UserDefinedObjectMacro::op_spacing_; part of equal().
+    std::vector<std::uint8_t> op_spacing_;
 
     // task_slug arg-expand-once (D2). num_formals is the number of distinct
     // formal-parameter slots in args() (regular params plus, for a
@@ -242,7 +249,8 @@ private:
 
     static std::vector<Token> normalize(
         std::vector<Token> ts,
-        const std::unordered_map<std::string, std::pair<int, bool>>& args);
+        const std::unordered_map<std::string, std::pair<int, bool>>& args,
+        std::vector<std::uint8_t>& op_spacing);
 };
 
 // ---------------------------------------------------------------------------

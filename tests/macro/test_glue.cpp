@@ -9,9 +9,9 @@ TEST_F(GlueTest, Regular) {
     EXPECT_EQ(";ab;",         pp("{#define F(a,b) a@@b};F(a,b);"));
     EXPECT_EQ(";abcABC;",     pp("{#define F(a,b) a@@b};F(abc,ABC);"));
     EXPECT_EQ(";1234;",       pp("{#define F(a,b) a@@b};F(12,34);"));
-    // Typed numeric literals form Token::ANY after pasting
-    EXPECT_EQ(";16#216#5;",   pp("{#define F(a,b) a@@b};F(16#2,16#5);"));
-    EXPECT_EQ(";16#ab16#cd;", pp("{#define F(a,b) a@@b};F(16#ab,16#cd);"));
+    // A based number continued by digits stays one number.
+    EXPECT_EQ(";16#25;",      pp("{#define F(a,b) a@@b};F(16#2,5);"));
+    EXPECT_EQ(";16#abcd;",    pp("{#define F(a,b) a@@b};F(16#ab,cd);"));
     EXPECT_TRUE(empty());
 }
 
@@ -79,7 +79,7 @@ TEST_F(GlueTest, PasteInFuncMacro) {
     EXPECT_EQ(";xyzw;",          pp("{#define F(a, b) a@@b};F(  xy  ,  zw  );"));
     EXPECT_EQ(";A  B  CD  E  F;",pp("{#define F(a, b) a@@b};F(A  B  C,D  E  F);"));
     EXPECT_EQ(";a bc d;",        pp("{#define F(a, b) a@@b};F( a b , c d );"));
-    EXPECT_EQ(";xy+-zw;",        pp("{#define F(a, b) a+@@-b};F(xy,zw);"));
+    EXPECT_EQ(";xy:=zw;",        pp("{#define F(a, b) a:@@=b};F(xy,zw);"));
     EXPECT_EQ(";xyzw;xyzw;xyzw;",
               pp("{#define F(a, b) a  @@b;a@@  b;a  @@  b};F(xy,zw);"));
     EXPECT_EQ(";a#b;", pp("{#define F(a, b) a@@b};F(a#, b);"));
@@ -258,8 +258,10 @@ TEST_F(GlueTest, InvalidPasteDiagnosticsAreLinear) {
 // C leaves the result of an invalid paste undefined; gcc and clang report an
 // error and keep the two tokens apart, and so does jiepp: the left operand is
 // not changed and the right operand is pushed after it. A paste is valid only
-// when both operands have the same token type and that type is not a
-// structural token ( ) , [ ].
+// when the two operands written together read as exactly one token (SPEC
+// §4.3; a structural token ( ) , [ ] never does). The right operand then
+// meets the left one at a macro-expansion edge (SPEC §3.9): a space goes
+// between them where they would read as one token, as gcc/clang print it.
 
 namespace {
 
@@ -282,7 +284,9 @@ std::string paste_diag(const std::string& context) {
 
 TEST_F(GlueTest, FailedPasteKeepsRightOperandAfterClosingParen) {
     // Row 1: ID(a, b) @@ y -- ')' @@ 'y' used to become one RP and eat 'y'.
-    EXPECT_EQ("a by", pp_continue(kPasteDefs + "{#define Q ID(a, b) @@ y}Q"));
+    // `b` and `y` meet where ID's replacement ends: one space between them,
+    // like clang 22 / gcc 13 (`a b y`).
+    EXPECT_EQ("a b y", pp_continue(kPasteDefs + "{#define Q ID(a, b) @@ y}Q"));
     EXPECT_EQ(std::vector<std::string>{paste_diag(") @@ y")}, messages());
 }
 
@@ -422,15 +426,18 @@ TEST_F(GlueTest, StructuralTokenPastesAreAllPP32) {
 
 TEST_F(GlueTest, IgnoredPP32StillKeepsBothOperands) {
     // {#ignore PP32}: no diagnostic, and the operands are still not merged.
-    EXPECT_EQ("a by", pp_continue(kPasteDefs + "{#ignore PP32}{#define Q ID(a, b) @@ y}Q"));
+    EXPECT_EQ("a b y", pp_continue(kPasteDefs + "{#ignore PP32}{#define Q ID(a, b) @@ y}Q"));
     EXPECT_TRUE(empty());
 }
 
 TEST_F(GlueTest, ValidPastesAreUnchanged) {
-    // Same non-structural types still merge (ANY @@ ANY, STRING @@ STRING).
+    // Two operands that read as one token still merge. Two literals do not
+    // (the lexer would merge them into one with another spelling): PP32,
+    // like clang 22 / gcc 13, and both stay.
     EXPECT_EQ("xy", pp_continue("{#define Q x @@ y}Q"));
-    EXPECT_EQ("'a''b'", pp_continue("{#define Q 'a' @@ 'b'}Q"));
     EXPECT_TRUE(empty());
+    EXPECT_EQ("'a''b'", pp_continue("{#define Q 'a' @@ 'b'}Q"));
+    EXPECT_EQ(std::vector<std::string>{paste_diag("'a' @@ 'b'")}, messages());
 }
 
 TEST_F(GlueTest, InvalidPasteDiagnosticsBoundLargeOperands) {
@@ -500,4 +507,63 @@ TEST_F(GlueTest, InvalidPasteDiagnosticsKeepUtf8Valid) {
         saw_cut = saw_cut || m.find("...") != std::string::npos;
     }
     EXPECT_TRUE(saw_cut);
+}
+
+// The rule of SPEC §4.3: a paste is valid when the two operands written
+// together read as exactly one token, as the source lexer reads it, with the
+// IEC operators := => <= >= <> ** .. counted as one token. Measured with
+// clang 22 / gcc 13 (-E): they reject the pairs C has no token for (`+-`,
+// `x+`, `;;`, `.x`, `1:`, `'a''b'`) and keep the two tokens.
+TEST_F(GlueTest, ValidWhenTheResultIsOneToken) {
+    const std::string p = "{#define P(a,b) a @@ b}";
+    // IEC operators of two characters (C has none of `:=`, `=>`, `<>`, `**`,
+    // `..`: clang reports them, jiepp follows the IEC lexer).
+    EXPECT_EQ(":= <= => ** >= <> ..",
+              pp(p + "P(:,=) P(<,=) P(=,>) P( *,*) P(>,=) P(<,>) P(.,.)"));
+    // Identifiers and numbers (a number continued by letters is one token,
+    // SPEC §2): clang 22 gives the same.
+    EXPECT_EQ("xy 1e 1x x1 12 1.5e3", pp(p + "P(x,y) P(1,e) P(1,x) P(x,1) P(1,2) P(1.5,e3)"));
+    // `@` `@` is the `@@` token (clang: `# ## #` is `##`).
+    EXPECT_EQ("@@", pp(p + "P(@,@)"));
+    EXPECT_TRUE(empty());
+}
+
+TEST_F(GlueTest, InvalidWhenTheResultIsNotOneToken) {
+    const std::string p = "{#define P(a,b) a @@ b}";
+    struct Case { const char* call; const char* out; const char* ctx; };
+    for (const Case& c : {
+             // clang 22 / gcc 13 report these too and print the same tokens.
+             Case{"P(+,-)", "+-", "+ @@ -"},
+             Case{"P(x,+)", "x+", "x @@ +"},
+             Case{"P(;,;)", ";;", "; @@ ;"},
+             Case{"P(.,x)", ".x", ". @@ x"},
+             Case{"P(1,:)", "1:", "1 @@ :"},
+             Case{"P('a','b')", "'a''b'", "'a' @@ 'b'"},
+             // Two operators that are one token in C but not in IEC.
+             Case{"P(=,=)", "==", "= @@ ="},
+             Case{"P(&,&)", "&&", "& @@ &"},
+             Case{"P(-,>)", "->", "- @@ >"},
+             // A comment opener is not a token: the two stay apart with a
+             // space between them (SPEC §3.9), as gcc/clang print `/ /`.
+             Case{"P(/,/)", "/ /", "/ @@ /"},
+             Case{"P(/,*)", "/ *", "/ @@ *"},
+             // `1.` and `.5` are not IEC tokens (clang accepts `1.5` here);
+             // the space keeps `1` and `.5` from reading as one number.
+             Case{"P(1,.5)", "1 .5", "1 @@ ."},
+         }) {
+        Issue::ContinueMode guard({});
+        auto env = setup();
+        EXPECT_EQ(c.out, pp(p + c.call, env)) << c.call;
+        EXPECT_EQ(std::vector<std::string>{paste_diag(c.ctx)}, messages()) << c.call;
+    }
+}
+
+TEST_F(GlueTest, TypedLiteralHashJoinsEitherSide) {
+    // The '#' of an IEC typed literal is where the lexer splits the literal
+    // into tokens (except a based number such as 16#FF); pasting on either
+    // side of it is valid (SPEC §4.3).
+    EXPECT_EQ("16#FF T#1s INT#5 COLOR#RED",
+              pp("{#define H(x) 16#@@x}{#define T(u) T#@@u}{#define I(t) t@@#5}"
+                 "{#define E(t, v) t@@#@@v}H(FF) T(1s) I(INT) E(COLOR, RED)"));
+    EXPECT_TRUE(empty());
 }

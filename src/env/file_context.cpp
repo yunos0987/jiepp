@@ -2,17 +2,20 @@
 
 #include "../util/path.hpp"
 
+#include <string_view>
 #include <utility>
 
 // ---------------------------------------------------------------------------
 // Include stack
 // ---------------------------------------------------------------------------
 
-void FileContext::push_file(std::string filepath, bool from_disk) {
+void FileContext::push_file(std::string filepath, bool from_disk, std::string reached_path, bool system) {
     lineno_stack_.push_back(lineno_);
     const std::string p(Util::absolute_path(filepath));
     file_stack_.push_back(p);
+    reached_stack_.push_back(reached_path.empty() ? std::move(filepath) : std::move(reached_path));
     from_disk_stack_.push_back(from_disk ? 1 : 0);
+    system_stack_.push_back(system ? 1 : 0);
     lineno_ = 1;
 }
 
@@ -20,6 +23,8 @@ void FileContext::pop_file() {
     if (!file_stack_.empty() && !lineno_stack_.empty()) {
         file_stack_.pop_back();
         from_disk_stack_.pop_back();
+        reached_stack_.pop_back();
+        system_stack_.pop_back();
         lineno_ = lineno_stack_.back();
         lineno_stack_.pop_back();
     }
@@ -31,8 +36,17 @@ std::string FileContext::current_file() const {
     return "";
 }
 
+const std::string& FileContext::current_reached_path() const {
+    static const std::string none;
+    return reached_stack_.empty() ? none : reached_stack_.back();
+}
+
 bool FileContext::current_file_from_disk() const {
     return !from_disk_stack_.empty() && from_disk_stack_.back() != 0;
+}
+
+bool FileContext::current_file_is_system() const {
+    return !system_stack_.empty() && system_stack_.back() != 0;
 }
 
 int FileContext::num_of_files() const {
@@ -41,20 +55,74 @@ int FileContext::num_of_files() const {
 
 int FileContext::include_level() const {
     int n = static_cast<int>(file_stack_.size());
-    return n > 0 ? n - 1 : 0;
+    return n > 0 ? n - 1 + include_level_base_ : 0;
 }
 
 // ---------------------------------------------------------------------------
 // Syspaths
 // ---------------------------------------------------------------------------
 
-void FileContext::add_syspath(std::string syspath) {
+namespace {
+
+// Whether two absolute, lexically normal directory paths name the same
+// directory: by its identity on disk when both have one (so "inc" and a
+// symlink to it, or another letter case on Windows, match, as gcc/clang
+// compare directories by inode), else by the text without a trailing '/'
+// ("inc/" is "inc").
+bool same_directory(const std::string& a, const std::string& b) {
+    auto trimmed = [](std::string_view s) {
+        while (s.size() > 1 && s.back() == '/')
+            s.remove_suffix(1);
+        return s;
+    };
+    if (trimmed(a) == trimmed(b))
+        return true;
+    Util::FileId ia, ib;
+    return Util::file_id(a, ia) && Util::file_id(b, ib) && ia == ib;
+}
+
+} // namespace
+
+void FileContext::add_syspath(std::string syspath, std::optional<std::string> reached_path) {
     const std::string p(Util::absolute_path(syspath));
+    char shadowed = 0;
+    for (const auto& s : system_paths_)
+        if (same_directory(p, s)) {
+            shadowed = 1;
+            break;
+        }
     syspaths_.push_back(p);
+    syspath_reached_.push_back(reached_path ? std::move(*reached_path) : std::move(syspath));
+    syspath_shadowed_.push_back(shadowed);
 }
 
 const std::vector<std::string>& FileContext::syspaths() const {
     return syspaths_;
+}
+
+const std::vector<std::string>& FileContext::syspath_reached_paths() const {
+    return syspath_reached_;
+}
+
+const std::vector<char>& FileContext::syspath_shadowed() const {
+    return syspath_shadowed_;
+}
+
+void FileContext::add_system_path(std::string path) {
+    const std::string p(Util::absolute_path(path));
+    for (std::size_t i = 0; i < syspaths_.size(); ++i)
+        if (!syspath_shadowed_[i] && same_directory(syspaths_[i], p))
+            syspath_shadowed_[i] = 1;
+    system_paths_.push_back(p);
+    system_reached_.push_back(std::move(path));
+}
+
+const std::vector<std::string>& FileContext::system_paths() const {
+    return system_paths_;
+}
+
+const std::vector<std::string>& FileContext::system_path_reached_paths() const {
+    return system_reached_;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,7 +130,12 @@ const std::vector<std::string>& FileContext::syspaths() const {
 // ---------------------------------------------------------------------------
 
 void FileContext::add_dependency(std::string resolved_path, std::string display_path, bool is_system) {
+    dep_seen_[is_system ? 1 : 0].insert(resolved_path);
     deps_.emplace_back(Dependency{std::move(display_path), std::move(resolved_path), is_system});
+}
+
+bool FileContext::has_dependency(const std::string& resolved_path, bool is_system) const {
+    return dep_seen_[is_system ? 1 : 0].count(resolved_path) > 0;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,23 @@
+(*{#:0 'iec_61131-3/samples/macro_rescan.iec'}*)
+(* macro_rescan.iec - arguments are rescanned, __VA_OPT__ looks at the expanded argument *)
+
+
+
+
+
+
+
+(* __VA_OPT__ keeps its content only when the expanded variable arguments are not empty. *)
+
+
+program Main
+var
+    n: int;
+end_var
+(* DEFER hides the call from the first scan; EXPAND scans it again. *)
+n := TWICE (3);
+n := (3) * 2;
+log('start'  );
+log('empty'  );
+log('value' , n);
+end_program

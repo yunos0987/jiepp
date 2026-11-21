@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Perf test case: object-macro expansion chain (task_slug hideset-linear, E3-1).
+"""Perf test case: object-macro expansion chain (hide-set cost per level).
 
 {#define M0 M1}{#define M1 M2}...{#define Mn END}M0; -- before the
 persistent-trie HideSet, every expansion level copied the whole hide set

@@ -72,3 +72,53 @@ TEST_F(FileContextTest, Lineno) {
     env.set_lineno(42);
     EXPECT_EQ(42, env.get_lineno());
 }
+
+// __INCLUDE_LEVEL__: the depth of the innermost file, 0 for the outermost one
+// and when no file is open. The CLI reads the -include files with a base of 1
+// (included from the command line): 1 for such a file, 2 for what it includes.
+TEST_F(FileContextTest, IncludeLevelBase) {
+    Env env;
+    EXPECT_EQ(0, env.include_level());
+    env.push_file("a.iec");
+    env.push_file("b.iec");
+    EXPECT_EQ(1, env.include_level());
+    env.pop_file();
+    env.pop_file();
+
+    env.set_include_level_base(1);
+    EXPECT_EQ(0, env.include_level());
+    env.push_file("pre.iec");
+    EXPECT_EQ(1, env.include_level());
+    env.push_file("inner.iec");
+    EXPECT_EQ(2, env.include_level());
+    env.pop_file();
+    env.pop_file();
+
+    env.set_include_level_base(0);
+    env.push_file("main.iec");
+    EXPECT_EQ(0, env.include_level());
+    env.pop_file();
+}
+
+// The reached-by path of each open file and of each system path (the bases
+// of dependency paths): what was passed when none is given, popped with the
+// file.
+TEST_F(FileContextTest, ReachedPaths) {
+    Env env;
+    EXPECT_EQ("", env.current_reached_path());
+    env.push_file("sub/main.iec");
+    EXPECT_EQ("sub/main.iec", env.current_reached_path());
+    env.push_file("/abs/inc/a.iec", true, "sub/inc/a.iec");
+    EXPECT_EQ("sub/inc/a.iec", env.current_reached_path());
+    env.pop_file();
+    EXPECT_EQ("sub/main.iec", env.current_reached_path());
+    env.pop_file();
+    EXPECT_EQ("", env.current_reached_path());
+
+    env.add_syspath("lib");
+    env.add_syspath("/abs/sub/lib2", "sub/lib2");
+    ASSERT_EQ(env.syspaths().size(), env.syspath_reached_paths().size());
+    // An empty reached-by directory is kept, not replaced by the path.
+    env.add_syspath("/abs/work", "");
+    EXPECT_EQ((std::vector<std::string>{"lib", "sub/lib2", ""}), env.syspath_reached_paths());
+}

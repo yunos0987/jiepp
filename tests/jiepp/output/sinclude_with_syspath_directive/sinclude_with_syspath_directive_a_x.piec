@@ -2,7 +2,7 @@
 
 (*{syspath:'a'}*)
 (*{syspath:'.'}*)
-(*{#:0 'module.iec'}*)
+(*{#:0 'tests/jiepp/input/sinclude_with_syspath_directive/a/module.iec'}*)
 
 program a
 

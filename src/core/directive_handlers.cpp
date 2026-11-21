@@ -5,8 +5,9 @@
 #include "../env/lineno.hpp"
 #include "../env/param_constants.hpp"
 #include "../loader/lexer.hpp"
-#include "../loader/directive_parser.hpp" //kludge
+#include "../loader/directive_parser.hpp"
 #include "../macro/macro.hpp"
+#include "../util/path.hpp"
 #include "../util/text.hpp"
 #include "../util/iec_61131-3.hpp"
 
@@ -15,6 +16,7 @@
 #include <climits>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -59,7 +61,18 @@ using jiepp::preprocessor_detail::skip_blanks;
 struct IncludePath {
     std::string path;
     bool angle = false;
+    // The line the path is written on (SPEC 16: the include point, like
+    // clang's location of the file name token): the line of its first token
+    // -- for a path made by a macro, that of the macro name, or of the ')' of
+    // a function-macro call -- when that is a later line of a multi-line
+    // directive (Token::src_line), else the directive's line.
+    LineNo line = 0;
 };
+
+// The line of token `t` of an operand (see IncludePath::line).
+LineNo operand_token_line(const Token& t) {
+    return t.has_src_line ? static_cast<LineNo>(t.src_line) : Issue::lineno();
+}
 
 std::optional<IncludePath> read_include_operand(const std::string& raw_arg, const char* directive,
                                                 Env& env) {
@@ -77,9 +90,11 @@ std::optional<IncludePath> read_include_operand(const std::string& raw_arg, cons
     if (i < ts.size() && (ts[i].type == Token::STRING || ts[i].type == Token::WSTRING)) {
         if (!is_terminated_literal(ts[i]))
             return std::nullopt;
+        r.line = operand_token_line(ts[i]);
         r.path = decode_path_literal(ts[i].text);
         after.assign(ts.begin() + static_cast<std::ptrdiff_t>(i) + 1, ts.end());
     } else if (i < ts.size() && ts[i].type == Token::ANY && ts[i].text == "<") {
+        r.line = operand_token_line(ts[i]);
         std::vector<Token> work(ts.rbegin(), ts.rend() - static_cast<std::ptrdiff_t>(i) - 1);
         std::vector<Token> read;
         if (!read_header_name(work, r.path, read))
@@ -93,6 +108,7 @@ std::optional<IncludePath> read_include_operand(const std::string& raw_arg, cons
             return std::nullopt;
         r.angle = p.kind == ExpandedPath::Kind::angle;
         r.path = r.angle ? std::move(p.text) : decode_path_literal(p.text);
+        r.line = operand_token_line(expanded[skip_blanks(expanded, 0)]);
         rest = p.end;
     }
     if (!after.empty())
@@ -197,12 +213,17 @@ bool is_va_opt_token(const Token& t) {
     return t.type == Token::ANY && t.text == FunctionMacro::VA_OPT;
 }
 
-// A malformed __VA_OPT__: the text of its PP37, and how many __VA_OPT__
-// tokens of the body clang has read when it notices the problem (the
-// offending token included), which decides where the PP80 warnings of
-// handle_define() go around the PP37.
-struct MalformedVaOpt {
+// A problem clang notices while it reads a function-like macro's body, left
+// to right: a malformed __VA_OPT__ (PP37) or a `@` not followed by a
+// parameter (PP31). `at` is the body index of the token clang is reading
+// when it notices it (body.size() at the end of the body), which decides
+// which of the two is reported. `tokens` is how many __VA_OPT__ tokens of
+// the body clang has read by then (the offending token included), which
+// decides where the PP80 warnings of handle_define() go around the error.
+struct BodyError {
+    Issue::Code code;
     const char* what;
+    std::size_t at;
     std::size_t tokens;
 };
 
@@ -213,7 +234,7 @@ struct MalformedVaOpt {
 // A well-formed __VA_OPT__(...) is skipped as a whole, so a __VA_OPT__ inside
 // it is always "nested". Reads the VaOptSpan table the macro already holds,
 // so there is no second body scan.
-std::optional<MalformedVaOpt> malformed_va_opt(const FunctionMacro& m) {
+std::optional<BodyError> malformed_va_opt(const FunctionMacro& m) {
     const auto& body = m.body();
     const auto& spans = m.va_opt_spans();
     std::size_t seen = 0; // __VA_OPT__ tokens up to and including body[i]
@@ -227,15 +248,47 @@ std::optional<MalformedVaOpt> malformed_va_opt(const FunctionMacro& m) {
         if (lp >= body.size() || body[lp].type != Token::LP) {
             // The token after __VA_OPT__ is read before the problem is seen.
             const bool next_is_va_opt = lp < body.size() && is_va_opt_token(body[lp]);
-            return MalformedVaOpt{"__VA_OPT__ requires parenthesized argument",
-                                  seen + (next_is_va_opt ? 1 : 0)};
+            return BodyError{Issue::Code::INVALID_VA_OPT,
+                             "__VA_OPT__ requires parenthesized argument",
+                             std::min(lp, body.size()), seen + (next_is_va_opt ? 1 : 0)};
         }
         // The first __VA_OPT__ inside the parentheses is the one that is read.
-        if (spans[i].nested > 0)
-            return MalformedVaOpt{"nested __VA_OPT__ is not allowed", seen + 1};
+        if (spans[i].nested > 0) {
+            std::size_t at = lp + 1;
+            while (at < body.size() && !is_va_opt_token(body[at]))
+                ++at;
+            return BodyError{Issue::Code::INVALID_VA_OPT, "nested __VA_OPT__ is not allowed", at,
+                             seen + 1};
+        }
         if (spans[i].close == 0)
-            return MalformedVaOpt{"__VA_OPT__ requires parenthesized argument", seen};
+            return BodyError{Issue::Code::INVALID_VA_OPT,
+                             "__VA_OPT__ requires parenthesized argument", body.size(), seen};
         i += spans[i].close + 1;
+    }
+    return std::nullopt;
+}
+
+// The first `@` in the body of function-like macro `m` that is not followed
+// by a parameter (__VA_ARGS__ and __VA_ARGC__ of a variadic macro included)
+// or by __VA_OPT__, like clang's "'#' is not followed by a macro parameter".
+// clang notices it at the token after the `@` (at the `@` itself when it
+// ends the body). Comments between `@` and its operand are whitespace.
+std::optional<BodyError> stray_stringize(const FunctionMacro& m) {
+    const auto& body = m.body();
+    std::size_t seen = 0; // __VA_OPT__ tokens before body[i]
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        if (is_va_opt_token(body[i]))
+            ++seen;
+        if (body[i].type != Token::STRINGIZE)
+            continue;
+        std::size_t j = i + 1;
+        while (j < body.size() && (body[j].type & Token::MASK_WS))
+            ++j;
+        if (j < body.size() && body[j].type == Token::ANY &&
+            (is_va_opt_token(body[j]) || m.args().count(body[j].text) != 0))
+            continue;
+        return BodyError{Issue::Code::INVALID_STRINGIZING, nullptr,
+                         j < body.size() ? j : i, seen};
     }
     return std::nullopt;
 }
@@ -253,6 +306,10 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     // with -nC (gcc/clang without -C). Either way a comment is whitespace to
     // the checks below (Token::C has MASK_WS), so the definition is the same.
     auto ts = lex_operand(raw_arg, env.get_remove_comments());
+    // The replacement list is expanded where the macro is used: a body
+    // token has no source line of its own (Token::src_line).
+    for (auto& t : ts)
+        t.has_src_line = false;
     // Task d1: like clang, which lexes a macro body once at its definition,
     // the PP20/PP29 of a pragma body in the replacement list are reported
     // here, at the lines the body is written on, and not again at each
@@ -297,14 +354,18 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
     }
     if (ts[0].type != Token::ANY || !iec3_is_identifier(ts[0].text)) {
         ISSUE(INVALID_DEFINE_SYNTAX,
-              "macro name must be an identifier: " + Util::escape_line_breaks(raw_arg));
+              "macro name must be an identifier: " + Util::diag_clip(Util::escape_line_breaks(raw_arg)));
         warn_rest();
         return false;
     }
 
     std::string name = ts[0].text;
     if (name == "defined") {
-        ISSUE(OPERATION_NOT_ALLOWED, "redefine 'defined'");
+        // Like gcc/clang: an error, the rest of the input is still processed
+        // and nothing is defined. It is PP30, like any other name that cannot
+        // be a macro name (a severe PP02 would stop the run).
+        ISSUE(INVALID_DEFINE_SYNTAX, "defined cannot be used as a macro name");
+        warn_rest();
         return false;
     }
     // A macro named __VA_OPT__ warns for its name token, variadic or not.
@@ -377,13 +438,13 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
         auto list_error = [&](const std::string& what) {
             warn_until(i + 1);
             ISSUE(INVALID_DEFINE_SYNTAX,
-                  what + " in macro parameter list: " + Util::escape_line_breaks(raw_arg));
+                  what + " in macro parameter list: " + Util::diag_clip(Util::escape_line_breaks(raw_arg)));
             warn_rest();
         };
         // '...' not last (PP33), found at ts[i]; same order as list_error.
         auto placement_error = [&]() {
             warn_until(i + 1);
-            ISSUE(INVALID_VARIADIC_PLACEMENT, Util::escape_line_breaks(raw_arg));
+            ISSUE(INVALID_VARIADIC_PLACEMENT, Util::diag_clip(Util::escape_line_breaks(raw_arg)));
             warn_rest();
         };
         ++i; // '('
@@ -473,44 +534,78 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
         named_variadic ||
         std::find(param_names.begin(), param_names.end(), FunctionMacro::VA_SYM) != param_names.end();
 
-    while (i < ts.size() && (ts[i].type & Token::MASK_WS))
+    // A comment that starts the body is kept (SPEC §2, like gcc/clang -CC);
+    // with -nC it is whitespace already.
+    while (i < ts.size() && ts[i].type == Token::WS)
         ++i;
     std::vector<Token> body(ts.begin() + i, ts.end());
+    // An unclosed comment (PP20, reported by the lexer) runs to the end of
+    // the body; kept, it would swallow the text after each use. It is
+    // whitespace, as before comments at the ends of a body were kept.
+    {
+        std::size_t last = body.size();
+        while (last > 0 && body[last - 1].type == Token::WS)
+            --last;
+        if (last > 0 && body[last - 1].type == Token::C) {
+            // A closed block comment may carry the newline after it.
+            std::string_view c = body[last - 1].text;
+            while (!c.empty() && (c.back() == '\n' || c.back() == '\r'))
+                c.remove_suffix(1);
+            const bool closed =
+                c.starts_with("//") ||
+                (c.size() >= 4 && ((c.starts_with("(*") && c.ends_with("*)")) ||
+                                   (c.starts_with("/*") && c.ends_with("*/"))));
+            if (!closed)
+                body.resize(last - 1);
+        }
+    }
     line_comments_to_block_comments(body);
 
     // C6/U1: '@@' (GLUE) at either end of the replacement list has nothing
     // to paste with, like gcc/clang ("'##' cannot appear at either end of
-    // macro expansion"). body's leading whitespace is already stripped by
-    // the skip above; only the trailing side needs a reverse scan past
-    // whitespace here to find the true last token.
-    if (!body.empty()) {
-        std::size_t last = body.size();
-        while (last > 0 && (body[last - 1].type & Token::MASK_WS))
+    // macro expansion"). Comments at either end of the body are whitespace
+    // here. Returns true (after the report) when the definition is rejected
+    // for it.
+    auto glue_at_an_end = [&]() {
+        std::size_t first = 0, last = body.size();
+        while (first < last && (body[first].type & Token::MASK_WS))
+            ++first;
+        while (last > first && (body[last - 1].type & Token::MASK_WS))
             --last;
-        if (last > 0 && (body.front().type == Token::GLUE || body[last - 1].type == Token::GLUE)) {
-            // The whole line is read before this is noticed: the body of a
-            // non-variadic macro has warned, that of a variadic one has not.
-            if (variadic)
-                warned = ts.size();
-            else
-                warn_rest();
-            ISSUE(INVALID_TOKEN_PASTING,
-                  "'@@' cannot appear at either end of a macro expansion: " + Util::escape_line_breaks(raw_arg));
+        if (first == last ||
+            (body[first].type != Token::GLUE && body[last - 1].type != Token::GLUE))
             return false;
-        }
-    }
+        // The whole line is read before this is noticed: the body of a
+        // non-variadic macro has warned, that of a variadic one has not.
+        if (variadic)
+            warned = ts.size();
+        else
+            warn_rest();
+        ISSUE(INVALID_TOKEN_PASTING,
+              "'@@' cannot appear at either end of a macro expansion: " + Util::escape_line_breaks(raw_arg));
+        return true;
+    };
 
-    // Returns false (nothing defined) for a function-like macro whose body
-    // has a malformed __VA_OPT__. Like the checks above this abandons the
-    // whole {#define}: an existing definition of `name`, user or built-in,
-    // stays, and there is no PP35. Object-like macros are not checked.
-    // The PP80 warnings of the body come first, so before a PP37 (up to the
-    // token clang is reading when it finds the problem, and the rest of the
-    // line after it) and before a PP35.
+    // Returns false (nothing defined) for a definition rejected for its
+    // body. Like the checks above this abandons the whole {#define}: an
+    // existing definition of `name`, user or built-in, stays, and there is no
+    // PP35. Like clang, the body of a function-like macro is read left to
+    // right, and the first malformed __VA_OPT__ (PP37) or `@` not followed by
+    // a parameter (PP31) is reported; '@@' at either end (PP32) is noticed
+    // only once the whole body is read, so after them (clang 22: `F(x) @@ @y`
+    // is '#' is not followed by a macro parameter, `F(...) @@ __VA_OPT__ x`
+    // missing '(' following __VA_OPT__). Object-like macros have neither
+    // check: there `@` is an ordinary token and __VA_OPT__ an identifier.
+    // The PP80 warnings of the body come first, so before a PP37/PP31 (up to
+    // the token clang is reading when it finds the problem, and the rest of
+    // the line after it) and before a PP35.
     auto make_and_define = [&]() {
         if (is_function) {
             auto nm = std::make_unique<FunctionMacro>(param_names, body, named_variadic);
-            if (auto bad = malformed_va_opt(*nm)) {
+            std::optional<BodyError> bad = malformed_va_opt(*nm);
+            if (auto stray = stray_stringize(*nm); stray && (!bad || stray->at < bad->at))
+                bad = stray;
+            if (bad) {
                 if (variadic) {
                     warned = ts.size();
                 } else {
@@ -521,27 +616,43 @@ bool handle_define(const std::string& raw_arg, Env& env, std::string* defined_na
                             ++seen;
                     warn_until(cut);
                 }
-                ISSUE(INVALID_VA_OPT, bad->what);
+                if (bad->code == Issue::Code::INVALID_STRINGIZING)
+                    ISSUE(INVALID_STRINGIZING,
+                          "'@' is not followed by a macro parameter: " + Util::escape_line_breaks(raw_arg));
+                else
+                    ISSUE(INVALID_VA_OPT, bad->what);
                 warn_rest();
                 return false;
             }
+            if (glue_at_an_end())
+                return false;
             if (!variadic)
                 warn_rest();
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
-                if (!existing->equal(*nm))
-                    ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
+                // An identical redefinition changes nothing (C17 6.10.3p2):
+                // the existing definition stays, with the comments it was
+                // written with (they count as whitespace in equal()).
+                if (existing->equal(*nm))
+                    return true;
+                ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
             } else if (is_builtin_operator_name(name)) {
                 ISSUE(MACRO_REDEFINED, name + ": redefining built-in macro");
             }
             env.define(name, std::move(nm));
         } else {
+            if (glue_at_an_end())
+                return false;
             auto nm = std::make_unique<UserDefinedObjectMacro>(body);
             warn_rest();
             if (env.exist(name)) {
                 Macro* existing = env.lookup(name);
-                if (!existing->equal(*nm))
-                    ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
+                // An identical redefinition changes nothing (C17 6.10.3p2):
+                // the existing definition stays, with the comments it was
+                // written with (they count as whitespace in equal()).
+                if (existing->equal(*nm))
+                    return true;
+                ISSUE(MACRO_REDEFINED, redefinition_context(name, existing));
             } else if (is_builtin_operator_name(name)) {
                 ISSUE(MACRO_REDEFINED, name + ": redefining built-in macro");
             }
@@ -573,7 +684,7 @@ bool handle_undef(const std::string& raw_arg, Env& env, std::string* undefined_n
         return false;
     }
     if (ts[0].text == "defined") {
-        ISSUE(OPERATION_NOT_ALLOWED, "undef 'defined'");
+        ISSUE(INVALID_DEFINE_SYNTAX, "defined cannot be used as a macro name");
         return false;
     }
     if (ts.size() > 1) {
@@ -605,7 +716,22 @@ void handle_tokenize(const std::string& raw_arg, Env& env, std::vector<Token>& o
     // expand_operand_tokens()).
     ts_mark_output_only(ts);
     line_comments_to_block_comments(ts);
-    expand(ts, ots, env);
+    // The output is spliced into the text around the directive as written
+    // (`Main{### __COUNTER__}` is `Main0`, `{### 1}F(x)` is `1x`, SPEC
+    // §4.4): its first token is not a macro-expansion edge there, even when
+    // it starts a replacement, and an empty whitespace token after it keeps
+    // a replacement that follows from being checked against it. The edges
+    // inside the operand are (SPEC §3.9).
+    std::vector<Token> out;
+    expand(ts, out, env);
+    if (out.empty())
+        return;
+    out.front().expansion_edge = false;
+    for (auto& t : out)
+        ots.push_back(std::move(t));
+    Token end = Token::create(Token::WS, "");
+    end.line_filler = true;
+    ots.push_back(std::move(end));
 }
 
 void handle_stringize(const std::string& raw_arg,
@@ -644,66 +770,48 @@ void handle_setline(const std::string& raw_arg, const std::string& key, Env& env
     std::size_t i = skip_blanks(ts, 0);
     const std::optional<LineNo> parsed = i < ts.size() ? lineno_token_value(ts[i]) : std::nullopt;
     if (parsed) {
+        // Both forms accept 0..4294967295, enforced by lineno_token_value()
+        // above (anything outside it is nullopt).
         const LineNo new_lineno = *parsed;
-        // item a (rev2): both forms now accept the same range,
-        // 0..4294967295, already enforced by lineno_token_value() above
-        // (anything outside it is nullopt, so this branch never sees it).
-        // This replaces the two different ranges
-        // introduced by commit 2cb1cc6 (U1(a): named form 1..2147483647,
-        // marker form 0..2147483646 -- one less than the named form, so a
-        // named directive's emitted N-1 marker was itself always a valid
-        // marker value). wrap_lineno() below now guarantees that instead,
-        // unconditionally, for every effective line number including 0.
-        {
-            // The file name is one literal token, so it may contain spaces.
-            std::string new_fp;
-            i = skip_blanks(ts, i + 1);
-            bool ok = true;
-            if (i < ts.size()) {
-                ok = is_terminated_literal(ts[i]);
-                if (ok) {
-                    new_fp = decode_path_literal(ts[i].text);
-                    i = skip_blanks(ts, i + 1);
-                }
-            }
-            if (ok && i < ts.size())
-                ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, directive_context(key, raw_arg));
+        // The file name is one literal token, so it may contain spaces.
+        std::string new_fp;
+        i = skip_blanks(ts, i + 1);
+        bool ok = true;
+        if (i < ts.size()) {
+            ok = is_terminated_literal(ts[i]);
             if (ok) {
-                // C1/U1(a): a named form sets the line number of the *next*
-                // physical line (gcc semantics) to new_lineno, by advancing
-                // the running counter to one less than new_lineno -- the
-                // nameless marker form's own "counter = new_lineno, next
-                // line = new_lineno + 1" semantics, which stays unchanged.
-                // item a: the counter wraps mod 2^32 (wrap_lineno(), see
-                // lineno.hpp), like gcc/clang, so a named `{#line 0}` is
-                // valid: new_lineno - 1 = -1 wraps to 4294967295, and the
-                // next physical line is 0.
-                const LineNo effective_lineno = wrap_lineno(is_marker_form ? new_lineno : new_lineno - 1);
-                env.set_lineno(effective_lineno);
-#ifdef JIEPP_SANDBOX
-                // Sandbox: ignore filepath argument, keep original filepath
-                {
-                    std::string old_fp = Issue::filepath();
-                    Issue::pop();
-                    Issue::push({effective_lineno, old_fp});
-                    ots.push_back(Token::line_pragma(effective_lineno, std::nullopt, env.is_standard_pragma_style()));
-                    return;
-                }
-#else
-                if (new_fp.empty()) {
-                    std::string old_fp = Issue::filepath();
-                    Issue::pop();
-                    Issue::push({effective_lineno, old_fp});
-                    ots.push_back(Token::line_pragma(effective_lineno, std::nullopt, env.is_standard_pragma_style()));
-                    return;
-                } else {
-                    Issue::pop();
-                    Issue::push({effective_lineno, std::string(new_fp)});
-                    ots.push_back(Token::line_pragma(effective_lineno, new_fp, env.is_standard_pragma_style()));
-                    return;
-                }
-#endif
+                new_fp = decode_path_literal(ts[i].text);
+                i = skip_blanks(ts, i + 1);
             }
+        }
+        if (ok && i < ts.size())
+            ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, directive_context(key, raw_arg));
+        if (ok) {
+            // C1/U1(a): a named form sets the line number of the *next*
+            // physical line (gcc semantics) to new_lineno, by advancing
+            // the running counter to one less than new_lineno; the nameless
+            // marker form sets the counter to new_lineno, so the next line
+            // is new_lineno + 1.
+            // item a: the counter wraps mod 2^32 (wrap_lineno(), see
+            // lineno.hpp), like gcc/clang, so a named `{#line 0}` is
+            // valid: new_lineno - 1 = -1 wraps to 4294967295, and the
+            // next physical line is 0.
+            const LineNo effective_lineno = wrap_lineno(is_marker_form ? new_lineno : new_lineno - 1);
+            env.set_lineno(effective_lineno);
+            // The current file path is kept when the operand has no file
+            // name. Sandbox: the file name is always ignored.
+#ifdef JIEPP_SANDBOX
+            const bool keep_filepath = true;
+#else
+            const bool keep_filepath = new_fp.empty();
+#endif
+            std::string fp = keep_filepath ? Issue::filepath() : new_fp;
+            Issue::pop();
+            Issue::push({effective_lineno, std::move(fp)});
+            ots.push_back(Token::line_pragma(effective_lineno,
+                                             keep_filepath ? std::nullopt : std::optional<std::string_view>(new_fp),
+                                             env.is_standard_pragma_style()));
+            return;
         }
     }
     // raw_arg is decoded, so re-escape it before it reaches the
@@ -719,14 +827,18 @@ void handle_syspath(const std::string& raw_arg, Env& env, std::vector<Token>& ot
     // filesystem calls, so it is an invalid path, like a malformed operand.
     if (p && p->path.find('\0') == std::string::npos) {
         const std::string& syspath = p->path;
-        env.add_syspath(resolve_syspath_base(syspath, env));
+        // The directory as a reached-by path names it: under the reached-by
+        // directory of the file holding this directive (the same base the
+        // lookup uses), not made absolute.
+        env.add_syspath(resolve_syspath_base(syspath, env),
+                        Util::reached_path(Util::reached_dir(env.current_reached_path()), syspath));
         ots.push_back(Token::pragma("syspath", Util::encode_syspath_path(syspath), env.is_standard_pragma_style()));
         return;
     }
     // raw_arg is decoded, so re-escape it before it reaches the
     // diagnostic, so a $n/$r escape in the source does not split the
     // message onto multiple lines (same reasoning as {#define} above).
-    ISSUE(INVALID_PATH, Util::escape_line_breaks(raw_arg));
+    ISSUE(INVALID_PATH, Util::diag_clip(Util::escape_line_breaks(raw_arg)));
 }
 
 void handle_include(const std::string& raw_arg,
@@ -739,7 +851,6 @@ void handle_include(const std::string& raw_arg,
     if (p && p->path.find('\0') == std::string::npos) {
         const std::string& include_path = p->path;
         const bool syspath_only_path = p->angle;
-        auto disp_path = fs::path(include_path).generic_string();
 
         // PP66: count the executed directive (valid path, about to resolve
         // and include; a {#pragma once} skip is counted too, since the path
@@ -747,13 +858,15 @@ void handle_include(const std::string& raw_arg,
         env.count_include();
 
         Loader::LoadType loadtype = (syspath_only || syspath_only_path) ? Loader::LoadType::SINCLUDE : Loader::LoadType::INCLUDE;
-        expand(include_path, loadtype, ots, env, disp_path);
+        // Included from this directive, at the line of the path (SPEC 16).
+        expand(include_path, loadtype, ots, env, std::nullopt, /*main_input=*/false,
+               Issue::IncludeOrigin{Issue::IncludeOrigin::Kind::directive, p->line});
         return;
     }
     // raw_arg is decoded, so re-escape it before it reaches the
     // diagnostic, so a $n/$r escape in the source does not split the
     // message onto multiple lines (same reasoning as {#define} above).
-    ISSUE(INVALID_PATH, Util::escape_line_breaks(raw_arg));
+    ISSUE(INVALID_PATH, Util::diag_clip(Util::escape_line_breaks(raw_arg)));
 }
 
 void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
@@ -765,6 +878,8 @@ void handle_message(const std::string& raw_arg, Env& env, Issue::Code code) {
     // is printed as one. NewlineInStringAndMessageDirectives checks both.
     // A quote in the message text is not scanned for PP29, like clang's
     // #error/#warning (gcc does scan it).
+    // (A directive with no closing '}' arrives here already cut to its first
+    // line: dispatch_directive().)
     report_message(expand_operand_text(raw_arg, env, /*report_unterminated=*/false), code);
 }
 
@@ -778,8 +893,7 @@ void report_message(std::string msg, Issue::Code code) {
     Issue::happen(code, std::move(msg));
 }
 
-void handle_ignore(const std::string& raw_arg, Env& env) {
-    (void)env;
+void handle_ignore(const std::string& raw_arg) {
     // Tokenize the operand (mirroring {#pragma_style}) so a trailing comment
     // is stripped rather than rejected as garbage, and require exactly one
     // non-whitespace token matching "PP" followed by exactly two digits
@@ -920,8 +1034,9 @@ bool push_pop_macro_name(const std::vector<Token>& ts, std::string& name, bool& 
     if (!at_token() || ts[i].type != Token::LP)
         return false;
     ++i;
-    if (!at_token() || (ts[i].type != Token::STRING && ts[i].type != Token::WSTRING) ||
-        ts[i].unterminated)
+    // lex_operand() has reported PP29 and cleared Token::unterminated, so
+    // the literal's own text is what tells whether it is closed.
+    if (!at_token() || !is_terminated_literal(ts[i]))
         return false;
     name = ts[i].text.substr(1, ts[i].text.size() - 2);
     ++i;
@@ -967,7 +1082,7 @@ bool handle_pragma(const std::string& raw_arg, Env& env, std::string* restored_n
         ISSUE(EXTRA_TOKENS_AT_END_OF_DIRECTIVE, context);
     // A string that is not an identifier ('1', 'X Y', '') never names a
     // macro, so there is nothing to save or restore (gcc/clang are silent
-    // too). 'defined' cannot be {#define}d or {#undef}ined (PP02), so it is
+    // too). 'defined' cannot be {#define}d or {#undef}ined (PP30), so it is
     // never saved or restored either.
     if (!iec3_is_identifier(name) || name == "defined")
         return false;

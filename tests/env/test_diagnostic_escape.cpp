@@ -43,13 +43,15 @@ TEST_F(DiagnosticEscapeTest, DefineDelEscaped) {
     EXPECT_EQ(std::string::npos, m.find('\x7F')) << m;
 }
 
-// PP20 quotes the unclosed comment, which contains a raw LF.
+// PP20 quotes the first line of the unclosed comment, which has no raw LF
+// however many lines follow.
 TEST_F(DiagnosticEscapeTest, UnclosedCommentLineBreakEscaped) {
     Issue::ContinueMode guard({});
     pp("(* unclosed\nnext line\n");
     const std::string m = only_message(messages());
     EXPECT_NE(std::string::npos, m.find("PP20: ")) << m;
-    EXPECT_NE(std::string::npos, m.find("unclosed$nnext line$n")) << m;
+    EXPECT_NE(std::string::npos, m.find("'(* unclosed...'")) << m;
+    EXPECT_EQ(std::string::npos, m.find("next line")) << m;
 }
 
 // PP11 quotes the include path; $n in the source is a real LF in the path.
