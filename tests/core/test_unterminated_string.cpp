@@ -16,7 +16,7 @@ std::vector<std::pair<std::string, bool>> str_marks(const std::string& text) {
     std::vector<std::pair<std::string, bool>> marks;
     for (auto& t : iec3_tokens_from_string(text, /*remove_comments=*/false)) {
         if (t.type == Token::STRING || t.type == Token::WSTRING)
-            marks.emplace_back(t.text, t.unterminated);
+            marks.emplace_back(t.text, static_cast<bool>(t.unterminated));
     }
     return marks;
 }
